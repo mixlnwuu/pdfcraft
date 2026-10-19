@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PdfCraft ภาษาไทย – โปรแกรมแก้ไข PDF ภาษาไทยฟรี</title>
+<meta name="description" content="PdfCraft ภาษาไทย (ฉบับไม่เป็นทางการ) โปรแกรมแก้ไข PDF ฟรีสำหรับ Windows เมนูไทยทั้งหมด พิมพ์และแก้ข้อความไทยใน PDF สระวรรณยุกต์ไม่เพี้ยน มีฟอนต์ TH Sarabun PSK ในตัว ทำงานออฟไลน์ ไม่ต้องสมัครบัญชี">
+<link rel="canonical" href="https://mixlnwuu.github.io/pdfcraft/">
+<meta name="robots" content="index, follow">
+<meta property="og:type" content="website">
+<meta property="og:locale" content="th_TH">
+<meta property="og:title" content="PdfCraft ภาษาไทย – โปรแกรมแก้ไข PDF ภาษาไทยฟรี">
+<meta property="og:description" content="พิมพ์และแก้ข้อความไทยใน PDF ได้ เมนูไทยทั้งหมด ฟอนต์ TH Sarabun PSK ในตัว ดาวน์โหลดฟรีสำหรับ Windows">
+<meta property="og:url" content="https://mixlnwuu.github.io/pdfcraft/">
+<meta property="og:image" content="https://mixlnwuu.github.io/pdfcraft/screenshot.webp">
+<meta name="twitter:card" content="summary_large_image">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "PdfCraft ภาษาไทย",
+  "alternateName": ["PdfCraft Thai", "PdfCraft Thai edition"],
+  "description": "โปรแกรมแก้ไข PDF ภาษาไทยฟรี ฉบับไม่เป็นทางการ ต่อยอดจาก PdfCraft พิมพ์และแก้ข้อความไทยใน PDF ได้ มีฟอนต์ TH Sarabun PSK ในตัว",
+  "applicationCategory": "BusinessApplication",
+  "operatingSystem": "Windows 10, Windows 11 (64-bit)",
+  "inLanguage": "th",
+  "softwareVersion": "0.9.0-th.1",
+  "license": "https://opensource.org/licenses/MIT",
+  "url": "https://mixlnwuu.github.io/pdfcraft/",
+  "downloadUrl": "https://github.com/mixlnwuu/pdfcraft/releases/latest",
+  "screenshot": "https://mixlnwuu.github.io/pdfcraft/screenshot.webp",
+  "offers": { "@type": "Offer", "price": "0", "priceCurrency": "THB" }
+}
+</script>
+<style>
+:root {
+  --bg: #f7f7f5;
+  --surface: #ffffff;
+  --text: #1d1d1f;
+  --muted: #5c5c66;
+  --line: #e3e3e0;
+  --accent: #1f5fd1;
+  --accent-text: #ffffff;
+  --accent-soft: #e8effc;
+  --note: #fff7e0;
+  --note-line: #ecd48f;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #141416;
+    --surface: #1d1d21;
+    --text: #ececef;
+    --muted: #a3a3ad;
+    --line: #2f2f35;
+    --accent: #6d9cf2;
+    --accent-text: #0d1424;
+    --accent-soft: #1d2a44;
+    --note: #2a2516;
+    --note-line: #5c4f22;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #141416;
+  --surface: #1d1d21;
+  --text: #ececef;
+  --muted: #a3a3ad;
+  --line: #2f2f35;
+  --accent: #6d9cf2;
+  --accent-text: #0d1424;
+  --accent-soft: #1d2a44;
+  --note: #2a2516;
+  --note-line: #5c4f22;
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Leelawadee UI", "Sarabun", "Noto Sans Thai", "Segoe UI", system-ui, sans-serif;
+  font-size: 17px;
+  line-height: 1.7;
+}
+a { color: var(--accent); }
+.wrap { max-width: 1040px; margin: 0 auto; padding: 0 16px; }
+header.top {
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+header.top .wrap {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; min-height: 56px; flex-wrap: wrap;
+}
+.brand { font-weight: 700; font-size: 18px; text-decoration: none; color: var(--text); }
+.brand span { color: var(--muted); font-weight: 400; font-size: 14px; }
+nav a { margin-left: 18px; text-decoration: none; color: var(--muted); font-size: 15px; }
+nav a:hover { color: var(--accent); }
+.hero { padding: 56px 0 32px; text-align: center; }
+.hero h1 { font-size: clamp(30px, 6vw, 46px); line-height: 1.25; margin: 0 0 12px; }
+.hero p.lead { font-size: clamp(17px, 2.6vw, 20px); color: var(--muted); margin: 0 auto 28px; max-width: 720px; }
+.buttons { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+.btn {
+  display: inline-block; padding: 12px 22px; border-radius: 10px;
+  font-weight: 600; text-decoration: none; font-size: 17px;
+  border: 1px solid var(--accent);
+}
+.btn.primary { background: var(--accent); color: var(--accent-text); }
+.btn.secondary { background: transparent; color: var(--accent); }
+.hero small { display: block; margin-top: 14px; color: var(--muted); font-size: 14px; }
+.shot {
+  margin: 36px auto 0; max-width: 1000px;
+  border: 1px solid var(--line); border-radius: 12px; overflow: hidden;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.08); background: var(--surface);
+}
+.shot img { display: block; width: 100%; height: auto; }
+section { padding: 40px 0; }
+section h2 { font-size: 28px; margin: 0 0 20px; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; }
+.card {
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: 12px; padding: 18px 20px;
+}
+.card h3 { margin: 0 0 6px; font-size: 18px; }
+.card p { margin: 0; color: var(--muted); font-size: 16px; }
+.steps { counter-reset: s; list-style: none; padding: 0; margin: 0; }
+.steps li {
+  counter-increment: s; position: relative; padding: 14px 18px 14px 60px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 12px; margin-bottom: 12px;
+}
+.steps li::before {
+  content: counter(s); position: absolute; left: 18px; top: 14px;
+  width: 28px; height: 28px; border-radius: 50%;
+  background: var(--accent-soft); color: var(--accent);
+  font-weight: 700; text-align: center; line-height: 28px;
+}
+details {
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: 12px; padding: 14px 18px; margin-bottom: 12px;
+}
+summary { cursor: pointer; font-weight: 600; }
+details p, details ul { color: var(--muted); margin: 10px 0 0; }
+.note {
+  background: var(--note); border: 1px solid var(--note-line);
+  border-radius: 12px; padding: 14px 18px; font-size: 16px;
+}
+code { font-family: Consolas, "Cascadia Mono", monospace; font-size: 0.92em; overflow-wrap: anywhere; }
+footer { border-top: 1px solid var(--line); padding: 28px 0 40px; color: var(--muted); font-size: 14px; }
+footer p { margin: 6px 0; }
+@media (max-width: 560px) {
+  nav { display: none; }
+  .btn { width: 100%; text-align: center; }
+  section h2 { font-size: 24px; }
+}
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="./">PdfCraft ภาษาไทย <span>ฉบับไม่เป็นทางการ</span></a>
+    <nav>
+      <a href="#features">ความสามารถ</a>
+      <a href="#install">วิธีติดตั้ง</a>
+      <a href="#faq">คำถามที่พบบ่อย</a>
+      <a href="https://github.com/mixlnwuu/pdfcraft">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <div class="hero wrap">
+    <h1>PdfCraft ภาษาไทย</h1>
+    <p class="lead">โปรแกรมแก้ไข PDF ฟรี เมนูภาษาไทยทั้งหมด พิมพ์และแก้ข้อความไทยใน PDF ได้ สระและวรรณยุกต์ไม่เพี้ยน มีฟอนต์ TH Sarabun PSK ในตัว</p>
+    <div class="buttons">
+      <a class="btn primary" href="https://github.com/mixlnwuu/pdfcraft/releases/latest">ดาวน์โหลดฟรี (Windows)</a>
+      <a class="btn secondary" href="#install">วิธีติดตั้ง</a>
+    </div>
+    <small>รุ่นล่าสุด 0.9.0-th.1 · Windows 10/11 แบบ 64 บิต · มีทั้งตัวติดตั้ง (.msi) และแบบไม่ต้องติดตั้ง (portable)</small>
+    <div class="shot">
+      <img src="screenshot.webp" width="2000" height="1088" alt="หน้าจอโปรแกรม PdfCraft ภาษาไทย แสดงเมนูเครื่องมือภาษาไทย เช่น แก้ไข PDF กรอกและเซ็น รวมไฟล์ และบีบอัด PDF">
+    </div>
+  </div>
+
+  <section id="features">
+    <div class="wrap">
+      <h2>ทำอะไรได้บ้าง</h2>
+      <div class="grid">
+        <div class="card"><h3>พิมพ์ภาษาไทยลงใน PDF</h3><p>เพิ่มข้อความใหม่หรือแก้ข้อความเดิมเป็นภาษาไทย สระและวรรณยุกต์วางตำแหน่งถูกต้อง ค้นหาและคัดลอกข้อความได้</p></div>
+        <div class="card"><h3>เมนูภาษาไทยทั้งหมด</h3><p>เปิดมาเป็นภาษาไทยตั้งแต่ครั้งแรก เปลี่ยนภาษาได้ที่ การตั้งค่า › ภาษา</p></div>
+        <div class="card"><h3>ฟอนต์ TH Sarabun PSK ในตัว</h3><p>มีครบทั้งตัวปกติ ตัวหนา ตัวเอียง และตัวหนาเอียง และใช้ฟอนต์ที่ติดตั้งในเครื่องได้เหมือน Word</p></div>
+        <div class="card"><h3>กรอกและเซ็นเอกสาร</h3><p>กรอกแบบฟอร์ม ใส่วันที่แบบไทย ลายเซ็นแบบพิมพ์ และชื่อภาษาไทยในลายเซ็นดิจิทัล</p></div>
+        <div class="card"><h3>ความคิดเห็นและตราประทับ</h3><p>เขียนโน้ต คำบรรยาย ตราประทับ หัวกระดาษ ท้ายกระดาษ และลายน้ำเป็นภาษาไทยได้</p></div>
+        <div class="card"><h3>จัดการหน้าและไฟล์</h3><p>รวมไฟล์ จัดเรียง หมุน ลบหน้า บีบอัด PDF ใส่รหัสผ่าน และปิดทับข้อมูลที่ไม่ต้องการให้เห็น</p></div>
+        <div class="card"><h3>ใช้งานง่ายเหมือน Word</h3><p>คัดลอกกล่องข้อความด้วย Ctrl+C / Ctrl+V จัดลำดับชั้น มีเส้นช่วยจัดกึ่งกลางหน้า และลากของข้ามหน้าได้</p></div>
+        <div class="card"><h3>ฟรี ออฟไลน์ เป็นส่วนตัว</h3><p>ไม่ต้องสมัครบัญชี ไม่ต้องต่ออินเทอร์เน็ต ไฟล์ไม่ถูกส่งออกไปที่ไหน เป็นโปรแกรมโอเพนซอร์ส</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="install">
+    <div class="wrap">
+      <h2>ดาวน์โหลดและติดตั้ง</h2>
+      <ol class="steps">
+        <li>เปิดหน้า <a href="https://github.com/mixlnwuu/pdfcraft/releases/latest">ดาวน์โหลดรุ่นล่าสุด</a> แล้วเลื่อนลงไปที่หัวข้อ <strong>Assets</strong></li>
+        <li><strong>แบบติดตั้ง:</strong> กดไฟล์ที่ลงท้ายด้วย <code>-windows-x64.msi</code> แล้วดับเบิลคลิกเพื่อติดตั้ง จะมีทางลัดใน Start menu และบนเดสก์ท็อป</li>
+        <li><strong>แบบไม่ต้องติดตั้ง:</strong> กดไฟล์ที่ลงท้ายด้วย <code>-portable.zip</code> แตกไฟล์ไว้ที่ใดก็ได้ (เช่น แฟลชไดรฟ์) แล้วเปิด <code>pdfcraft.exe</code></li>
+        <li>เปิดโปรแกรม จะเป็นภาษาไทยทันที ลากไฟล์ PDF มาวางในโปรแกรมเพื่อเริ่มแก้ไขได้เลย</li>
+      </ol>
+      <p class="note"><strong>Windows อาจเตือนตอนเปิดครั้งแรก</strong> เพราะไฟล์โปรแกรมในฉบับนี้ยังไม่มีลายเซ็นดิจิทัล ถ้าขึ้นหน้าต่าง "Windows protected your PC" ให้กด <strong>More info</strong> แล้วกด <strong>Run anyway</strong> ตรวจสอบได้ว่าไฟล์ไม่ถูกแก้ไขระหว่างทางโดยเทียบค่า SHA-256 ที่ระบุในหน้าดาวน์โหลด</p>
+    </div>
+  </section>
+
+  <section id="faq">
+    <div class="wrap">
+      <h2>คำถามที่พบบ่อย</h2>
+      <details>
+        <summary>ใช้ฟรีจริงไหม มีโฆษณาหรือไม่</summary>
+        <p>ฟรีทั้งหมด ไม่มีโฆษณา ไม่มีรุ่นเสียเงิน ตัวโปรแกรมเป็นโอเพนซอร์ส (สัญญาอนุญาต MIT หรือ Apache-2.0) ดูซอร์สโค้ดได้ที่ GitHub</p>
+      </details>
+      <details>
+        <summary>แก้ข้อความเดิมแล้วตัวอักษรเพี้ยน หรือฟอนต์ไม่เหมือนเดิม</summary>
+        <p>PDF ส่วนใหญ่ (เช่น ที่บันทึกจาก Word) ฝังฟอนต์มาไม่ครบชุด โปรแกรมจึงต้องหาฟอนต์ตัวเต็มจากในเครื่อง ถ้าไม่มีจะใช้ TH Sarabun PSK แทน วิธีแก้คือติดตั้งฟอนต์ที่เอกสารใช้ลงในเครื่อง แล้วเปิดโปรแกรมใหม่</p>
+        <ul>
+          <li>ดูชื่อฟอนต์ได้ที่ คุณสมบัติเอกสาร (Ctrl+D) › แท็บ "แบบอักษร"</li>
+          <li>ฟอนต์ Angsana New, Cordia New, Browallia New เพิ่มได้ที่ การตั้งค่า Windows › แอป › ฟีเจอร์เพิ่มเติม › "Thai Supplemental Fonts"</li>
+        </ul>
+      </details>
+      <details>
+        <summary>ต่างจาก PdfCraft ตัวทางการอย่างไร</summary>
+        <p>ฉบับนี้ต่อยอดจาก <a href="https://github.com/storytold/pdfcraft">PdfCraft</a> รุ่น v0.9.0 แล้วเพิ่มการพิมพ์และแก้ข้อความภาษาไทยในทุกเมนู ฟอนต์ TH Sarabun PSK ในตัว เมนูฟอนต์ที่ค้นหาได้ และปรับการใช้งานให้คล้าย Word ถ้าติดตั้งทับตัวทางการ จะใช้แทนกันได้เลย</p>
+      </details>
+      <details>
+        <summary>อ่านข้อความไทยจากไฟล์สแกน (OCR) ได้ไหม</summary>
+        <p>ยังไม่ได้ ตอนนี้ OCR อ่านได้เฉพาะภาษาอังกฤษ</p>
+      </details>
+      <details>
+        <summary>เจอปัญหา แจ้งได้ที่ไหน</summary>
+        <p>แจ้งได้ที่ <a href="https://github.com/mixlnwuu/pdfcraft/issues">หน้า Issues ของฉบับภาษาไทย</a> โปรดอย่าแจ้งที่โปรเจกต์ต้นฉบับ เพราะผู้พัฒนาต้นฉบับไม่ได้ดูแลฉบับนี้</p>
+      </details>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <p><strong>PdfCraft ภาษาไทย เป็นฉบับไม่เป็นทางการ</strong> ไม่ได้อยู่ในความดูแลหรือได้รับการรับรองจากผู้พัฒนา PdfCraft</p>
+    <p>ตัวโปรแกรม: สัญญาอนุญาต MIT หรือ Apache-2.0 · ฟอนต์ TH Sarabun PSK ลิขสิทธิ์ของสำนักงานส่งเสริมอุตสาหกรรมซอฟต์แวร์แห่งชาติ (SIPA) แจกจ่ายโดยไม่ดัดแปลง ภายใต้ GNU GPL รุ่น 2 หรือใหม่กว่า พร้อมข้อยกเว้นการฝังฟอนต์</p>
+    <p><a href="https://github.com/mixlnwuu/pdfcraft">ซอร์สโค้ดบน GitHub</a> · <a href="https://github.com/mixlnwuu/pdfcraft/releases/latest">ดาวน์โหลด</a> · <a href="https://github.com/mixlnwuu/pdfcraft/issues">แจ้งปัญหา</a></p>
+  </div>
+</footer>
+
+</body>
+</html>
