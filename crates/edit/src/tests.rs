@@ -4760,6 +4760,22 @@ fn thai_in_a_styled_range_is_shaped_in_the_chosen_face() {
     assert!(thai.italic, "in the italic face: {}", thai.base_font);
 }
 
+/// Thai edition: text set in Google's Sarabun (Chrome and TCPDF embed it as
+/// `AAAAAC+Sarabun-Regular`) is redrawn in Sarabun. It was redrawn in TH Sarabun PSK, whose
+/// letters are a third smaller at one size, so an edited line shrank beside the rest.
+#[test]
+fn sarabun_text_is_redrawn_in_sarabun_not_th_sarabun_psk() {
+    if crate::added::Family::GoogleSarabun.craft(false, false).is_none() || crate::added::Family::Sarabun.craft(false, false).is_none() {
+        return;
+    }
+    for (base, face) in [("AAAAAC+Sarabun-Regular", "Sarabun Type3"), ("BCDEEE+THSarabunPSK", "TH Sarabun PSK Type3")] {
+        let mut doc = styled_text_page(base);
+        assert_eq!(text::replace_line(&mut doc, 0, 0, "สวัสดี").unwrap().substituted.as_deref(), Some(face), "a line in {base}");
+        let mut doc = styled_text_page(base);
+        assert_eq!(text::replace_block(&mut doc, 0, 0, "สวัสดี").unwrap().substituted.as_deref(), Some(face), "a paragraph in {base}");
+    }
+}
+
 #[test]
 fn centered_mixed_size_title_keeps_three_rows_when_changed() {
     let mut doc = mixed_region_page();

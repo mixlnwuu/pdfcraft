@@ -4,15 +4,16 @@ PdfCraft ฉบับปรับปรุงให้ใช้งานภา�
 พัฒนาฉบับภาษาไทยโดย **Non.sittith**
 **ฉบับนี้ไม่ใช่ฉบับทางการ** และไม่ได้อยู่ในความดูแลของผู้พัฒนา PdfCraft หากพบปัญหาในฉบับนี้ โปรดแจ้งที่ Issues ของ repository นี้ ไม่ใช่ที่โปรเจกต์ต้นฉบับ
 
-> English: an unofficial Thai edition of PdfCraft (Thai UI, Thai text editing, TH Sarabun PSK and
-> installed-font support). Based on upstream release v0.13.0. Not affiliated with or endorsed by
-> the PdfCraft authors.
+> English: an unofficial Thai edition of PdfCraft (Thai UI, Thai text editing, TH Sarabun PSK,
+> Sarabun and installed-font support). Based on upstream release v0.13.0. Not affiliated with or
+> endorsed by the PdfCraft authors.
 
 ## มีอะไรเพิ่มจากต้นฉบับ
 
 - **หน้าจอภาษาไทย** เลือกได้ที่การตั้งค่า › ภาษา › ไทย
 - **พิมพ์ข้อความภาษาไทยลงใน PDF ได้** (เพิ่มข้อความ และแก้ไขข้อความเดิม) สระและวรรณยุกต์วางตำแหน่งถูกต้อง
 - **ฟอนต์ TH Sarabun PSK ในตัว** ทั้งตัวปกติ ตัวหนา ตัวเอียง และตัวหนาเอียง
+- **ฟอนต์ Sarabun (Google Fonts) ในตัว** ทั้ง 4 แบบเช่นกัน PDF ที่สร้างจาก Chrome หรือระบบที่ใช้ TCPDF มักฝังฟอนต์นี้ไว้ แก้ข้อความแล้วตัวอักษรจึงขนาดเท่าเดิม (ที่ขนาด pt เดียวกัน Sarabun ตัวใหญ่กว่า TH Sarabun PSK ราว 1.5 เท่า จึงใช้แทนกันไม่ได้)
 - **ใช้ฟอนต์ที่ติดตั้งในเครื่องได้** เหมือน Word หรือ Acrobat
 - **เมนูฟอนต์แบบใหม่:**
   - พิมพ์เพื่อค้นหาชื่อฟอนต์ได้
@@ -58,6 +59,7 @@ PDF ส่วนใหญ่ (เช่น ที่บันทึกจาก 
 โปรแกรมจึงต้องหาฟอนต์ตัวเต็มจากในเครื่อง:
 
 - **ถ้าเครื่องมีฟอนต์ชื่อเดียวกับในเอกสาร** ข้อความที่แก้จะใช้ฟอนต์นั้น หน้าตาเหมือนเดิม
+- **ฟอนต์ TH Sarabun PSK และ Sarabun** มีในโปรแกรมแล้ว ไม่ต้องติดตั้งเพิ่ม
 - **ถ้าไม่มี** โปรแกรมจะใช้ TH Sarabun PSK แทน ข้อความที่แก้จึงอาจดูต่างจากส่วนอื่นของเอกสาร
 
 ถ้าแก้แล้วขึ้นข้อผิดพลาด ตัวอักษรเพี้ยน หรือฟอนต์ไม่เหมือนเดิม ให้ลอง **ติดตั้งฟอนต์ที่เอกสารใช้ลงในเครื่อง** แล้วเปิดโปรแกรมใหม่
@@ -73,7 +75,7 @@ PDF ส่วนใหญ่ (เช่น ที่บันทึกจาก 
 powershell -ExecutionPolicy Bypass -File thai\build-windows.ps1
 ```
 
-สคริปต์จะดาวน์โหลดชุดฟอนต์ craft-fonts รุ่นเดียวกับที่ PdfCraft ใช้ เพิ่ม TH Sarabun PSK จากโฟลเดอร์ `thai/fonts` แล้ว build ไฟล์ออกมาที่ `target\x86_64-pc-windows-msvc\release`
+สคริปต์จะดาวน์โหลดชุดฟอนต์ craft-fonts รุ่นเดียวกับที่ PdfCraft ใช้ เพิ่ม TH Sarabun PSK และ Sarabun จากโฟลเดอร์ `thai/fonts` แล้ว build ไฟล์ออกมาที่ `target\x86_64-pc-windows-msvc\release`
 
 ถ้าต้องการทำตัวติดตั้งและไฟล์ portable ด้วย ให้ติดตั้ง WiX v5 (`winget install WiXToolset.WiXCLI --version 5.0.2.0`) แล้วสั่ง:
 
@@ -89,4 +91,5 @@ powershell -ExecutionPolicy Bypass -File thai\package-windows.ps1
 
 - **ตัวโปรแกรม:** PdfCraft ใช้สัญญาอนุญาต MIT หรือ Apache-2.0 (ดู `LICENSE-MIT` และ `LICENSE-APACHE`) ส่วนที่ฉบับนี้แก้ไขและเพิ่มเติม รวมถึงคำแปลภาษาไทย เผยแพร่ภายใต้สัญญาอนุญาตเดียวกัน
 - **ฟอนต์ TH Sarabun PSK:** ลิขสิทธิ์ของสำนักงานส่งเสริมอุตสาหกรรมซอฟต์แวร์แห่งชาติ (SIPA) แจกจ่ายโดยไม่ดัดแปลง ภายใต้สัญญาอนุญาตที่ระบุไว้ในไฟล์ฟอนต์เอง คือ GNU GPL รุ่น 2 หรือใหม่กว่า พร้อมข้อยกเว้นสำหรับการฝังฟอนต์ ไฟล์ PDF ที่ใช้ฟอนต์นี้จึงไม่ตกอยู่ใต้ GPL (ดู `thai/fonts/th-sarabun-psk/LICENSE.txt`) ที่มาของไฟล์: https://github.com/SarabunConsortium/TH-Sarabun-PSK ซึ่งเผยแพร่พร้อม SIL Open Font License 1.1 (เก็บไว้ที่ `OFL.txt`)
+- **ฟอนต์ Sarabun:** ลิขสิทธิ์ของ The Sarabun Project Authors (https://github.com/cadsondemak/Sarabun) ใช้สัญญาอนุญาต SIL Open Font License 1.1 (ดู `thai/fonts/sarabun/OFL.txt`) แจกจ่ายโดยไม่ดัดแปลง ไฟล์มาจาก Google Fonts: https://github.com/google/fonts/tree/88058c714073e72bb1b32baffc2d4ce9bc73944c/ofl/sarabun
 - **คำแปลภาษาไทย:** แปลใหม่จากความหมายของข้อความภาษาอังกฤษในโปรแกรม ไม่ได้คัดลอกจากคำแปลของโปรแกรมเชิงพาณิชย์ใด ๆ
