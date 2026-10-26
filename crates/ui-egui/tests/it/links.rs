@@ -36,6 +36,7 @@ fn home_screen_names_the_thai_edition_and_its_repository() {
     let h = harness(|_| {});
     assert!(h.query_by_label("Join the ArtCraft community").is_none(), "no ArtCraft community card");
     assert!(h.query_all_by_label("ArtCraft").count() == 0, "no ArtCraft mark");
+    assert!(h.query_by_label("Join our Discord").is_none(), "no community links on the edition's card");
     assert!(h.query_by_label_contains("PdfCraft ภาษาไทย (ฉบับไม่เป็นทางการ)").is_some(), "the edition is named");
     h.get_by_label(THAI_EDITION_URL);
 }

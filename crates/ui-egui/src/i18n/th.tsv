@@ -2782,3 +2782,34 @@ theme	Appearance	ลักษณะที่ปรากฏ
 	field names can't contain a period: {name}	ชื่อช่องมีจุดไม่ได้: {name}
 	two cells would both be named {name}	จะมีสองเซลล์ที่ชื่อ {name} ซ้ำกัน
 	a field named {name} already exists	มีช่องชื่อ {name} อยู่แล้ว
+
+# From upstream PdfCraft (entries the edition's catalog didn't have).
+	In streams that use LZW encoding, use Flate instead	ใช้ Flate แทนในสตรีมที่เข้ารหัสแบบ LZW
+	Scale	มาตราส่วน
+	Common scales	มาตราส่วนที่ใช้บ่อย
+	Enter a scale such as 1:50.	ป้อนมาตราส่วน เช่น 1:50
+	Applying a scale switches units to m / mm.	การใช้มาตราส่วนจะเปลี่ยนหน่วยเป็น m / mm
+	Don't show again	ไม่ต้องแสดงอีก
+	Show a notice when a document is secured	แสดงการแจ้งเตือนเมื่อเอกสารมีการรักษาความปลอดภัย
+	Create & Edit	สร้างและแก้ไข
+	Review & Compare	ตรวจทานและเปรียบเทียบ
+	Forms & Signatures	แบบฟอร์มและลายเซ็น
+	Protect & Standardize	ป้องกันและกำหนดมาตรฐาน
+	Customize & Automate	ปรับแต่งและทำงานอัตโนมัติ
+	No tools match your search.	ไม่มีเครื่องมือที่ตรงกับการค้นหาของคุณ
+	Expand all tools	ขยายเครื่องมือทั้งหมด
+	Collapse all tools	ยุบเครื่องมือทั้งหมด
+	Today	วันนี้
+	Restore the last view (page, zoom and page display) when a document is opened again	คืนค่ามุมมองล่าสุด (หน้า การซูม และการแสดงหน้า) เมื่อเปิดเอกสารอีกครั้ง
+@plural	{n} reply|{n} replies	การตอบกลับ {n} รายการ
+
+# PdfCraft v0.14.0 strings (Thai edition, translated from the English meaning).
+	Attach a file…	แนบไฟล์…
+	Attach {name}	แนบ {name}
+	Attaching files is not available on the web yet	บนเว็บยังแนบไฟล์ไม่ได้
+	Delete attachment	ลบไฟล์แนบ
+	Delete attachment {key}	ลบไฟล์แนบ {key}
+	a table has 1 to {max} columns	ตารางมีได้ 1 ถึง {max} คอลัมน์
+	a table has 1 to {max} rows	ตารางมีได้ 1 ถึง {max} แถว
+	the area, the spacing and the column widths must be numbers, the spacing 0 or more and each width more than 0	พื้นที่ ระยะห่าง และความกว้างคอลัมน์ต้องเป็นตัวเลข ระยะห่างต้องเป็น 0 ขึ้นไป และความกว้างแต่ละคอลัมน์ต้องมากกว่า 0
+	the first row number can be at most {max}	เลขแถวแรกต้องไม่เกิน {max}

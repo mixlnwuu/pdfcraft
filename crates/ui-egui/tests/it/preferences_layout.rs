@@ -96,3 +96,24 @@ fn a_very_tall_window_does_not_leave_a_blank_gap_above_ok() {
     assert!(on_screen(ok, 2600.0) && on_screen(last, 2600.0), "{last:?} {ok:?}");
     assert!(ok.min.y - last.max.y < 120.0, "a gap of {} pt between the last setting and OK", ok.min.y - last.max.y);
 }
+
+/// Thai edition: settings the official app wrote (no edition mark) that follow the system language
+/// ("auto", its default) leave the edition in Thai; a language chosen there, or "auto" chosen in the
+/// edition (marked), is kept. Saving writes the mark.
+#[test]
+fn settings_written_by_the_official_app_keep_the_thai_default() {
+    use pdfcraft_ui_egui::{PdfCraftApp, THAI_EDITION_SETTINGS_MARK};
+    let restored = |json: &str| {
+        let mut app = PdfCraftApp::new();
+        app.restore(json);
+        app.language
+    };
+    assert_eq!(restored(r#"{"language":"auto"}"#), "th", "the official app's default");
+    assert_eq!(restored(r#"{"language":"en"}"#), "en", "a language chosen in the official app");
+    assert_eq!(restored(&format!(r#"{{"language":"auto","{THAI_EDITION_SETTINGS_MARK}":1}}"#)), "auto", "auto chosen in the edition");
+    let mut app = PdfCraftApp::new();
+    app.set_option("language", "auto").unwrap();
+    let saved: serde_json::Value = serde_json::from_str(&app.persist()).unwrap();
+    assert!(saved.get(THAI_EDITION_SETTINGS_MARK).is_some(), "saving marks the file");
+    assert_eq!(restored(&app.persist()), "auto", "and its own auto survives a restart");
+}
