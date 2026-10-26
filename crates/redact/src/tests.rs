@@ -48,10 +48,11 @@ fn content(doc: &Document, page: usize) -> String {
 /// Glyphs (and inline images) of page `page` under `rects` (the verifier's count).
 fn under(doc: &mut Document, page: usize, rects: &[[f64; 4]]) -> usize {
     let p = pdfcraft_model::pages(doc).swap_remove(page);
-    let (_, data) = page_streams(doc, &p.dict, page).unwrap();
+    let mut budget = pdfcraft_cos::DecodeBudget::page();
+    let (_, data) = page_streams_within(doc, &p.dict, page, &mut budget).unwrap();
     let res = p.dict.get(b"Resources").and_then(|r| doc.resolve(r).as_dict().cloned()).unwrap_or_default();
     let mut rep = Report::default();
-    let mut scope = Scope::new(rects, Mode::Verify, &mut rep);
+    let mut scope = Scope::new(rects, Mode::Verify, &mut rep, budget);
     process(doc, &mut scope, &data, &res, pdfcraft_content::Matrix::IDENTITY).residue
 }
 
@@ -286,6 +287,110 @@ fn vectors_are_removed_or_clipped_and_inline_images_go() {
     assert!(c.contains("W*\nn\n0 0 300 300 re\nf\nQ"), "the page-size rect is clipped: {c}");
     assert!(!c.contains("BI"), "{c}");
     assert!(c.contains("150 150 m"), "the line elsewhere stays");
+}
+
+/// A chain of nested forms deeper than the pass can walk was removed from the page, taking
+/// whatever else it drew with it even when nothing in it was marked. The limit now reaches as
+/// deep as the renderer and Edit text read (50), so anything a reader can see can be walked;
+/// past that nothing is drawn either, so removing it costs nothing visible (#3645).
+#[test]
+fn a_deeply_nested_form_keeps_the_text_nobody_marked() {
+    /// A page that draws `HEAD` at the top, then a chain of `depth` forms whose innermost draws
+    /// `DEEP`, then `TAIL`. Only `HEAD` is marked.
+    fn page_with_chain(depth: usize) -> Document {
+        let first = 7;
+        let mut objs: Vec<Vec<u8>> = vec![
+            b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
+            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
+            format!(
+                "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] /Contents 4 0 R                  /Resources << /Font << /F1 5 0 R >> /XObject << /Fm1 {first} 0 R >> >> >>"
+            )
+            .into_bytes(),
+            stream("", b"BT /F1 10 Tf 10 280 Td (HEAD) Tj ET /Fm1 Do BT /F1 10 Tf 10 10 Td (TAIL) Tj ET"),
+            FONT.replace("95 0 R", "6 0 R").into_bytes(),
+            widths(),
+        ];
+        for k in 1..=depth {
+            let res = if k < depth {
+                format!("/Resources << /Font << /F1 5 0 R >> /XObject << /Fm{} {} 0 R >> >>", k + 1, first + k)
+            } else {
+                "/Resources << /Font << /F1 5 0 R >> >>".to_string()
+            };
+            let body: Vec<u8> = if k < depth { format!("/Fm{} Do", k + 1).into_bytes() } else { b"BT /F1 10 Tf 10 150 Td (DEEP) Tj ET".to_vec() };
+            objs.push(stream(&format!("/Type /XObject /Subtype /Form /BBox [0 0 300 300] {res}"), &body));
+        }
+        pdf(objs)
+    }
+
+    // Deeper than the old limit of 12 and within the new one: the innermost text survives.
+    for depth in [1, 12, 13, 20, 50] {
+        let mut doc = page_with_chain(depth);
+        mark(&mut doc, 0, &[[5.0, 275.0, 60.0, 295.0]], "");
+        let report = apply(&mut doc, None).unwrap();
+        assert_eq!(report.forms_removed, 0, "depth {depth}: a form was removed");
+        let c = content(&doc, 0);
+        assert!(c.contains("(TAIL)"), "depth {depth}: {c}");
+        // The innermost form's text is still in the saved file.
+        let saved = write_incremental(&doc, &SaveOptions::default()).unwrap();
+        assert!(saved.windows(6).any(|w| w == b"(DEEP)"), "depth {depth}: the innermost form's text was deleted");
+    }
+
+    // Past what any reader follows, the form is still removed: the fail-safe, and nothing the
+    // renderer draws is lost because it stops at 50 too.
+    let mut doc = page_with_chain(crate::interp::MAX_DEPTH + 1);
+    mark(&mut doc, 0, &[[5.0, 275.0, 60.0, 295.0]], "");
+    assert_eq!(apply(&mut doc, None).unwrap().forms_removed, 1, "a chain past the limit is removed");
+}
+
+/// Depth alone does not bound the walk: a form that draws the next level twice, or a cycle of two
+/// forms, costs 2^depth interpretations, which at a depth limit of 50 is a hang on a file anyone
+/// can send. The pass also counts the forms it enters, and a page past that budget is treated as
+/// one it cannot read.
+#[test]
+fn a_form_that_fans_out_or_loops_is_bounded_by_the_page_budget() {
+    /// A page drawing `Fm1`, where each of `n` forms draws the next **twice** and the last draws
+    /// text: 2^n paths if nothing stops the walk. With `looping`, the last form draws the first
+    /// one again instead, so the chain has no end at all.
+    fn fan_out(n: usize, looping: bool) -> Document {
+        let first = 7;
+        let mut objs: Vec<Vec<u8>> = vec![
+            b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
+            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
+            format!(
+                "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] /Contents 4 0 R                  /Resources << /Font << /F1 5 0 R >> /XObject << /Fm1 {first} 0 R >> >> >>"
+            )
+            .into_bytes(),
+            stream("", b"BT /F1 10 Tf 10 280 Td (HEAD) Tj ET /Fm1 Do"),
+            FONT.replace("95 0 R", "6 0 R").into_bytes(),
+            widths(),
+        ];
+        for k in 1..=n {
+            let (next, body) = if k < n {
+                (first + k, format!("/Fm{0} Do /Fm{0} Do", k + 1))
+            } else if looping {
+                (first, "/Fm1 Do /Fm1 Do".to_string())
+            } else {
+                (first, "BT /F1 10 Tf 10 150 Td (DEEP) Tj ET".to_string())
+            };
+            let name = if k < n { format!("/Fm{}", k + 1) } else { "/Fm1".to_string() };
+            let res = format!("/Resources << /Font << /F1 5 0 R >> /XObject << {name} {next} 0 R >> >>");
+            objs.push(stream(&format!("/Type /XObject /Subtype /Form /BBox [0 0 300 300] {res}"), body.as_bytes()));
+        }
+        pdf(objs)
+    }
+
+    for looping in [false, true] {
+        let start = std::time::Instant::now();
+        let mut doc = fan_out(crate::interp::MAX_DEPTH, looping);
+        mark(&mut doc, 0, &[[5.0, 275.0, 60.0, 295.0]], "");
+        let result = apply(&mut doc, None);
+        let took = start.elapsed();
+        // An unbounded walk would never end; the limit leaves room for a loaded test machine.
+        assert!(took < std::time::Duration::from_secs(120), "looping {looping}: the walk took {took:?}");
+        // The page's form budget stops the walk, and Apply refuses the page rather than
+        // removing forms it could not read.
+        assert!(result.is_err(), "looping {looping}: the page past its form budget is refused");
+    }
 }
 
 #[test]
@@ -719,19 +824,19 @@ fn form_chain_at_max_depth_is_counted_and_removed_by_hidden_layer_sanitization()
     use crate::sanitize::{Hidden, remove_hidden, scan};
 
     const PRIVATE: &[u8] = b"PRIVATE_FORM_BEYOND_MAX_DEPTH";
-    // MAX_DEPTH is 12. The final Form is encountered at that depth and is removed
-    // conservatively without being entered. Verify must count that removal or sanitize
-    // can skip the HiddenLayers pass entirely.
+    // The final Form is encountered at MAX_DEPTH and is removed conservatively without being
+    // entered. Verify must count that removal or sanitize can skip the HiddenLayers pass entirely.
+    let max = crate::interp::MAX_DEPTH;
     let mut forms = Vec::new();
-    for depth in 0..=12 {
-        let content = if depth == 12 {
+    for depth in 0..=max {
+        let content = if depth == max {
             b"BT /F1 10 Tf 10 100 Td (PRIVATE_FORM_BEYOND_MAX_DEPTH) Tj ET".to_vec()
         } else {
             format!("/F{} Do", depth + 1).into_bytes()
         };
         forms.push(stream("/Type /XObject /Subtype /Form /BBox [0 0 300 300]", &content));
     }
-    let xobjects = (0..=12).map(|depth| format!("/F{depth} {} 0 R", 7 + depth)).collect::<Vec<_>>().join(" ");
+    let xobjects = (0..=max).map(|depth| format!("/F{depth} {} 0 R", 7 + depth)).collect::<Vec<_>>().join(" ");
     let mut doc = one_page(b"/F0 Do", &format!("/XObject << {xobjects} >>"), forms);
     assert!(
         write_full(&doc, &SaveOptions::default()).unwrap().windows(PRIVATE.len()).any(|w| w == PRIVATE),
@@ -1038,6 +1143,41 @@ fn nothing_to_apply_and_clearing_marks() {
     assert_eq!(clear_marks(&mut doc, None), Ok(1));
     assert!(marks(&doc).is_empty());
     assert!(content(&doc, 0).contains("(AB) Tj"));
+}
+
+/// Clearing marks puts a page's annotation list back as it was: a page that had none has no
+/// `/Annots` again, replies to the marks included, and one listed through an indirect array keeps
+/// pointing at that array.
+#[test]
+fn clearing_marks_leaves_the_annotation_list_as_it_was() {
+    let mut doc = one_page(b"BT /F1 10 Tf 10 100 Td (AB) Tj ET", "", vec![]);
+    let page = pdfcraft_model::pages(&doc)[0].obj;
+    let before = doc.get(page);
+    mark(&mut doc, 0, &[[0.0, 0.0, 50.0, 50.0]], "");
+    pdfcraft_annot::add_reply(&mut doc, 0, 0, "a reply", "Tester", &Meta::default()).unwrap();
+    // And a reply written inline, as a file can.
+    let mut inline = Dict::new();
+    inline.set(b"Subtype".to_vec(), Object::name("Text"));
+    inline.set(b"IRT".to_vec(), Object::Ref(marks(&doc)[0].obj));
+    let mut listed = annots_of(&doc, doc.get(page).as_dict().unwrap());
+    listed.push(Object::Dict(inline));
+    doc.update_dict(page, |d| d.set(b"Annots".to_vec(), Object::Array(listed))).unwrap();
+    assert_eq!(clear_marks(&mut doc, None), Ok(1), "one mark");
+    assert_eq!(doc.get(page), before, "the page has no /Annots again: both replies went with their mark");
+
+    let mut doc = pdf(vec![
+        b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] /Annots 4 0 R >>".to_vec(),
+        b"[5 0 R]".to_vec(),
+        b"<< /Type /Annot /Subtype /Link /Rect [0 0 10 10] >>".to_vec(),
+    ]);
+    let (page, list) = (ObjRef::new(3, 0), ObjRef::new(4, 0));
+    let before = (doc.get(page), doc.get(list));
+    mark(&mut doc, 0, &[[0.0, 0.0, 50.0, 50.0]], "");
+    assert_eq!(doc.get(list).as_array().map(|a| a.len()), Some(2), "the mark is listed in the shared array");
+    clear_marks(&mut doc, None).unwrap();
+    assert_eq!((doc.get(page), doc.get(list)), before, "the page points at its array, which lists the link alone");
 }
 
 #[test]
@@ -1689,8 +1829,8 @@ fn bluefin_survives(doc: &Document) -> bool {
 
 /// #3285 review (the maintainer's probes): an element written in place in the parent tree that
 /// owns the redacted text can't be changed, so applying is refused; the same element as an object
-/// of its own is cleaned, and nothing of the word is left in a full rewrite.
-/// Refusal does not promise rollback: direct callers discard the failed working copy.
+/// of its own is cleaned, and nothing of the word is left in a full rewrite. A refusal leaves the
+/// document as it was.
 #[test]
 fn an_element_written_in_place_owning_redacted_text_is_refused() {
     let objs = |element: &str| -> Vec<Vec<u8>> {
@@ -1710,17 +1850,13 @@ fn an_element_written_in_place_owning_redacted_text_is_refused() {
     let mut doc = pdf(objs("<< /Type /StructElem /S /P /P 6 0 R /Pg 3 0 R /K 0 /ActualText (Codename Bluefin) >>"));
     mark(&mut doc, 0, &[[10.0, 140.0, 290.0, 170.0]], "");
     let before = write_full(&doc, &SaveOptions::default()).unwrap();
-    let mut working = doc.clone();
-    let error = apply(&mut working, None).unwrap_err();
+    let error = apply(&mut doc, None).unwrap_err();
     assert!(matches!(error, RedactError::Tags));
     assert_eq!(
         error.to_string(),
         "the document's tags can't be cleaned completely (an element written in place, or a structure tree too large or too deep to follow); the operation was refused"
     );
-    assert!(!content(&working, 0).contains("Bluefin"), "the failed working copy was partially changed");
-    assert!(bluefin_survives(&working), "the failed working copy still holds the word in its tags");
-    drop(working);
-    assert_eq!(write_full(&doc, &SaveOptions::default()).unwrap(), before, "discarding the working copy preserves the original");
+    assert_eq!(write_full(&doc, &SaveOptions::default()).unwrap(), before, "the refused document is unchanged");
     let mut doc = pdf(objs("7 0 R"));
     mark(&mut doc, 0, &[[10.0, 140.0, 290.0, 170.0]], "");
     let r = apply(&mut doc, None).unwrap();
@@ -2478,6 +2614,23 @@ fn a_tj_surplus_arrays_undrawn_glyphs_are_not_seen_under_a_mark() {
     assert_eq!(under(&mut doc, 0, &[[10.0, 95.0, 45.0, 110.0]]), 7, "LASTARR's 7 glyphs, the one the page draws");
 }
 
+#[test]
+fn form_entries_share_one_budget_per_page() {
+    // 20 draws of a form that draws the next 20 times, four levels down: 160,000 glyphs from a
+    // few hundred bytes.
+    let draws = "/X Do ".repeat(20);
+    let mut objs = vec![stream("/Type /XObject /Subtype /Form /Resources << /Font << /F1 5 0 R >> >>", b"BT /F1 10 Tf 10 100 Td (A) Tj ET")];
+    for inner in 7..10 {
+        objs.push(stream(&format!("/Type /XObject /Subtype /Form /Resources << /XObject << /X {inner} 0 R >> >>"), draws.as_bytes()));
+    }
+    let mut doc = one_page(draws.as_bytes(), "/XObject << /X 10 0 R >>", objs);
+    let residue = under(&mut doc, 0, &[[0.0, 90.0, 50.0, 120.0]]);
+    assert!(residue > 0 && residue <= pdfcraft_cos::MAX_PAGE_FORMS, "{residue} glyphs counted");
+    // Applying refuses the page rather than leave forms past the budget unread.
+    mark(&mut doc, 0, &[[0.0, 90.0, 50.0, 120.0]], "");
+    assert!(apply(&mut doc, None).is_err());
+}
+
 /// A name tree whose levels each list the next level twice: a walk that follows every path
 /// visits 2^levels nodes.
 #[test]
@@ -2553,6 +2706,27 @@ fn removing_form_fields_takes_hidden_widgets_and_their_values_out_of_the_file() 
     remove_hidden(&mut doc, &[Hidden::FormFields]).unwrap();
     assert_no_secret(&doc, b"LEAK_");
     assert!(annots_of(&doc, &pdfcraft_model::pages(&doc).swap_remove(0).dict).is_empty());
+}
+
+/// F-021: removing form fields on a document with an AcroForm dictionary (even one with no
+/// enumerable terminal fields) removes the AcroForm dictionary, processes widgets, and requires full save.
+#[test]
+fn removing_form_fields_removes_acroform_even_without_terminal_fields() {
+    use crate::sanitize::{Hidden, remove_hidden, scan};
+    let mut doc =
+        one_page(b"BT /F1 10 Tf 10 100 Td (Visible) Tj ET", "", vec![b"<< /Type /Annot /Subtype /Widget /Rect [10 200 150 220] >>".to_vec()]);
+    doc.update_dict(doc.root().unwrap(), |d| d.set(b"AcroForm".to_vec(), fields_dict(&[]))).unwrap();
+    doc.update_dict(ObjRef::new(3, 0), |d| d.set(b"Annots".to_vec(), ref_array(&[7]))).unwrap();
+    let counts = scan(&doc);
+    assert_eq!(counts.iter().find(|c| c.0 == Hidden::FormFields).map(|c| c.1), Some(1));
+    assert!(doc.get(doc.root().unwrap()).as_dict().is_some_and(|d| d.contains(b"AcroForm")));
+    assert!(!doc.full_save_required());
+
+    let done = remove_hidden(&mut doc, &[Hidden::FormFields]).unwrap();
+    assert_eq!(done, [(Hidden::FormFields, 1)]);
+    assert!(!doc.get(doc.root().unwrap()).as_dict().is_some_and(|d| d.contains(b"AcroForm")));
+    assert!(annots_of(&doc, &pdfcraft_model::pages(&doc).swap_remove(0).dict).is_empty());
+    assert!(doc.full_save_required());
 }
 
 /// Removing hidden text cleans the structure tree as redaction does: the elements describing the
@@ -2695,4 +2869,138 @@ fn repeated_name_tree_kids_count_towards_the_node_budget() {
     ]);
     let counts: std::collections::HashMap<Hidden, usize> = scan(&doc).into_iter().collect();
     assert_eq!(counts[&Hidden::Attachments], 1, "the walk went past its node budget to the last kid");
+}
+
+/// Content streams and the forms they draw spend one page allowance: 130 MiB of content and a
+/// 130 MiB form are each under it, together past it.
+#[test]
+fn content_and_forms_share_one_budget_per_page() {
+    use pdfcraft_cos::{Dict, Stream};
+    let mut doc = one_page(b"", "", vec![]);
+    let mut content = b"BT /F1 10 Tf 10 100 Td (SECRET) Tj ET /X Do\n%".to_vec();
+    content.resize(130 << 20, b'x');
+    let content = doc.add(Object::Stream(Stream::flate(Dict::new(), &content)));
+    let mut form = Dict::new();
+    form.set(b"Type".to_vec(), Object::name("XObject"));
+    form.set(b"Subtype".to_vec(), Object::name("Form"));
+    let mut body = b"%".to_vec();
+    body.resize(130 << 20, b'x');
+    let form = doc.add(Object::Stream(Stream::flate(form, &body)));
+    doc.update_dict(ObjRef::new(3, 0), |d| {
+        let mut xobjects = Dict::new();
+        xobjects.set(b"X".to_vec(), Object::Ref(form));
+        let mut fonts = Dict::new();
+        fonts.set(b"F1".to_vec(), Object::Ref(ObjRef::new(5, 0)));
+        let mut res = Dict::new();
+        res.set(b"Font".to_vec(), Object::Dict(fonts));
+        res.set(b"XObject".to_vec(), Object::Dict(xobjects));
+        d.set(b"Resources".to_vec(), Object::Dict(res));
+        d.set(b"Contents".to_vec(), Object::Ref(content));
+    })
+    .unwrap();
+    mark(&mut doc, 0, &[[0.0, 90.0, 50.0, 120.0]], "");
+    assert!(apply(&mut doc, None).is_err(), "the form past the page's allowance was read");
+}
+
+/// A page that fails to read after another page was already redacted leaves the whole document as
+/// it was, the shared resources the first page's rewrite localised included.
+#[test]
+fn a_failure_on_a_later_page_leaves_the_document_unchanged() {
+    let mut doc = two_pages_one_resource_dictionary(true, false);
+    let all = pdfcraft_model::pages(&doc);
+    let (first, second, parent) = (all[0].obj, all[1].obj, doc.get(all[0].obj).as_dict().unwrap().reference(b"Parent").unwrap());
+    let mut dct = Dict::new();
+    dct.set(b"Filter".to_vec(), Object::name("DCTDecode"));
+    let bad = doc.add(Object::Stream(Stream::from_raw(dct, b"garbage".to_vec())));
+    doc.update_dict(second, |d| d.set(b"Contents".to_vec(), Object::Ref(bad))).unwrap();
+    mark(&mut doc, 0, &[[0.0, 0.0, 300.0, 300.0]], "");
+    mark(&mut doc, 1, &[[0.0, 0.0, 50.0, 50.0]], "");
+    let before: Vec<Object> = [first, second, parent].iter().map(|r| (*doc.get(*r)).clone()).collect();
+    let text = content(&doc, 0);
+    assert_eq!(apply(&mut doc, None), Err(RedactError::Unreadable(2)));
+    let after: Vec<Object> = [first, second, parent].iter().map(|r| (*doc.get(*r)).clone()).collect();
+    assert_eq!(after, before);
+    assert_eq!(content(&doc, 0), text);
+}
+
+#[test]
+fn a_reply_and_pop_up_on_another_page_go_with_the_removed_comment() {
+    let objs: Vec<Vec<u8>> = vec![
+        b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
+        b"<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>".to_vec(),
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] /Contents 5 0 R /Annots [6 0 R] >>".to_vec(),
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] /Contents 5 0 R /Annots [7 0 R 8 0 R] >>".to_vec(),
+        stream("", b"BT ET"),
+        b"<< /Type /Annot /Subtype /Text /Rect [20 20 40 40] /Contents (PARENT-NOTE) /Popup 8 0 R >>".to_vec(),
+        b"<< /Type /Annot /Subtype /Text /Rect [250 250 270 270] /IRT 6 0 R /Contents (OTHER-PAGE-REPLY) >>".to_vec(),
+        b"<< /Type /Annot /Subtype /Popup /Rect [200 150 290 190] /Parent 6 0 R >>".to_vec(),
+    ];
+    let mut doc = pdf(objs);
+    mark(&mut doc, 0, &[[10.0, 10.0, 70.0, 50.0]], "");
+    apply(&mut doc, None).unwrap();
+    let second = pdfcraft_model::pages(&doc).swap_remove(1);
+    assert!(annots_of(&doc, &second.dict).is_empty(), "the reply and the pop-up leave page 2");
+    let bytes = write_full(&doc, &SaveOptions { object_streams: false, ..SaveOptions::default() }).unwrap();
+    assert!(!bytes.windows(10).any(|w| w == b"PARENT-NOT"), "the removed comment survived the save");
+}
+
+#[test]
+fn a_redact_mark_written_in_place_is_refused() {
+    let objs: Vec<Vec<u8>> = vec![
+        b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] /Contents 4 0 R /Annots [<< /Type /Annot /Subtype /Redact /Rect [10 10 70 40] >>] >>"
+            .to_vec(),
+        stream("", b"BT ET"),
+    ];
+    let mut doc = pdf(objs);
+    mark(&mut doc, 0, &[[100.0, 100.0, 120.0, 120.0]], "");
+    assert!(matches!(apply(&mut doc, None), Err(RedactError::UnreadableMark(1))));
+}
+
+#[test]
+fn do_acts_on_the_operand_before_the_operator_like_the_renderer() {
+    // `/Missing /Im Do`: the renderer draws /Im, so redaction must find the image there.
+    let img = stream("/Type /XObject /Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceGray /BitsPerComponent 8", b"\x00");
+    let mut doc = one_page(b"q 100 0 0 100 10 10 cm /Missing /Im Do Q", "/XObject << /Im 7 0 R >>", vec![img]);
+    mark(&mut doc, 0, &[[0.0, 0.0, 300.0, 300.0]], "");
+    let r = apply(&mut doc, None).unwrap();
+    assert_eq!(r.images_removed, 1, "{r:?}");
+}
+
+#[test]
+fn hidden_text_removal_drops_the_source_text_of_added_content() {
+    let mut doc = one_page(b"BT /F1 12 Tf 3 Tr 20 20 Td (SECRET) Tj ET", "", vec![]);
+    let content_ref = pdfcraft_model::pages(&doc)[0].dict.get(b"Contents").and_then(Object::as_ref).unwrap();
+    doc.update_dict(content_ref, |d| {
+        d.set(b"PCAdded".to_vec(), Object::Dict(Dict::new()));
+    })
+    .unwrap();
+    sanitize::remove_hidden(&mut doc, &[sanitize::Hidden::HiddenText]).unwrap();
+    let p = &pdfcraft_model::pages(&doc)[0];
+    let (list, _) = page_streams(&doc, &p.dict, 0).unwrap();
+    assert!(list.iter().all(|o| doc.resolve(o).as_dict().is_some_and(|d| !d.contains(b"PCAdded"))));
+}
+
+#[test]
+fn a_reply_on_another_page_to_a_removed_popup_goes_too() {
+    let objs: Vec<Vec<u8>> = vec![
+        b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
+        b"<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>".to_vec(),
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] /Contents 5 0 R /Annots [6 0 R 8 0 R] >>".to_vec(),
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] /Contents 5 0 R /Annots [7 0 R] >>".to_vec(),
+        stream("", b"BT ET"),
+        b"<< /Type /Annot /Subtype /Text /Rect [20 20 40 40] /Contents (PARENT-NOTE) /Popup 8 0 R >>".to_vec(),
+        b"<< /Type /Annot /Subtype /Text /Rect [250 250 270 270] /IRT 8 0 R /Contents (POPUP-REPLY) >>".to_vec(),
+        b"<< /Type /Annot /Subtype /Popup /Rect [200 150 290 190] /Parent 6 0 R /Contents (POPUP-TEXT) >>".to_vec(),
+    ];
+    let mut doc = pdf(objs);
+    mark(&mut doc, 0, &[[10.0, 10.0, 70.0, 50.0]], "");
+    apply(&mut doc, None).unwrap();
+    let second = pdfcraft_model::pages(&doc).swap_remove(1);
+    assert!(annots_of(&doc, &second.dict).is_empty());
+    let bytes = write_full(&doc, &SaveOptions { object_streams: false, ..SaveOptions::default() }).unwrap();
+    for gone in [&b"POPUP-REPLY"[..], b"POPUP-TEXT", b"PARENT-NOTE"] {
+        assert!(!bytes.windows(gone.len()).any(|w| w == gone), "{} survived", String::from_utf8_lossy(gone));
+    }
 }

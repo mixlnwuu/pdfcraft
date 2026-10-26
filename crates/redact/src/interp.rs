@@ -21,12 +21,24 @@ use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use pdfcraft_content::{Matrix, Op, Pieces, contains, num, overlaps, serialize_ops, string};
-use pdfcraft_cos::{CosError, Dict, Document, ObjRef, Object, Stream};
+use pdfcraft_cos::{CosError, DecodeBudget, Dict, Document, MAX_PAGE_FORMS, ObjRef, Object, Stream};
 
 use crate::{RedactError, Report, image, page_streams, tags};
 use pdfcraft_fonts::pdf::Metrics;
 
-const MAX_DEPTH: usize = 12;
+/// How deep this pass follows form XObjects. A form past it is removed rather than walked, which
+/// is the fail-safe choice for a redaction -- marked content inside a form we cannot read would
+/// otherwise survive -- but it also removes whatever else that form drew, marked or not. So the
+/// limit has to reach as deep as anything the reader can see: the renderer follows forms to 50
+/// (`MAX_NESTED_INTERPRETATION_DEPTH`) and so does Edit text's reader (`text::MAX_FORM_DEPTH`).
+/// At 12, a page with a 13-deep chain lost the text of its innermost form even with nothing in it
+/// marked (#3645); past 50 nothing is drawn by any of the three, so removing it costs nothing
+/// visible.
+pub(crate) const MAX_DEPTH: usize = 50;
+
+// A form a reader still shows must be walkable here, or a redaction removes content that is
+// visible; the build says so rather than a test, so the two limits cannot drift apart.
+const _: () = assert!(MAX_DEPTH >= pdfcraft_edit::text::MAX_FORM_DEPTH);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Mode {
@@ -106,10 +118,16 @@ pub(crate) struct Scope<'a> {
     fonts: HashMap<Vec<u8>, Rc<Metrics>>,
     used_names: Vec<Vec<u8>>,
     depth: usize,
+    /// Form entries and decoded bytes left for this page, its content streams already charged:
+    /// shared forms drawn from other shared forms would otherwise multiply the work with every
+    /// level.
+    budget: DecodeBudget,
 }
 
 impl<'a> Scope<'a> {
-    pub fn new(rects: &'a [[f64; 4]], mode: Mode, report: &'a mut Report) -> Self {
+    /// A scope whose form walk spends `budget`, what is left of the page's allowance after its
+    /// content streams were decoded.
+    pub fn new(rects: &'a [[f64; 4]], mode: Mode, report: &'a mut Report, budget: DecodeBudget) -> Self {
         Scope {
             rects,
             mode,
@@ -124,6 +142,7 @@ impl<'a> Scope<'a> {
             fonts: HashMap::new(),
             used_names: Vec::new(),
             depth: 0,
+            budget,
         }
     }
 
@@ -408,7 +427,7 @@ pub(crate) fn prune(xo: &mut Dict, replaced: &[Vec<u8>], content: &[Vec<u8>]) {
     }
     let joined = Pieces::join(content);
     let ops = joined.parse().ops;
-    let still_drawn = |n: &[u8]| ops.iter().any(|op| op.is("Do") && op.name(0) == Some(n));
+    let still_drawn = |n: &[u8]| ops.iter().any(|op| op.is("Do") && op.last_name() == Some(n));
     for n in replaced {
         if !still_drawn(n) {
             xo.remove(n);
@@ -423,7 +442,7 @@ fn content_draws(doc: &Document, content: &[Vec<u8>], xo: &Dict, name: &[u8], de
     let joined = Pieces::join(content);
     let ops = joined.parse().ops;
     for op in ops.iter().filter(|op| op.is("Do")) {
-        let Some(n) = op.name(0) else { continue };
+        let Some(n) = op.last_name() else { continue };
         if n == name {
             return Some(true);
         }
@@ -609,14 +628,7 @@ fn unlink_from_forms(doc: &mut Document, holders: &[ObjRef], doomed: &HashSet<Ob
                 continue;
             }
             let data = form.decoded()?;
-            let mut pruned = false;
-            for name in doomed_names {
-                match content_draws(doc, std::slice::from_ref(&data), &xo, &name, 0, &mut HashSet::new()) {
-                    Some(true) => {}
-                    Some(false) => pruned |= xo.remove(&name).is_some(),
-                    None => return Err(CosError::Syntax { offset: 0, detail: "redaction could not fully inspect shared form resources".into() }),
-                }
-            }
+            let mut pruned = prune_doomed_xobjects(doc, std::slice::from_ref(&data), &mut xo, &doomed_names)?;
             if pruned {
                 res.set(b"XObject".to_vec(), Object::Dict(xo));
             }
@@ -628,6 +640,18 @@ fn unlink_from_forms(doc: &mut Document, holders: &[ObjRef], doomed: &HashSet<Ob
         }
     }
     Ok(())
+}
+
+fn prune_doomed_xobjects(doc: &Document, content: &[Vec<u8>], xo: &mut Dict, doomed_names: &[Vec<u8>]) -> Result<bool, CosError> {
+    let mut pruned = false;
+    for name in doomed_names {
+        match content_draws(doc, content, xo, name, 0, &mut HashSet::new()) {
+            Some(true) => {}
+            Some(false) => pruned |= xo.remove(name).is_some(),
+            None => return Err(CosError::Syntax { offset: 0, detail: "redaction could not fully inspect shared form resources".into() }),
+        }
+    }
+    Ok(pruned)
 }
 
 /// The clip that hides everything inside each region: one even-odd clip per region (a big
@@ -665,7 +689,7 @@ fn resource_ops(doc: &Document, res: &Dict, content: &[Vec<u8>]) -> Result<Vec<O
     while cursor < ops.len() {
         let op = &ops[cursor];
         if op.is("Do")
-            && let Some(r) = op.name(0).and_then(|n| xobjects.get(n)).and_then(Object::as_ref)
+            && let Some(r) = op.last_name().and_then(|n| xobjects.get(n)).and_then(Object::as_ref)
             && seen.insert(r)
             && let Object::Stream(s) = &*doc.get(r)
             && s.dict.name(b"Subtype") == Some(b"Form")
@@ -710,7 +734,7 @@ fn prune_form_resources(doc: &Document, res: &mut Dict, content: &[Vec<u8>]) -> 
     let mut xo = res_dict(doc, res, b"XObject");
     let names: Vec<Vec<u8>> = xo.iter().map(|(n, _)| n.to_vec()).collect();
     for name in names {
-        if !ops.iter().any(|op| op.is("Do") && op.name(0) == Some(&name)) {
+        if !ops.iter().any(|op| op.is("Do") && op.last_name() == Some(&name)) {
             xo.remove(&name);
         }
     }
@@ -1197,7 +1221,7 @@ fn xobject(
     xobjects: &mut Dict,
     out: &mut Output,
 ) -> Option<Option<Op>> {
-    let name = op.name(0)?.to_vec();
+    let name = op.last_name()?.to_vec();
     let r = xobjects.get(&name)?.as_ref()?;
     let obj = doc.get(r);
     let Object::Stream(s) = &*obj else { return None };
@@ -1257,6 +1281,9 @@ fn xobject(
             {
                 return None;
             }
+            // Too deep: this form cannot be read, so it goes (Apply) or the page is left alone
+            // (Verify), as a form that will not decode does. The page's decode budget below is what
+            // keeps a fan-out or a cycle from costing 2^50 walks.
             if scope.depth >= MAX_DEPTH {
                 if scope.mode == Mode::Verify {
                     // Sanitization removes a Form it cannot enter, so the verification scan
@@ -1272,8 +1299,25 @@ fn xobject(
                 return Some(None);
             }
             // Strict, like page content: a Form read only in part counts as undecodable.
-            let data = match s.decoded_strict() {
+            let data = if scope.budget.enter_form() {
+                scope.budget.decode_strict(s)
+            } else {
+                Err(CosError::Filter(format!("the page draws more than {MAX_PAGE_FORMS} form XObjects")))
+            };
+            let data = match data {
                 Ok(d) => d,
+                // Past the page's budget nothing more is read: apply refuses the page, and
+                // verification counts the form as content that may remain.
+                Err(e) if scope.budget.exhausted() => {
+                    if scope.mode == Mode::Apply {
+                        out.error = Some(e);
+                    } else if scope.everywhere() {
+                        scope.layer_blocks += 1;
+                    } else {
+                        out.residue += 1;
+                    }
+                    return None;
+                }
                 Err(_) if scope.mode == Mode::Apply => {
                     scope.report.forms_removed += 1;
                     out.replaced.push(name);

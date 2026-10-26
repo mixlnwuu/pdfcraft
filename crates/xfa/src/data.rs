@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use pdfcraft_cos::{Dict, Document, ObjRef, Object, PdfString, Stream};
 
 use crate::XfaError;
-use crate::model::{Field, Node, SomIndices, Template};
+use crate::model::{Field, Node, SomIndices, Template, Ui};
 use crate::packets::{Encoding, encode};
 
 const XFA_DATA_NS: &str = "http://www.xfa.org/schema/xfa-data/1.0/";
@@ -441,11 +441,8 @@ pub fn pattern_to_iso(text: &str, pattern: &str) -> Option<String> {
             "yyyy" | "yy" | "mm" | "m" | "dd" | "d" => {
                 // Digits up to the next literal (or a fixed width).
                 let fixed = matches!(t.as_str(), "yyyy" | "yy" | "mm" | "dd");
-                let width = if fixed {
-                    t.len()
-                } else {
-                    rest.chars().take_while(|c| c.is_ascii_digit()).count().min(if t == "d" || t == "m" { 2 } else { 4 })
-                };
+                let width =
+                    if fixed { t.len() } else { rest.chars().take_while(char::is_ascii_digit).count().min(if t == "d" || t == "m" { 2 } else { 4 }) };
                 let digits: String = rest.chars().take(width).collect();
                 if digits.is_empty() || !digits.chars().all(|c| c.is_ascii_digit()) {
                     return None;
@@ -519,6 +516,21 @@ fn escape(s: &str) -> (String, bool) {
 const MAX_NEW_NODES: usize = 20_000;
 /// Highest same-name sibling index a write follows.
 const MAX_INDEX: usize = 10_000;
+/// Most bytes of names the nodes one write creates hold together: every sibling an index
+/// skips over gets its own copy of the name.
+const MAX_NEW_NAME_BYTES: usize = 4 << 20;
+
+/// What one write may still create: nodes and bytes of their names.
+struct NewNodes {
+    nodes: usize,
+    name_bytes: usize,
+}
+
+impl NewNodes {
+    fn new() -> NewNodes {
+        NewNodes { nodes: MAX_NEW_NODES, name_bytes: MAX_NEW_NAME_BYTES }
+    }
+}
 
 /// A data tree being built for writing.
 #[derive(Default)]
@@ -533,8 +545,8 @@ struct Build {
 impl Build {
     /// The node at `path` below this one, created as needed. `None` when the path is deeper
     /// than [`MAX_DEPTH`], an index is above [`MAX_INDEX`], or creating it would spend more
-    /// than `budget` new nodes.
-    fn at(&mut self, path: &[(String, usize)], budget: &mut usize) -> Option<&mut Build> {
+    /// new nodes or name bytes than `budget` holds.
+    fn at(&mut self, path: &[(String, usize)], budget: &mut NewNodes) -> Option<&mut Build> {
         if path.len() > MAX_DEPTH {
             return None;
         }
@@ -547,15 +559,15 @@ impl Build {
             let have = node.by_name.get(&name).map_or(0, Vec::len);
             if *idx >= have {
                 let need = idx - have + 1;
-                if need > *budget {
+                let bytes = need.saturating_mul(name.len());
+                if need > budget.nodes || bytes > budget.name_bytes {
                     return None;
                 }
-                *budget -= need;
-                for _ in 0..need {
-                    let pos = node.children.len();
-                    node.by_name.entry(name.clone()).or_default().push(pos);
-                    node.children.push(Build { name: name.clone(), ..Default::default() });
-                }
+                budget.nodes -= need;
+                budget.name_bytes -= bytes;
+                let start = node.children.len();
+                node.children.extend((0..need).map(|_| Build { name: name.clone(), ..Default::default() }));
+                node.by_name.entry(name.clone()).or_default().extend(start..start + need);
             }
             let pos = *node.by_name.get(&name)?.get(*idx)?;
             node = node.children.get_mut(pos)?;
@@ -675,7 +687,7 @@ const CONTROL: &str = "Characters XML can't hold were left out of the XFA data o
 /// Fresh data for `wants`: the children of an `xfa:data` element.
 fn build_children(wants: &[Want], warnings: &mut Vec<String>) -> String {
     let mut root = Build::default();
-    let mut budget = MAX_NEW_NODES;
+    let mut budget = NewNodes::new();
     for w in wants {
         match root.at(&w.path, &mut budget) {
             Some(node) => node.text = w.text.clone(),
@@ -801,19 +813,52 @@ pub struct ImportNode {
 /// Deepest data an import keeps.
 const MAX_IMPORT_DEPTH: usize = MAX_DEPTH;
 
-/// `n` as an [`ImportNode`], counting nodes against `budget`; `None` past the depth or node
-/// limits.
-fn import_node(n: roxmltree::Node, depth: usize, budget: &mut usize) -> Option<ImportNode> {
-    if depth > MAX_IMPORT_DEPTH || *budget == 0 {
-        return None;
+/// Most bytes of names, namespaces, attributes and text an import copies out of its file: a
+/// namespace declared once is copied into every element and attribute that inherits it.
+pub(crate) const MAX_IMPORT_BYTES: usize = 4 * MAX_IMPORT;
+
+/// What an import may still copy: nodes and bytes.
+struct ImportBudget {
+    nodes: usize,
+    bytes: usize,
+}
+
+impl ImportBudget {
+    fn new() -> ImportBudget {
+        ImportBudget { nodes: MAX_NODES as usize, bytes: MAX_IMPORT_BYTES }
     }
-    *budget -= 1;
+
+    fn take_bytes(&mut self, n: usize) -> Result<(), XfaError> {
+        self.bytes = self
+            .bytes
+            .checked_sub(n)
+            .ok_or_else(|| XfaError::TooLarge(format!("the data file expands to more than {} MB", MAX_IMPORT_BYTES >> 20)))?;
+        Ok(())
+    }
+}
+
+/// `n` as an [`ImportNode`], counting nodes and copied bytes against `budget`; `TooLarge` past
+/// the depth or either budget.
+fn import_node(n: roxmltree::Node, depth: usize, budget: &mut ImportBudget) -> Result<ImportNode, XfaError> {
+    if depth > MAX_IMPORT_DEPTH {
+        return Err(XfaError::TooLarge(format!("the data file nests more than {MAX_IMPORT_DEPTH} levels deep")));
+    }
+    budget.nodes = budget.nodes.checked_sub(1).ok_or_else(|| XfaError::TooLarge("the data file holds too many nodes".into()))?;
+    let name = n.tag_name().name();
+    let ns = n.tag_name().namespace();
+    budget.take_bytes(name.len().saturating_add(ns.map_or(0, str::len)))?;
+    let mut attrs = Vec::new();
+    for a in n.attributes().filter(|a| a.name() != "xmlns" && a.namespace() != Some("http://www.w3.org/2000/xmlns/")) {
+        budget.take_bytes(a.namespace().map_or(0, str::len).saturating_add(a.name().len()).saturating_add(a.value().len()))?;
+        attrs.push((a.namespace().map(str::to_string), a.name().to_string(), a.value().to_string()));
+    }
     let mut children = Vec::new();
     let mut text = String::new();
     for c in n.children() {
         if c.is_element() {
             children.push(import_node(c, depth + 1, budget)?);
         } else if let Some(t) = c.text() {
+            budget.take_bytes(t.len())?;
             text.push_str(t);
         }
     }
@@ -821,17 +866,7 @@ fn import_node(n: roxmltree::Node, depth: usize, budget: &mut usize) -> Option<I
     if !children.is_empty() && text.trim().is_empty() {
         text.clear();
     }
-    Some(ImportNode {
-        name: n.tag_name().name().to_string(),
-        ns: n.tag_name().namespace().map(str::to_string),
-        attrs: n
-            .attributes()
-            .filter(|a| a.name() != "xmlns" && a.namespace() != Some("http://www.w3.org/2000/xmlns/"))
-            .map(|a| (a.namespace().map(str::to_string), a.name().to_string(), a.value().to_string()))
-            .collect(),
-        text,
-        children,
-    })
+    Ok(ImportNode { name: name.to_string(), ns: ns.map(str::to_string), attrs, text, children })
 }
 
 /// `nodes` as markup for a packet whose XFA data namespace prefix is `xfa` (declared where
@@ -1072,7 +1107,7 @@ fn merge_values(src: &str, data: roxmltree::Node, wants: &[Want], edits: &mut Ve
     let tree = data.document();
     // Nodes to add, per existing element they go into.
     let mut added: Vec<(roxmltree::NodeId, Build)> = Vec::new();
-    let mut budget = MAX_NEW_NODES;
+    let mut budget = NewNodes::new();
     for w in wants {
         let (escaped, dropped) = escape(&w.text);
         let mut node = data;
@@ -1379,15 +1414,14 @@ pub fn parse_data_file(text: &str, expect_root: Option<&str>) -> Result<Vec<Impo
             {
                 return Err(XfaError::Malformed(format!("the data file's root is <{local}>; this form's data root is <{want}>")));
             }
-            let mut budget = MAX_NODES as usize;
-            let node = import_node(root, 0, &mut budget).ok_or_else(|| XfaError::TooLarge("the data file holds too many nodes".into()))?;
+            let node = import_node(root, 0, &mut ImportBudget::new())?;
             return Ok(vec![node]);
         }
     };
-    let mut budget = MAX_NODES as usize;
+    let mut budget = ImportBudget::new();
     let mut out = Vec::new();
     for c in data.children().filter(|c| c.is_element()) {
-        out.push(import_node(c, 1, &mut budget).ok_or_else(|| XfaError::TooLarge("the data file holds too many nodes".into()))?);
+        out.push(import_node(c, 1, &mut budget)?);
     }
     Ok(out)
 }
@@ -1516,6 +1550,16 @@ fn element_markup(src: &str, n: roxmltree::Node) -> Option<String> {
     Some(format!("{}{decls}{}", text.get(..name_end)?, text.get(name_end..)?))
 }
 
+/// Most instance nodes one [`write_data_ops`] queues over all its passes (a removal starts a new
+/// pass, which asks for the instances again).
+const MAX_ENSURED: usize = 200_000;
+
+// Instance nodes write_data_ops has queued on this thread, for tests that bound its work.
+#[cfg(test)]
+thread_local! {
+    pub(crate) static ENSURED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// Apply `ops` to the datasets packet, in order, as one rewrite of it: everything one script
 /// event changed becomes a single new datasets stream. When the packet is already the stream
 /// `reuse` (written earlier for the same event), that stream is replaced in place instead of
@@ -1525,6 +1569,9 @@ pub fn write_data_ops(doc: &mut Document, ops: &[DataOp], reuse: Option<ObjRef>)
     let mut steps: Vec<Vec<Want>> = Vec::new();
     let mut removes: Vec<Option<DataPath>> = Vec::new();
     let mut run: Vec<Want> = Vec::new();
+    // Instances queued in this run, by parent and name: asking for more only queues the rest.
+    let mut queued: HashMap<(&DataPath, &str), usize> = HashMap::new();
+    let (mut ensured, mut capped) = (0usize, false);
     let flush = |run: &mut Vec<Want>, steps: &mut Vec<Vec<Want>>, removes: &mut Vec<Option<DataPath>>| {
         if !run.is_empty() {
             let mut seen = std::collections::HashSet::new();
@@ -1541,7 +1588,17 @@ pub fn write_data_ops(doc: &mut Document, ops: &[DataOp], reuse: Option<ObjRef>)
                 run.push(Want { som: path_som(path), path: path.clone(), text: text.clone(), ensure: false });
             }
             DataOp::Instances { parent, name, count } => {
-                for k in 0..(*count).min(MAX_INDEX) {
+                let done = queued.entry((parent, name.as_str())).or_insert(0);
+                while *done < (*count).min(MAX_INDEX) {
+                    if ensured >= MAX_ENSURED {
+                        capped = true;
+                        break;
+                    }
+                    ensured += 1;
+                    #[cfg(test)]
+                    ENSURED.with(|n| n.set(n.get() + 1));
+                    let k = *done;
+                    *done += 1;
                     let mut path = parent.clone();
                     path.push((name.clone(), k));
                     run.push(Want { som: format!("{name}[{k}]"), path, text: String::new(), ensure: true });
@@ -1549,6 +1606,7 @@ pub fn write_data_ops(doc: &mut Document, ops: &[DataOp], reuse: Option<ObjRef>)
             }
             DataOp::Remove(path) if !path.is_empty() => {
                 flush(&mut run, &mut steps, &mut removes);
+                queued.clear();
                 steps.push(Vec::new());
                 removes.push(Some(path.clone()));
             }
@@ -1564,15 +1622,19 @@ pub fn write_data_ops(doc: &mut Document, ops: &[DataOp], reuse: Option<ObjRef>)
             None => Op::Values(w),
         })
         .collect();
-    rewrite(doc, &plan, reuse)
+    let mut written = rewrite(doc, &plan, reuse)?;
+    if capped {
+        written.warnings.push(format!("XFA data instances not written past {MAX_ENSURED}: the rows were added and removed too often"));
+    }
+    Ok(written)
 }
 
 /// Put `bytes` in the document as a datasets stream: in place of `old` when that is the stream
-/// `reuse`, else as a new object.
+/// `reuse` or already an unsaved overlay stream of `doc`, else as a new object.
 fn put_stream(doc: &mut Document, old: Option<&Object>, reuse: Option<ObjRef>, bytes: &[u8]) -> ObjRef {
     let stream = Object::Stream(Stream::flate(Dict::new(), bytes));
-    match (old.and_then(Object::as_ref), reuse) {
-        (Some(r), Some(keep)) if r == keep => {
+    match old.and_then(Object::as_ref) {
+        Some(r) if reuse == Some(r) || doc.is_edited(r.num) => {
             doc.set(r, stream);
             r
         }
@@ -1731,4 +1793,211 @@ pub fn is_on(text: &str, on: &str) -> bool {
         return true;
     }
     !matches!(t.to_ascii_lowercase().as_str(), "" | "0" | "off" | "false" | "no") && on.trim().is_empty()
+}
+
+/// The datasets stream's object reference in `doc` (the `datasets` item in the `/XFA` array, or
+/// the single `/XFA` stream), when `doc` has one.
+fn datasets_stream_ref(doc: &Document) -> Option<ObjRef> {
+    let root = doc.root()?;
+    let catalog = doc.get(root);
+    let acro = catalog.as_dict()?.get(b"AcroForm").map(|a| doc.resolve(a))?;
+    let xfa = acro.as_dict()?.get(b"XFA")?;
+    match &*doc.resolve(xfa) {
+        Object::Array(items) => {
+            let at = (0..items.len())
+                .step_by(2)
+                .find(|&i| items.get(i).and_then(|n| n.as_string()).is_some_and(|s| s.to_text() == "datasets") && i + 1 < items.len())?;
+            items.get(at + 1)?.as_ref()
+        }
+        Object::Stream(_) => xfa.as_ref(),
+        _ => None,
+    }
+}
+
+/// The SOM path and default value of every AcroForm text field with the Password flag (bit 14,
+/// `1 << 13`) in `doc`, for static XFA forms whose password fields set the flag in the AcroForm
+/// dictionary.
+fn acro_password_fields(doc: &Document) -> Vec<(String, String)> {
+    const PASSWORD_FLAG: i64 = 1 << 13;
+    let Some(root) = doc.root() else { return Vec::new() };
+    let catalog = doc.get(root);
+    let Some(acro) = catalog.as_dict().and_then(|c| c.get(b"AcroForm")).map(|a| doc.resolve(a)) else { return Vec::new() };
+    let Some(top) = acro.as_dict().and_then(|a| a.get(b"Fields")).map(|f| doc.resolve(f)).and_then(|f| f.as_array().cloned()) else {
+        return Vec::new();
+    };
+    struct AcroWalk<'a> {
+        doc: &'a Document,
+        seen: std::collections::HashSet<ObjRef>,
+        out: Vec<(String, String)>,
+    }
+    impl AcroWalk<'_> {
+        fn walk(
+            &mut self,
+            items: &[Object],
+            parent_name: &str,
+            inherited_ft: Option<&[u8]>,
+            inherited_ff: i64,
+            inherited_dv: Option<&str>,
+            depth: usize,
+        ) {
+            if depth > 32 {
+                return;
+            }
+            for item in items {
+                let Some(r) = item.as_ref() else { continue };
+                if !self.seen.insert(r) {
+                    continue;
+                }
+                let obj = self.doc.get(r);
+                let Some(d) = obj.as_dict() else { continue };
+                let ft = d.name(b"FT").or(inherited_ft);
+                let ff = d.int(b"Ff").unwrap_or(inherited_ff);
+                let dv_own = text_of(self.doc, d, b"DV");
+                let dv = dv_own.as_deref().or(inherited_dv);
+                let t = text_of(self.doc, d, b"T");
+                let full_name = match (&t, parent_name.is_empty()) {
+                    (Some(seg), true) => seg.clone(),
+                    (Some(seg), false) => format!("{parent_name}.{seg}"),
+                    (None, _) => parent_name.to_string(),
+                };
+                let kids = d.get(b"Kids").map(|k| self.doc.resolve(k)).and_then(|k| k.as_array().cloned()).unwrap_or_default();
+                let has_named_kid = kids.iter().filter_map(Object::as_ref).any(|kr| self.doc.get(kr).as_dict().is_some_and(|kd| kd.contains(b"T")));
+                if !has_named_kid && ft == Some(b"Tx") && (ff & PASSWORD_FLAG) != 0 {
+                    let som = text_of(self.doc, d, crate::pdf::SOM_KEY).unwrap_or_else(|| full_name.clone());
+                    if !som.is_empty() {
+                        self.out.push((som, dv.unwrap_or_default().to_string()));
+                    }
+                }
+                if !kids.is_empty() {
+                    self.walk(&kids, &full_name, ft, ff, dv, depth + 1);
+                }
+            }
+        }
+    }
+    let mut w = AcroWalk { doc, seen: std::collections::HashSet::new(), out: Vec::new() };
+    w.walk(&top, "", None, 0, None, 0);
+    w.out
+}
+
+/// The `Want` entries needed to restore password fields in `doc`'s datasets packet to their
+/// defaults (or empty when they have no default).
+fn password_dataset_wants(doc: &Document) -> Vec<Want> {
+    if datasets_stream_ref(doc).is_none() {
+        return Vec::new();
+    }
+    let Ok(Some(packet)) = datasets_packet(doc) else { return Vec::new() };
+    let Some(data) = parse_datasets(&packet) else { return Vec::new() };
+    with_template(doc, None, |tpl| {
+        let mut candidates: Vec<(String, DataPath, String)> = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        if let Some(t) = tpl {
+            struct Walk<'a> {
+                tpl: &'a Template,
+                data: &'a DataNode,
+                nodes: usize,
+                seen: &'a mut std::collections::HashSet<DataPath>,
+                out: &'a mut Vec<(String, DataPath, String)>,
+            }
+            impl Walk<'_> {
+                fn child_som(parent: &str, name: Option<&str>, index: usize) -> String {
+                    match name {
+                        Some(n) if !parent.is_empty() => format!("{parent}.{n}[{index}]"),
+                        Some(n) => format!("{n}[{index}]"),
+                        None => parent.to_string(),
+                    }
+                }
+                fn walk(&mut self, children: &[Node], parent_som: &str, depth: usize) {
+                    if depth > MAX_DEPTH || self.nodes >= crate::script::MAX_FORM_NODES {
+                        return;
+                    }
+                    let sibs = SomIndices::of(children);
+                    for (i, n) in children.iter().enumerate() {
+                        if self.nodes >= crate::script::MAX_FORM_NODES {
+                            break;
+                        }
+                        self.nodes += 1;
+                        let sib = sibs.at(i);
+                        match n {
+                            Node::Subform(sf) => {
+                                let from_data = match &sf.common.name {
+                                    Some(name) if sf.occur.max != Some(1) => self.data.count(&data_path(self.tpl, parent_som), name),
+                                    _ => 0,
+                                };
+                                let instances = crate::layout::instance_count(&sf.occur, from_data).max(from_data);
+                                for k in 0..instances {
+                                    if k > 0 {
+                                        if self.nodes >= crate::script::MAX_FORM_NODES {
+                                            break;
+                                        }
+                                        self.nodes += 1;
+                                    }
+                                    let som = Self::child_som(parent_som, sf.common.name.as_deref(), sib + k);
+                                    self.walk(&sf.children, &som, depth + 1);
+                                }
+                            }
+                            Node::Area(a) => {
+                                let som = Self::child_som(parent_som, a.common.name.as_deref(), sib);
+                                self.walk(&a.children, &som, depth + 1);
+                            }
+                            Node::Field(f) if f.ui == Ui::PasswordEdit => {
+                                let som = Self::child_som(parent_som, f.common.name.as_deref().or(Some("field")), sib);
+                                let path = data_path(self.tpl, &som);
+                                if !path.is_empty() && self.seen.insert(path.clone()) {
+                                    let default = f.value.plain().map(|v| f.saved_value(v.trim())).unwrap_or_default();
+                                    self.out.push((som, path, default));
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            let root = Node::Subform(Box::new(t.root.clone()));
+            let mut w = Walk { tpl: t, data: &data, nodes: 0, seen: &mut seen, out: &mut candidates };
+            w.walk(std::slice::from_ref(&root), "", 0);
+            if let Some(ps) = &t.root.page_set {
+                for (i, area) in ps.areas.iter().enumerate() {
+                    let som = area.name.clone().map(|n| format!("{n}[0]")).unwrap_or_else(|| format!("#pageArea[{i}]"));
+                    w.walk(&area.items, &som, 1);
+                }
+            }
+        }
+        for (som, default) in acro_password_fields(doc) {
+            let path = path_of(tpl, &som);
+            if !path.is_empty() && seen.insert(path.clone()) {
+                candidates.push((som, path, default));
+            }
+        }
+        candidates
+            .into_iter()
+            .filter_map(|(som, path, default)| {
+                let cur = data.value_at(&path)?;
+                (!cur.is_empty() && cur != default).then_some(Want { som, path, text: default, ensure: false })
+            })
+            .collect()
+    })
+}
+
+/// Whether any XFA password field (`<passwordEdit/>` or an AcroForm text field with the Password
+/// flag) holds a value in `doc`'s datasets packet beyond its default (#3944).
+pub fn has_password_values(doc: &Document) -> bool {
+    !password_dataset_wants(doc).is_empty()
+}
+
+/// Clear typed password values from `doc`'s XFA datasets packet (restoring a template default
+/// where the field has one, else emptying the element), replacing the datasets stream in place
+/// (#3944). Returns how many password fields were cleared in the datasets.
+pub fn clear_password_values(doc: &mut Document) -> Result<usize, XfaError> {
+    let wants = password_dataset_wants(doc);
+    if wants.is_empty() {
+        return Ok(0);
+    }
+    let count = wants.len();
+    let reuse = datasets_stream_ref(doc);
+    let report = rewrite(doc, &[Op::Values(&wants)], reuse)?;
+    if !report.written || !password_dataset_wants(doc).is_empty() {
+        let reason = report.warnings.first().map_or("the XFA datasets password values could not be cleared", String::as_str);
+        return Err(XfaError::Malformed(reason.to_string()));
+    }
+    Ok(count)
 }
