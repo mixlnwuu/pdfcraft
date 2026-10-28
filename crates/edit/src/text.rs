@@ -84,6 +84,34 @@ pub struct TextLine {
     /// `ink`, and whether joining put a space before it. Empty when the line's text was put
     /// into another order (see [`TextLine::runs`]).
     runs: Vec<(String, usize, bool)>,
+    /// Each show of the line as drawn, in content order (Thai edition: [`lift_paragraph`]).
+    placed: Vec<Placed>,
+}
+
+/// A show of a [`TextLine`] as drawn: its operator (and those an `/ActualText` span joined to it),
+/// and the text matrix, text state and CTM it starts with, and its advance (text space), by which
+/// lifting it out leaves the pen where it was.
+#[derive(Clone, Debug, PartialEq)]
+struct Placed {
+    ops: Vec<usize>,
+    tm: [f64; 6],
+    ctm: [f64; 6],
+    state: TextState,
+    advance: f64,
+    vertical: bool,
+}
+
+impl Placed {
+    fn of(s: &Shown) -> Self {
+        Placed {
+            ops: std::iter::once(s.op).chain(s.extra_ops.iter().copied()).collect(),
+            tm: s.tm.0,
+            ctm: s.state.ctm.0,
+            state: TextState::of(&s.state),
+            advance: s.advance,
+            vertical: s.state.vertical.is_some(),
+        }
+    }
 }
 
 impl TextLine {
@@ -823,6 +851,106 @@ pub(crate) fn rewritten_contents(doc: &mut Document, streams: &[(Object, Vec<u8>
     }
 }
 
+/// Thai edition: lift paragraph `block` of `page` out of the page's content, exactly as drawn,
+/// for Arrange to put in front of or behind everything else. Each of its shows goes into a text
+/// object of its own, from its own CTM, text matrix and text state (no reflow: its glyphs and
+/// their positions stay as they were), and where it was the page keeps a displacement of the
+/// same advance, so text after it in the same text object stays where it was. The page's
+/// `/Contents` is rewritten without it; returns the operators that draw it, balanced (`q`/`Q`,
+/// `BT`/`ET`), for a stream of its own.
+///
+/// Refused, with nothing changed, for what can't be drawn again from its show alone: clipping
+/// text, text in an optional content layer, text drawn twice (a fake-bold copy), vertical text,
+/// shows joined by `/ActualText`, and the `'` and `"` operators, which also move to the next line.
+pub fn lift_paragraph(doc: &mut Document, page: usize, block: usize) -> Result<Vec<u8>, EditError> {
+    let p = page_dict(doc, page)?;
+    let lines = text_lines(doc, page)?;
+    let blocks = group_blocks(&lines);
+    let b = blocks.get(block).ok_or_else(|| EditError::Invalid(format!("page {} has no paragraph {}", page + 1, block + 1)))?;
+    let members: Vec<&TextLine> = b.lines.iter().filter_map(|i| lines.get(*i)).collect();
+    if members.is_empty() {
+        return Err(EditError::Invalid("the paragraph has no source runs".into()));
+    }
+    for m in &members {
+        m.ensure_editable()?;
+        if m.clips {
+            return Err(EditError::Invalid("this paragraph is used as a clipping path and can't be arranged".into()));
+        }
+        if !m.paint.layers.is_empty() {
+            return Err(EditError::Invalid("this paragraph is in a layer of the document and can't be arranged yet".into()));
+        }
+    }
+    // Another drawing on the same baseline (the paragraph's own lines are among what this finds).
+    let own: std::collections::HashSet<usize> = members.iter().flat_map(|m| m.ops.iter().copied()).collect();
+    if coincident_ops(&lines, &members).iter().any(|i| !own.contains(i)) {
+        return Err(EditError::Invalid("this paragraph is drawn twice (a bold effect or a hidden copy) and can't be arranged yet".into()));
+    }
+    let streams = content_streams(doc, &p.dict)?;
+    let pieces = Pieces::join(&streams.iter().map(|(_, d)| d.as_slice()).collect::<Vec<_>>());
+    let ops = pieces.parse().ops;
+    let n = pdfcraft_content::num;
+    let mut layer: Vec<Op> = Vec::new();
+    let mut keep: HashMap<usize, Op> = HashMap::new();
+    for placed in members.iter().flat_map(|m| m.placed.iter()) {
+        let [i] = placed.ops.as_slice() else {
+            return Err(EditError::Invalid("this paragraph carries replacement text (/ActualText) and can't be arranged yet".into()));
+        };
+        let op = ops.get(*i).ok_or_else(|| EditError::Invalid("the paragraph's operators could not be found".into()))?;
+        if !matches!(op.op.as_slice(), b"Tj" | b"TJ") {
+            return Err(EditError::Invalid("this paragraph moves to new lines inside its text and can't be arranged yet".into()));
+        }
+        if placed.vertical {
+            return Err(EditError::Invalid("vertical text can't be arranged yet".into()));
+        }
+        let state = &placed.state;
+        let size = state.font.as_ref().map_or(0.0, |(_, size)| *size);
+        // The displacement that takes the show's place: TJ moves the pen by -n / 1000 × size × scale.
+        let width = size * state.scale;
+        let shift = -placed.advance * 1000.0 / width;
+        if !(width.abs() > 1e-9 && shift.is_finite()) {
+            return Err(EditError::Invalid("the paragraph's text has no size and can't be arranged".into()));
+        }
+        keep.insert(*i, Op::new("TJ", vec![Object::Array(vec![n(shift)])]));
+        layer.push(Op::new("q", vec![]));
+        layer.push(Op::new("cm", placed.ctm.iter().map(|v| n(*v)).collect()));
+        for name in &state.ext_gstate {
+            layer.push(Op::new("gs", vec![Object::Name(name.clone())]));
+        }
+        layer.extend(state.stroke.iter().cloned());
+        if let Some(w) = state.line_width {
+            layer.push(Op::new("w", vec![n(w)]));
+        }
+        layer.push(Op::new("BT", vec![]));
+        layer.extend(state.ops());
+        if state.render_mode != 0 {
+            layer.push(Op::new("Tr", vec![Object::Int(state.render_mode)]));
+        }
+        layer.push(Op::new("Tm", placed.tm.iter().map(|v| n(*v)).collect()));
+        layer.push(Op { op: op.op.clone(), operands: op.operands.clone(), inline: None, span: 0..0 });
+        layer.push(Op::new("ET", vec![]));
+        layer.push(Op::new("Q", vec![]));
+    }
+    let new_data = splice(&pieces, &ops, |i| match keep.remove(&i) {
+        Some(displacement) => (vec![displacement], false),
+        None => (Vec::new(), true),
+    });
+    let contents = rewritten_contents(doc, &streams, new_data);
+    doc.update_dict(p.obj, |d| d.set(b"Contents".to_vec(), contents))?;
+    Ok(serialize_ops(&layer))
+}
+
+/// Thai edition: the content stream (its place in the page's `/Contents`) that paragraph `block`
+/// of `page` is drawn in alone, when it is: a paragraph [`lift_paragraph`] already lifted into a
+/// stream of its own. `None` when it shares its stream.
+pub fn paragraph_stream(doc: &Document, page: usize, block: usize) -> Result<Option<usize>, EditError> {
+    let lines = text_lines(doc, page)?;
+    let blocks = group_blocks(&lines);
+    let b = blocks.get(block).ok_or_else(|| EditError::Invalid(format!("page {} has no paragraph {}", page + 1, block + 1)))?;
+    let Some(stream) = b.lines.first().and_then(|i| lines.get(*i)).map(|l| l.stream) else { return Ok(None) };
+    let alone = lines.iter().enumerate().all(|(i, l)| (l.stream == stream) == b.lines.contains(&i));
+    Ok(alone.then_some(stream))
+}
+
 fn page_dict(doc: &Document, page: usize) -> Result<pdfcraft_model::Page, EditError> {
     pdfcraft_model::pages(doc).into_iter().nth(page).ok_or(EditError::NoSuchPage(page))
 }
@@ -1524,6 +1652,7 @@ fn text_lines_in(doc: &Document, p: &pdfcraft_model::Page, actual_text: bool) ->
             l.runs.push((s.text.clone(), l.ink.len(), spaced));
             l.ops.push(s.op);
             l.ops.extend(s.extra_ops.iter().copied());
+            l.placed.push(Placed::of(&s));
             l.decodable &= s.decodable;
             l.visual_order |= s.visual_order;
             l.actual_text |= s.actual_text;
@@ -1556,6 +1685,7 @@ fn text_lines_in(doc: &Document, p: &pdfcraft_model::Page, actual_text: bool) ->
                 unreadable_mode: s.state.unreadable.as_deref().map(str::to_owned),
                 runs: vec![(s.text.clone(), s.ink.len(), false)],
                 ops: std::iter::once(s.op).chain(s.extra_ops.iter().copied()).collect(),
+                placed: vec![Placed::of(&s)],
                 origin: Origin {
                     tm: s.tm.0,
                     tlm: s.tlm.0,
@@ -1639,6 +1769,7 @@ fn add_shown(lines: &mut Vec<TextLine>, last: &mut Option<Pen>, s: Shown, stream
         l.runs.push((s.text.clone(), l.ink.len(), spaced));
         l.ops.push(s.op);
         l.ops.extend(s.extra_ops.iter().copied());
+        l.placed.push(Placed::of(&s));
         l.decodable &= s.decodable;
         l.visual_order |= s.visual_order;
         l.actual_text |= s.actual_text;
@@ -1670,6 +1801,7 @@ fn add_shown(lines: &mut Vec<TextLine>, last: &mut Option<Pen>, s: Shown, stream
             unreadable_mode: s.state.unreadable.as_deref().map(str::to_owned),
             runs: vec![(s.text.clone(), s.ink.len(), false)],
             ops: std::iter::once(s.op).chain(s.extra_ops.iter().copied()).collect(),
+            placed: vec![Placed::of(&s)],
             origin: Origin {
                 tm: s.tm.0,
                 tlm: s.tlm.0,

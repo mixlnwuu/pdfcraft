@@ -118,6 +118,11 @@ if ($env:CRAFT_FONTS_DIR) {
 # the MSI and the portable zip take the whole folder, so new models ship without naming them here.
 $Models = Join-Path $Stage 'models'
 New-Item -ItemType Directory -Force -Path $Models | Out-Null
+# Thai edition: models already fetched into assets\models (git-ignored) are used as they are; xtask
+# checks each one's SHA-256 and fetches only what is missing or different, so a download host that is
+# down doesn't stop a release.
+$Cached = Join-Path $Root 'assets\models'
+if (Test-Path $Cached) { Copy-Item (Join-Path $Cached '*') $Models -Force }
 Push-Location $Root
 try { Invoke-Native 'cargo xtask models' { cargo xtask models $Models } } finally { Pop-Location }
 Remove-Item -Force (Join-Path $Models '*.part') -ErrorAction SilentlyContinue

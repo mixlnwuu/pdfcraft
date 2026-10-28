@@ -134,6 +134,12 @@ pub(crate) struct MoveBackground {
     /// The applied move's box. The page raster on screen still has the item where it was until
     /// its replacement arrives, so the preview stays up until then.
     settling: Option<[f64; 4]>,
+    /// Thai edition: the item alone, rendered over white and over black ...
+    alone: Vec<pdfcraft_render::RenderPool>,
+    alone_px: [Option<([usize; 2], Vec<u8>)>; 2],
+    /// ... and from the two, its own pixels with their transparency, which follow the pointer
+    /// instead of the page's pixels in its box (what lies under it stayed behind them).
+    item: Option<egui::TextureHandle>,
 }
 
 impl MoveBackground {
@@ -155,6 +161,8 @@ impl MoveBackground {
                 self.renderer = doc.added_content_preview(page, index).ok().map(|p| p.renderer());
                 self.from = on_page(doc.added(), page).into_iter().find(|(i, _)| *i == index).map(|(_, a)| a.content.rect());
                 self.picture = picture(page, index);
+                self.alone =
+                    [false, true].into_iter().filter_map(|black| doc.added_content_alone(page, index, black).ok().map(|p| p.renderer())).collect();
             }
         }
         if self.settling.is_some() {
@@ -167,7 +175,29 @@ impl MoveBackground {
         let tag = (scale * 1000.0) as u64;
         if self.tag != Some(tag) {
             renderer.set_queue(vec![pdfcraft_render::RenderRequest { page, scale, tag, ..Default::default() }]);
-            self.tag = Some(tag);
+            for alone in &self.alone {
+                alone.set_queue(vec![pdfcraft_render::RenderRequest { page, scale, tag, ..Default::default() }]);
+            }
+            (self.tag, self.alone_px, self.item) = (Some(tag), [None, None], None);
+        }
+        if self.alone.len() == 2 && self.item.is_none() {
+            for (alone, px) in self.alone.iter().zip(self.alone_px.iter_mut()) {
+                if let Some(out) = alone.try_recv()
+                    && out.error.is_none()
+                    && out.request.tag == tag
+                {
+                    *px = Some(([out.width as usize, out.height as usize], out.rgba.to_vec()));
+                }
+            }
+            if let [Some((size, white)), Some((black_size, black))] = &self.alone_px
+                && size == black_size
+                && white.len() == black.len()
+                && white.len() == size[0].saturating_mul(size[1]).saturating_mul(4)
+            {
+                let image = egui::ColorImage::new(*size, matte(white, black));
+                self.item = Some(ctx.load_texture("added-content-move-item", image, egui::TextureOptions::LINEAR));
+                self.alone_px = [None, None];
+            }
         }
         if let Some(out) = renderer.try_recv() {
             if out.error.is_some() {
@@ -241,7 +271,7 @@ impl MoveBackground {
         xf.paint_image(&painter, background.id(), 0.0, 0.0, 1.0, 1.0);
         // A pixel around the box, so its edges come along.
         let (r, to) = (r.expand(1.0), to.expand(1.0));
-        let mut mesh = egui::Mesh::with_texture(page_tex);
+        let mut mesh = egui::Mesh::with_texture(self.item.as_ref().map_or(page_tex, |t| t.id()));
         for (a, b) in [
             (r.left_top(), to.left_top()),
             (r.right_top(), to.right_top()),
@@ -255,6 +285,22 @@ impl MoveBackground {
         mesh.add_triangle(0, 2, 3);
         painter.add(egui::Shape::mesh(mesh));
     }
+}
+
+/// Thai edition: an item's premultiplied pixels from its renders over white and over black (RGBA,
+/// opaque): its alpha is how much of the white it hides, its colour what it lays over black.
+fn matte(white: &[u8], black: &[u8]) -> Vec<Color32> {
+    white
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(black.as_chunks::<4>().0)
+        .map(|([wr, wg, wb, _], [br, bg, bb, _])| {
+            let through = (u16::from(wr.saturating_sub(*br)) + u16::from(wg.saturating_sub(*bg)) + u16::from(wb.saturating_sub(*bb))) / 3;
+            let a = 255u8.saturating_sub(u8::try_from(through).unwrap_or(255));
+            Color32::from_rgba_premultiplied((*br).min(a), (*bg).min(a), (*bb).min(a), a)
+        })
+        .collect()
 }
 
 /// Text style for new text (the panel's Format controls set it).
@@ -361,6 +407,21 @@ pub(crate) fn select_grabs(xf: &PageXform, ptr: &PagePointer, page: usize, info:
         rect.expand(2.0).contains(p)
             || cv.selected == Some((page, index)) && handles(rect).into_iter().any(|(corner, _, _)| corner.distance(p) <= 6.0)
     })
+}
+
+/// Thai edition: in Edit text & images a corner of the selected added item (and a move or
+/// resize under way) takes the pointer ahead of the page's own paragraphs and images, whose
+/// boxes often lie under a new picture's corners.
+pub(crate) fn handle_grabs(xf: &PageXform, ptr: &PagePointer, page: usize, info: &DocInfo, added: &[Added], view: &DocView) -> bool {
+    let cv = &view.content;
+    if cv.grab.is_some_and(|(grab_page, _, _)| grab_page == page) {
+        return true;
+    }
+    let Some(p) = ptr.within(xf.rect) else { return false };
+    on_page(added, page)
+        .into_iter()
+        .filter(|(index, _)| cv.selected == Some((page, *index)))
+        .any(|(_, item)| handles(screen_rect(xf, info, page, item.content.rect())).into_iter().any(|(corner, _, _)| corner.distance(p) <= 6.0))
 }
 
 /// Pointer input on one page in Edit mode (`adding_text` with the Text tool). `true` when it
@@ -1520,6 +1581,21 @@ mod tests {
     use egui_kittest::kittest::Queryable;
 
     use super::*;
+
+    /// Thai edition: the moved item's own pixels: where it is clear the page under it doesn't come
+    /// along; opaque and half-covering pixels keep their colour.
+    #[test]
+    fn matte_recovers_transparency_from_white_and_black() {
+        // Clear, opaque red, and half-covering black.
+        let white = [255, 255, 255, 255, 255, 0, 0, 255, 128, 128, 128, 255];
+        let black = [0, 0, 0, 255, 255, 0, 0, 255, 0, 0, 0, 255];
+        let px = matte(&white, &black);
+        assert_eq!(px[0], Color32::TRANSPARENT);
+        assert_eq!(px[1], Color32::from_rgb(255, 0, 0));
+        assert_eq!(px[2].a(), 127);
+        assert_eq!((px[2].r(), px[2].g(), px[2].b()), (0, 0, 0));
+        assert!(matte(&white[..5], &black).len() == 1, "a partial pixel is dropped");
+    }
 
     /// The image a flip button leaves behind, as the panel returns it.
     fn flipped(tooltip: &str) -> pdfcraft_engine::AddedImage {

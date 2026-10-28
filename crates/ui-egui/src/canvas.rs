@@ -3577,8 +3577,13 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
                 crate::redact_ui::page_input(ui, &resp, &xf, &ptr, i, info, over_text, view)
             };
             let image_owns_pointer = tool == QuickTool::EditText && crate::edit_text_ui::image_owns_pointer(ui, &xf, &ptr, i, info, view);
-            let on_objects =
-                !image_owns_pointer && tool == QuickTool::EditText && can_modify && crate::object_ui::page_input(ui, &resp, &xf, &ptr, i, doc, view);
+            let handle_owns_pointer =
+                tool == QuickTool::EditText && editing_content && can_modify && crate::content_ui::handle_grabs(&xf, &ptr, i, info, &added, view);
+            let on_objects = !image_owns_pointer
+                && !handle_owns_pointer
+                && tool == QuickTool::EditText
+                && can_modify
+                && crate::object_ui::page_input(ui, &resp, &xf, &ptr, i, doc, view);
             let lines = if matches!(tool, QuickTool::AddText | QuickTool::EditText) && can_modify {
                 let generation = doc.edit_generation();
                 match view.edit_lines.get(&i) {
@@ -4060,6 +4065,10 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
             // An added text box or image right-clicked: Arrange and Delete (Thai edition).
             if crate::content_ui::page_menu(ui, view, doc) {
                 return;
+            }
+            // A paragraph of the page's text selected in Edit text & images: Arrange (Thai edition).
+            if tool == QuickTool::EditText {
+                crate::object_ui::arrange_menu(ui, view, can_modify);
             }
             // Preparing a form: the selected field's menu.
             if preparing && let Some((name, wi)) = view.prepare.selected.clone() {

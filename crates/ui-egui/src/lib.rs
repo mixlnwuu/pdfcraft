@@ -3443,6 +3443,7 @@ impl PdfCraftApp {
                 object_ui::nudge_keys(ctx, &mut self.views[i], doc);
                 // Delete removes the selected objects, paragraphs of the page's text included (Thai edition).
                 object_ui::delete_keys(ctx, &mut self.views[i]);
+                object_ui::arrange_keys(ctx, &mut self.views[i]);
             } else if let Some(doc) = self.session.get(self.views[i].id).filter(|d| d.allows_annotation()) {
                 comments::nudge_keys(ctx, &mut self.views[i], &doc.info);
             }

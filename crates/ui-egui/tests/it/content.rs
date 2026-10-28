@@ -943,6 +943,50 @@ fn dragged_text_follows_the_pointer_before_release() {
     assert_ne!(added(&h)[0].content.rect(), rect, "releasing moves it");
 }
 
+/// Thai edition: what lies under a dragged item stays on the page: the pixels that follow the
+/// pointer are the item's own, not its box cut out of the page (a red box under the text).
+#[test]
+fn a_dragged_item_leaves_what_lies_under_it_behind() {
+    let _gpu = gpu();
+    let content = "1 0 0 rg 20 60 270 80 re f";
+    let pdf = format!(
+        "%PDF-1.7
+1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj
+2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [0 0 300 400] >> endobj
+3 0 obj << /Type /Page /Parent 2 0 R /Contents 4 0 R >> endobj
+4 0 obj << /Length {} >> stream
+{content}
+endstream endobj
+trailer << /Root 1 0 R >>
+%%EOF",
+        content.len()
+    );
+    let mut h = harness_bytes(pdf.into_bytes());
+    let (_, _, to, _) = drag_added_text(&mut h);
+    let red = |pixels: &image::RgbaImage, r: egui::Rect| {
+        let (x0, y0, x1, y1) = (r.left().max(0.0) as u32, r.top().max(0.0) as u32, r.right() as u32, r.bottom() as u32);
+        (y0..y1.min(pixels.height()))
+            .flat_map(|y| (x0..x1.min(pixels.width())).map(move |x| (x, y)))
+            .filter(|(x, y)| {
+                let [r, g, b, _] = pixels.get_pixel(*x, *y).0;
+                r > 200 && g < 80 && b < 80
+            })
+            .count()
+    };
+    let mut shown = usize::MAX;
+    for _ in 0..100 {
+        h.run_steps(2);
+        shown = red(&h.render().unwrap(), probe(to));
+        if shown == 0 {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert_eq!(shown, 0, "the red box under the text did not come along");
+    let (_, new) = ink_at(&mut h, to, to);
+    assert!(new > 20, "the text itself follows the pointer ({new} dark pixels)");
+}
+
 /// After release the text stays in its new place while the page is re-rendered with the move,
 /// instead of jumping back to where it was for those frames.
 #[test]

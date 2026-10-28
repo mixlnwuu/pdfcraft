@@ -1253,8 +1253,8 @@ pub use text::{
 };
 pub mod added;
 pub use added::{
-    Added, AddedImage, AddedText, Align, Arrange, Content, Family, MarkerScan, add_content, added_layer, arrange_content, delete_content,
-    first_undrawable, fitted_text, list_added, scan_markers, text_is_wrapped, update_content,
+    Added, AddedImage, AddedText, Align, Arrange, Content, Family, MarkerScan, add_content, added_layer, arrange_content, arrange_paragraph,
+    delete_content, first_undrawable, fitted_text, isolate_content, list_added, scan_markers, text_is_wrapped, update_content,
 };
 
 #[cfg(test)]

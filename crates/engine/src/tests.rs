@@ -8612,3 +8612,60 @@ fn pdf_with_annots(annots: &[&[u8]]) -> Vec<u8> {
     bytes.extend_from_slice(format!("trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n", objs.len() + 1).as_bytes());
     bytes
 }
+
+/// Thai edition: Arrange on a paragraph of the page's own text. A red paragraph drawn under a blue
+/// box comes in front of it, exactly as drawn (its box and text unchanged); the paragraph after it
+/// in the same text object stays where it was; it goes back behind the box again; and one undo
+/// restores the page.
+/// Thai edition: the move preview's item alone: over white it shows none of the page under it (the
+/// blue box), over black what it doesn't cover stays black.
+#[test]
+fn an_added_item_renders_alone_over_white_and_over_black() {
+    let mut session = Session::new();
+    let id = session.open("alone.pdf", None, Arc::new(one_line_page("", "0 0 1 rg 10 140 300 40 re f")), None).unwrap();
+    let text = crate::AddedText { rect: [20.0, 140.0, 200.0, 180.0], text: "Over".into(), size: 24.0, ..Default::default() };
+    session.apply(id, Edit::AddText { page: 0, text }).unwrap();
+    let doc = session.get(id).unwrap();
+    let blue = |px: &[u8]| px[2] > 180 && px[0] < 80 && px[1] < 80;
+    let white = doc.added_content_alone(0, 0, false).unwrap().render_background(1.0).unwrap();
+    assert_eq!(white.rgba.chunks(4).filter(|px| blue(px)).count(), 0, "nothing of the page under the item");
+    let ink = white.rgba.chunks(4).filter(|px| px[0] < 100 && px[1] < 100 && px[2] < 100).count();
+    assert!(ink > 30, "the item's text is drawn: {ink}");
+    let black = doc.added_content_alone(0, 0, true).unwrap().render_background(1.0).unwrap();
+    let dark = black.rgba.chunks(4).filter(|px| px[0] < 10 && px[1] < 10 && px[2] < 10).count();
+    assert!(dark > black.rgba.len() / 4 * 9 / 10, "over black: {dark} dark pixels");
+    assert_eq!(black.rgba.chunks(4).filter(|px| blue(px)).count(), 0);
+}
+
+#[test]
+fn a_paragraph_of_the_page_comes_in_front_and_goes_behind() {
+    let body = "BT /F1 24 Tf 1 0 0 rg 20 150 Td (Hidden) Tj 0 -60 Td (Below) Tj ET 0 0 1 rg 10 140 300 40 re f";
+    let mut session = Session::new();
+    let id = session.open("layers.pdf", None, Arc::new(one_line_page("/Font << /F1 4 0 R >>", body)), None).unwrap();
+    let blocks = |s: &Session| s.get(id).unwrap().text_blocks(0);
+    let red = |s: &Session| {
+        let p = shown(s, id, 0);
+        p.rgba.chunks(4).filter(|px| px[0] > 180 && px[1] < 80 && px[2] < 80).count()
+    };
+    let before = blocks(&session);
+    let hidden = before.iter().position(|b| b.text == "Hidden").expect("the paragraph");
+    let below = before.iter().find(|b| b.text == "Below").expect("the next one").rect;
+    let only_below = red(&session);
+    session.apply(id, Edit::ArrangeParagraph { page: 0, block: hidden, how: Arrange::Front }).unwrap();
+    let after = blocks(&session);
+    let moved = after.iter().find(|b| b.text == "Hidden").expect("still a paragraph of the page");
+    let near = |a: [f64; 4], b: [f64; 4]| a.iter().zip(b).all(|(x, y)| (x - y).abs() < 0.01);
+    assert!(near(moved.rect, before[hidden].rect), "drawn where it was: {:?} → {:?}", before[hidden].rect, moved.rect);
+    assert!(near(after.iter().find(|b| b.text == "Below").unwrap().rect, below), "the next paragraph stays");
+    assert!(red(&session) > only_below + 50, "the red text now shows over the blue box");
+    // Lifted, it is a layer of its own: Back puts it behind the page's content again.
+    let at = after.iter().position(|b| b.text == "Hidden").unwrap();
+    session.apply(id, Edit::ArrangeParagraph { page: 0, block: at, how: Arrange::Back }).unwrap();
+    assert!(red(&session) <= only_below + 5, "behind the box again");
+    let err = session
+        .apply(id, Edit::ArrangeParagraph { page: 0, block: blocks(&session).iter().position(|b| b.text == "Hidden").unwrap(), how: Arrange::Back });
+    assert!(err.is_err(), "already at the back");
+    session.undo(id).unwrap();
+    session.undo(id).unwrap();
+    assert_eq!(red(&session), only_below, "undo restores the page");
+}

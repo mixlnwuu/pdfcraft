@@ -322,6 +322,7 @@ fn scope_of(edit: &Edit) -> Scope {
         | Edit::DeleteContent { .. }
         | Edit::MoveContentToPage { .. }
         | Edit::ArrangeContent { .. }
+        | Edit::ArrangeParagraph { .. }
         | Edit::ReplaceImage { .. }
         | Edit::PasteContent { .. }
         | Edit::AddHeaderFooter { .. }
@@ -1867,6 +1868,13 @@ pub enum Edit {
         index: usize,
         how: Arrange,
     },
+    /// Move paragraph `block` of the page's own text (from `Document::text_blocks`) in front of or
+    /// behind the rest, drawn exactly as it was (Thai edition: Arrange).
+    ArrangeParagraph {
+        page: usize,
+        block: usize,
+        how: Arrange,
+    },
     /// Copy comment `index` of `page` onto `to_page`, moved by (`dx`, `dy`) points (Thai
     /// edition: Copy and Paste, Ctrl+drag).
     DuplicateAnnotation {
@@ -2329,7 +2337,7 @@ impl Edit {
             Edit::CommentToContent { then: Some(Arrange::Back), .. } => Label::of("Send to back"),
             Edit::CommentToContent { then: Some(_), .. } => Label::of("Send backward"),
             Edit::BringOverComments { .. } => Label::of("Bring to front"),
-            Edit::ArrangeContent { how, .. } | Edit::ArrangeAnnotation { how, .. } => Label::of(match how {
+            Edit::ArrangeContent { how, .. } | Edit::ArrangeParagraph { how, .. } | Edit::ArrangeAnnotation { how, .. } => Label::of(match how {
                 Arrange::Front => "Bring to front",
                 Arrange::Forward => "Bring forward",
                 Arrange::Backward => "Send backward",
@@ -2496,6 +2504,7 @@ fn check_permission(edit: &Edit, p: &pdfcraft_cos::Permissions) -> Result<(), Ed
         | Edit::BringOverComments { .. }
         | Edit::MoveContentToPage { .. }
         | Edit::ArrangeContent { .. }
+        | Edit::ArrangeParagraph { .. }
         | Edit::ReplaceImage { .. }
         | Edit::PasteContent { .. }
         | Edit::ClearRedactions
@@ -2977,6 +2986,7 @@ fn run_edit(doc: &mut pdfcraft_cos::Document, edit: &Edit, cx: &mut EditCtx) -> 
         Edit::ArrangeContent { page, index, how } => {
             pdfcraft_edit::arrange_content(doc, *page, *index, *how)?;
         }
+        Edit::ArrangeParagraph { page, block, how } => pdfcraft_edit::arrange_paragraph(doc, *page, *block, *how)?,
         Edit::MoveContentToPage { page, index, to_page, content, copy } => {
             if page == to_page && !copy {
                 return Err(EditError::Edit(pdfcraft_edit::EditError::Invalid("the item is already on that page".into())));
@@ -4476,6 +4486,7 @@ impl Session {
                     | Edit::DeleteContent { .. }
                     | Edit::MoveContentToPage { .. }
                     | Edit::ArrangeContent { .. }
+                    | Edit::ArrangeParagraph { .. }
                     | Edit::ReplaceImage { .. }
                     | Edit::PasteContent { .. }
             ) || matches!(e, Edit::MoveObjects { objects, .. } if objects.iter().any(|o| o.kind == ObjectKind::Added))

@@ -1412,6 +1412,25 @@ pub fn update_content(doc: &mut Document, page: usize, index: usize, c: &Content
     Ok(())
 }
 
+/// Thai edition: page `page` drawing only its added item `index`, over black when `black`, without
+/// its annotations. For a scratch copy of the document: the move preview renders the item over
+/// white and over black, and the difference gives back its transparency.
+pub fn isolate_content(doc: &mut Document, page: usize, index: usize, black: bool) -> Result<(), EditError> {
+    let item = find(doc, page, index)?;
+    let p = page_list(doc).into_iter().nth(page).ok_or_else(|| EditError::Invalid(format!("page {} doesn't exist", page + 1)))?;
+    let mut list = Vec::new();
+    if black {
+        let backdrop = Stream::flate(Dict::new(), b"q 0 g -1000000 -1000000 2000000 2000000 re f Q");
+        list.push(Object::Ref(doc.add(Object::Stream(backdrop))));
+    }
+    list.push(Object::Ref(item.obj));
+    doc.update_dict(p.obj, |d| {
+        d.set(b"Contents".to_vec(), Object::Array(list));
+        d.remove(b"Annots");
+    })?;
+    Ok(())
+}
+
 /// Remove item `index` of `page`.
 pub fn delete_content(doc: &mut Document, page: usize, index: usize) -> Result<(), EditError> {
     let a = find(doc, page, index)?;
@@ -1533,6 +1552,83 @@ fn layers_of(doc: &Document, list: &[Object]) -> (usize, Vec<Vec<Object>>) {
     }
     (lead, layers)
 }
+
+/// Thai edition: Arrange for paragraph `block` of the page's own text. The first time, the
+/// paragraph is lifted out of the page's content exactly as drawn ([`crate::text::lift_paragraph`])
+/// into a layer of its own: in front of everything (Front), above the page's content but under the
+/// added items (Forward), or behind the page's content (Backward, Back). A lifted paragraph then
+/// moves among the layers as an added item does.
+pub fn arrange_paragraph(doc: &mut Document, page: usize, block: usize, how: Arrange) -> Result<(), EditError> {
+    let p = page_list(doc).into_iter().nth(page).ok_or(EditError::NoSuchPage(page))?;
+    let streams = crate::text::content_streams(doc, &p.dict)?;
+    let lifted = crate::text::paragraph_stream(doc, page, block)?
+        .and_then(|i| streams.get(i))
+        .map(|(o, _)| o.clone())
+        .filter(|o| crate::stream_tag(doc, o).as_deref() == Some(PARAGRAPH_TAG));
+    let list = contents(doc, &p)?;
+    let (lead, mut layers) = layers_of(doc, &list);
+    let bottom = list.get(..lead).unwrap_or_default().to_vec();
+    let last = layers.len().saturating_sub(1);
+    match lifted {
+        Some(obj) => {
+            let at = layers
+                .iter()
+                .position(|l| l.len() == 1 && l.first() == Some(&obj))
+                .ok_or_else(|| EditError::Invalid("the paragraph is not one of the page's layers".into()))?;
+            let to = match how {
+                Arrange::Front => last,
+                Arrange::Forward => (at + 1).min(last),
+                Arrange::Backward => at.saturating_sub(1),
+                Arrange::Back => 0,
+            };
+            if to == at {
+                return Err(EditError::Invalid(
+                    match how {
+                        Arrange::Front | Arrange::Forward => "the paragraph is already in front of everything on the page",
+                        Arrange::Back | Arrange::Backward => "the paragraph is already behind everything on the page",
+                    }
+                    .into(),
+                ));
+            }
+            let layer = layers.remove(at);
+            layers.insert(to, layer);
+        }
+        None => {
+            // The page's own content: the layer that isn't an item or a lifted paragraph.
+            let own = layers.iter().position(|l| l.first().is_some_and(|o| crate::stream_tag(doc, o).is_none_or(|t| t == "Wrap"))).unwrap_or(0);
+            let data = crate::text::lift_paragraph(doc, page, block)?;
+            // Lifting rewrote the page's streams: read its content again.
+            let p = page_list(doc).into_iter().nth(page).ok_or(EditError::NoSuchPage(page))?;
+            let list = contents(doc, &p)?;
+            let (_, fresh) = layers_of(doc, &list);
+            layers = fresh;
+            let obj = Object::Ref(doc.add(Object::Stream(Stream::flate(crate::tagged(PARAGRAPH_TAG), &data))));
+            let to = match how {
+                Arrange::Front => layers.len(),
+                Arrange::Forward => (own + 1).min(layers.len()),
+                Arrange::Backward | Arrange::Back => own.min(layers.len()),
+            };
+            layers.insert(to, vec![obj]);
+        }
+    }
+    // Page content not yet wrapped could leave its graphics state to whatever is drawn after it:
+    // wrap it, as drawing on top does.
+    for l in layers.iter_mut() {
+        if l.first().is_some_and(|o| crate::stream_tag(doc, o).is_none()) {
+            let open = Object::Ref(doc.add(Object::Stream(Stream::from_raw(crate::tagged("Wrap"), crate::WRAP_OPEN.to_vec()))));
+            let close = Object::Ref(doc.add(Object::Stream(Stream::from_raw(crate::tagged("Wrap"), crate::WRAP_CLOSE.to_vec()))));
+            l.insert(0, open);
+            l.push(close);
+        }
+    }
+    let mut order = bottom;
+    order.extend(layers.into_iter().flatten());
+    doc.update_dict(p.obj, |d| d.set(b"Contents".to_vec(), Object::Array(order)))?;
+    Ok(())
+}
+
+/// The tag of a paragraph [`arrange_paragraph`] lifted into a stream of its own.
+const PARAGRAPH_TAG: &str = "Paragraph";
 
 /// Where added item `index` of `page` is among the page's layers ([`arrange_content`]): its layer
 /// and how many there are, so a menu can offer only the moves that change something.

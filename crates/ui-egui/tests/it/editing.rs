@@ -4302,6 +4302,142 @@ startxref
     out
 }
 
+/// Thai edition: a paragraph of the page's own text selected in Edit text & images arranges as an
+/// added item does: Ctrl+Shift+] brings it in front of everything, and the page's right-click
+/// menu offers Arrange for it.
+#[test]
+fn a_selected_paragraph_of_the_page_arranges_by_key_and_menu() {
+    let mut h = harness(1, |app| {
+        app.open_bytes("three.pdf", None, three_paragraphs()).expect("opens");
+    });
+    let id = h.state().views.last().unwrap().id;
+    assert!(h.state_mut().execute("edit.edit_text"));
+    h.run_steps(2);
+    let r = h.state().views.last().unwrap().page_screen_rect(0).expect("on screen");
+    // "Alpha" (its baseline 230 up the page), selected with one click.
+    let at = egui::pos2(r.left() + 40.0 / 200.0 * r.width(), r.top() + (300.0 - 234.0) / 300.0 * r.height());
+    h.event(egui::Event::PointerMoved(at));
+    h.run_steps(1);
+    for pressed in [true, false] {
+        h.event(egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed, modifiers: Modifiers::NONE });
+        h.run_steps(1);
+    }
+    h.run_steps(2);
+    h.get_by_label("1 object selected");
+    let undo = |h: &Harness<'static, PdfCraftApp>| h.state().session.get(id).unwrap().undo_label().map(|l| l.wording);
+    assert_eq!(undo(&h), None);
+    h.key_press_modifiers(Modifiers::COMMAND | Modifiers::SHIFT, Key::CloseBracket);
+    h.run_steps(4);
+    assert_eq!(undo(&h), Some("Bring to front"), "the paragraph came to the front");
+    let texts: Vec<String> = h.state().session.get(id).unwrap().text_blocks(0).into_iter().map(|b| b.text).collect();
+    assert!(texts.contains(&"Alpha".to_string()), "still a paragraph of the page: {texts:?}");
+    // Selected again, its right-click menu has Arrange.
+    h.event(egui::Event::PointerMoved(at));
+    h.run_steps(1);
+    for pressed in [true, false] {
+        h.event(egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed, modifiers: Modifiers::NONE });
+        h.run_steps(1);
+    }
+    h.run_steps(2);
+    for pressed in [true, false] {
+        h.event(egui::Event::PointerButton { pos: at, button: egui::PointerButton::Secondary, pressed, modifiers: Modifiers::NONE });
+        h.run_steps(1);
+    }
+    h.run_steps(2);
+    h.get_by_label_contains("Arrange").click();
+    h.run_steps(2);
+    h.get_by_label_contains("Send to back").click();
+    h.run_steps(4);
+    assert_eq!(undo(&h), Some("Send to back"), "the menu sent it behind the page's content");
+}
+
+/// Thai edition: a picture added over "Alpha" of `three_paragraphs`, its lower-left corner on the
+/// paragraph, in Edit text & images. Returns the harness and a page-to-screen mapping.
+fn added_over_alpha() -> (Harness<'static, PdfCraftApp>, impl Fn(f32, f32) -> egui::Pos2) {
+    let mut h = harness(1, |app| {
+        app.open_bytes("three.pdf", None, three_paragraphs()).expect("opens");
+    });
+    assert!(h.state_mut().execute("edit.edit_text"));
+    h.run_steps(2);
+    let mut png = Vec::new();
+    {
+        let mut enc = png::Encoder::new(&mut png, 2, 2);
+        enc.set_color(png::ColorType::Rgba);
+        enc.set_depth(png::BitDepth::Eight);
+        enc.write_header().unwrap().write_image_data(&[255u8; 16]).unwrap();
+    }
+    h.state_mut().apply_edit(pdfcraft_engine::Edit::AddImage {
+        page: 0,
+        rect: Some([40.0, 233.0, 100.0, 293.0]),
+        name: "dot.png".into(),
+        bytes: std::sync::Arc::new(png),
+    });
+    h.run_steps(3);
+    let r = h.state().views.last().unwrap().page_screen_rect(0).expect("on screen");
+    let at = move |x: f32, y: f32| egui::pos2(r.left() + x / 200.0 * r.width(), r.top() + (300.0 - y) / 300.0 * r.height());
+    (h, at)
+}
+
+fn added_rect(h: &Harness<'static, PdfCraftApp>) -> [f64; 4] {
+    let app = h.state();
+    let id = app.views.last().unwrap().id;
+    app.session.get(id).unwrap().added()[0].content.rect()
+}
+
+/// Thai edition: the corner of a selected added picture resizes it even where a paragraph of the
+/// page lies under that corner, in Edit text & images.
+#[test]
+fn an_added_picture_corner_over_a_paragraph_resizes_the_picture() {
+    let (mut h, at) = added_over_alpha();
+    let inside = at(80.0, 265.0);
+    h.hover_at(inside);
+    h.run_steps(1);
+    for pressed in [true, false] {
+        h.event(egui::Event::PointerButton { pos: inside, button: egui::PointerButton::Primary, pressed, modifiers: Modifiers::NONE });
+        h.run_steps(1);
+    }
+    h.run_steps(2);
+    assert_eq!(h.state().views.last().unwrap().content.selected, Some((0, 0)), "the picture is selected");
+    let before = added_rect(&h);
+    // Just outside the box's lower-left corner, on "Alpha".
+    let corner = at(before[0] as f32, before[1] as f32) + egui::vec2(-3.0, 3.0);
+    drag(&mut h, corner, corner + egui::vec2(-20.0, 20.0));
+    let after = added_rect(&h);
+    assert!(after[0] < before[0] - 1.0 && after[1] < before[1] - 1.0, "the corner resized the picture: {before:?} -> {after:?}");
+    assert!((after[2] - before[2]).abs() < 0.5 && (after[3] - before[3]).abs() < 0.5, "the opposite corner stays: {after:?}");
+    assert!(h.query_by_label("1 object selected").is_none(), "the paragraph under the corner was not selected");
+}
+
+/// Thai edition: with a paragraph of the page selected, a drag on an added picture over it moves
+/// the picture, not the paragraph.
+#[test]
+fn an_added_picture_over_the_selected_paragraph_takes_the_drag() {
+    let (mut h, at) = added_over_alpha();
+    // "Alpha" selected with one click, left of the box.
+    let alpha = at(25.0, 234.0);
+    h.hover_at(alpha);
+    h.run_steps(1);
+    for pressed in [true, false] {
+        h.event(egui::Event::PointerButton { pos: alpha, button: egui::PointerButton::Primary, pressed, modifiers: Modifiers::NONE });
+        h.run_steps(1);
+    }
+    h.run_steps(2);
+    h.get_by_label("1 object selected");
+    let before = added_rect(&h);
+    let texts = |h: &Harness<'static, PdfCraftApp>| {
+        let app = h.state();
+        let id = app.views.last().unwrap().id;
+        app.session.get(id).unwrap().text_blocks(0).into_iter().map(|b| (b.text, b.rect)).collect::<Vec<_>>()
+    };
+    let paragraphs = texts(&h);
+    // On the picture where it covers "Alpha".
+    let on_both = at(45.0, 237.0);
+    drag(&mut h, on_both, on_both + egui::vec2(30.0, -30.0));
+    let after = added_rect(&h);
+    assert!(after[0] > before[0] + 5.0 && after[3] > before[3] + 5.0, "the picture moved: {before:?} -> {after:?}");
+    assert_eq!(texts(&h), paragraphs, "the paragraph stayed");
+}
+
 /// Thai edition: Shift-click picks several paragraphs; Delete removes them all as one undo step
 /// and leaves the others.
 #[test]

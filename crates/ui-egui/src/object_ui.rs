@@ -429,7 +429,9 @@ fn input(
     if s.page == Some(page) && !s.selected.is_empty() {
         let union = s.selected.iter().fold(Rect::NOTHING, |r, o| r.union(screen(xf, info, page, o)));
         let edge = s.selected.len() == 1 && on_text_edge(xf, info, page, &s.selected[0], p);
-        if union.contains(p) && !edge && !resp.double_clicked() {
+        // An added picture or text box over the selection takes the press (Thai edition).
+        let over_added = hit.is_some_and(|o| o.target.kind == ObjectKind::Added && !s.selected.iter().any(|x| x.target == o.target));
+        if union.contains(p) && !edge && !over_added && !resp.double_clicked() {
             s.gesture = Some(Gesture { start: p, now: p, marquee: false, additive: false, copy: None });
             return true;
         }
@@ -538,6 +540,45 @@ pub(crate) fn nudge_keys(ctx: &egui::Context, view: &mut DocView, doc: &Document
 /// Delete (or Backspace) removes the selected objects, as in Acrobat: a paragraph selected by its
 /// frame, or everything an area selection took, goes at once instead of one typed character at a
 /// time.
+/// The Arrange edit for the one object selected in Edit text & images (Thai edition): a
+/// paragraph of the page's own text, or an added item. `None` for anything else, or several.
+fn arrange_edit(view: &DocView, how: pdfcraft_engine::Arrange) -> Option<Edit> {
+    let (page, target) = view.objects.single_selected()?;
+    match target.kind {
+        ObjectKind::Text => Some(Edit::ArrangeParagraph { page, block: target.index, how }),
+        ObjectKind::Added => Some(Edit::ArrangeContent { page, index: target.index, how }),
+        ObjectKind::Image => None,
+    }
+}
+
+/// Ctrl+] / Ctrl+[ (with Shift: to the front or back) arrange the one object selected in Edit text
+/// & images, as they do an added item (Thai edition).
+pub(crate) fn arrange_keys(ctx: &egui::Context, view: &mut DocView) {
+    if ctx.egui_wants_keyboard_input() || view.pending_edit.is_some() || view.line_editor.is_some() || view.objects.gesture.is_some() {
+        return;
+    }
+    if let Some(how) = crate::content_ui::arrange_key(ctx)
+        && let Some(edit) = arrange_edit(view, how)
+    {
+        view.pending_edit = Some(edit);
+    }
+}
+
+/// The Arrange submenu for the one object selected in Edit text & images, in the page's
+/// right-click menu (Thai edition): `true` when it was shown.
+pub(crate) fn arrange_menu(ui: &mut egui::Ui, view: &mut DocView, allowed: bool) -> bool {
+    if view.line_editor.is_some() || arrange_edit(view, pdfcraft_engine::Arrange::Front).is_none() {
+        return false;
+    }
+    if let Some(how) = ui.add_enabled_ui(allowed, |ui| crate::content_ui::arrange_menu(ui, |_| true)).inner
+        && let Some(edit) = arrange_edit(view, how)
+    {
+        view.pending_edit = Some(edit);
+    }
+    ui.separator();
+    true
+}
+
 pub(crate) fn delete_keys(ctx: &egui::Context, view: &mut DocView) {
     if ctx.egui_wants_keyboard_input() || view.pending_edit.is_some() || view.objects.gesture.is_some() {
         return;
