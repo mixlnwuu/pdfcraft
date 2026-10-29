@@ -305,6 +305,15 @@ key	Space	Mezerník
 	Available	Dostupné
 	Ready	Připraveno
 	Search tools and commands…	Hledat nástroje a příkazy…
+
+# Accessible names for inputs that have no visible label.
+	Added text	Přidaný text
+	Link URL	Adresa URL odkazu
+	Search tools and commands	Hledat nástroje a příkazy
+	Text editing line	Řádek pro úpravu textu
+	Text to place	Text k umístění
+	Tooltip	Popisek
+	Words or phrases to redact	Slova nebo fráze k začernění
 	No matching tools	Žádné odpovídající nástroje
 	Tool	Nástroj
 	Command	Příkaz
@@ -2865,3 +2874,10 @@ certificate	Version	Verze
 	Copy to another page	Kopírovat na jinou stránku
 	Copy object	Kopírovat objekt
 	This file has Type 3 text, which Windows printing can't handle, so it is printed as an image (600 dpi).	Tento soubor obsahuje text v písmu Type 3, se kterým si tisk ve Windows neporadí, proto se tiskne jako obrázek (600 dpi).
+# Pages panel: the Page tools menu (#4415) (AI-assisted, not separately native-reviewed)
+	Page tools	Nástroje stránek
+	Insert pages from a file after the selection…	Vložit stránky ze souboru za výběr…
+	Rotate the selected pages counterclockwise	Otočit vybrané stránky proti směru hodinových ručiček
+	Rotate the selected pages clockwise	Otočit vybrané stránky po směru hodinových ručiček
+	Extract the selected pages…	Extrahovat vybrané stránky…
+	Delete the selected pages	Odstranit vybrané stránky

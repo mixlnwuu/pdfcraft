@@ -9,7 +9,7 @@
 
 $ErrorActionPreference = 'Stop'
 $Root = Split-Path -Parent $PSScriptRoot
-$CraftFontsRef = '3d9ab3a132ed0eff457e424226a435a901da30d3'
+$CraftFontsRef = 'b076417b5880bd4154bd22f00695b1d28c6bea83'
 $Target = 'x86_64-pc-windows-msvc'
 $Work = Join-Path $Root 'target\thai-fonts'
 $Fonts = Join-Path $Work "craft-fonts-$CraftFontsRef"

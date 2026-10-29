@@ -34,6 +34,6 @@ if (-not $SkipBuild) {
     & (Join-Path $PSScriptRoot 'build-windows.ps1')
 }
 # package.ps1 ships the craft-fonts licences from CRAFT_FONTS_DIR (TH Sarabun PSK's included).
-$env:CRAFT_FONTS_DIR = Join-Path $Root 'target\thai-fonts\craft-fonts-3d9ab3a132ed0eff457e424226a435a901da30d3'
+$env:CRAFT_FONTS_DIR = Join-Path $Root 'target\thai-fonts\craft-fonts-b076417b5880bd4154bd22f00695b1d28c6bea83'
 $env:PDFCRAFT_VERSION = $Version
 & (Join-Path $Root 'packaging\windows\package.ps1') -Arch x64 -SkipBuild

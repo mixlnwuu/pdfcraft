@@ -184,6 +184,15 @@
 	Available	使用可能
 	Ready	使用可能
 	Search tools and commands…	ツールとコマンドを検索…
+
+# Accessible names for inputs that have no visible label.
+	Added text	追加したテキスト
+	Link URL	リンクの URL
+	Search tools and commands	ツールとコマンドを検索
+	Text editing line	テキスト編集行
+	Text to place	配置するテキスト
+	Tooltip	ツールチップ
+	Words or phrases to redact	墨消しする単語または語句
 	No matching tools	該当するツールがありません
 	Tool	ツール
 	Command	コマンド
@@ -2558,3 +2567,10 @@ animation effects	Off	オフ
 	Copy to another page	別のページへコピー
 	Copy object	オブジェクトをコピー
 	This file has Type 3 text, which Windows printing can't handle, so it is printed as an image (600 dpi).	このファイルには Windows の印刷で処理できない Type 3 フォントのテキストが含まれているため、画像として印刷します (600 dpi)。
+# Pages panel: the Page tools menu (#4415) (AI-assisted, not separately native-reviewed)
+	Page tools	ページツール
+	Insert pages from a file after the selection…	選択範囲の後にファイルからページを挿入…
+	Rotate the selected pages counterclockwise	選択したページを反時計回りに回転
+	Rotate the selected pages clockwise	選択したページを時計回りに回転
+	Extract the selected pages…	選択したページを抽出…
+	Delete the selected pages	選択したページを削除

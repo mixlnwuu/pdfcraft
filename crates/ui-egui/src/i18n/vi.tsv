@@ -1057,6 +1057,15 @@ theme	Appearance	Giao diện
 	Scroll tabs right	Cuộn các thẻ sang phải
 	Search comments	Tìm bình luận
 	Search tools and commands…	Tìm công cụ và lệnh…
+
+# Accessible names for inputs that have no visible label.
+	Added text	Văn bản đã thêm
+	Link URL	URL của liên kết
+	Search tools and commands	Tìm công cụ và lệnh
+	Text editing line	Dòng chỉnh sửa văn bản
+	Text to place	Văn bản cần đặt
+	Tooltip	Chú giải công cụ
+	Words or phrases to redact	Từ hoặc cụm từ cần xóa
 	Searchable Image (Exact)	Ảnh có thể tìm kiếm (Chính xác)
 	Searching… {s} of {p} pages	Đang tìm… {s} trên {p} trang
 	Searching… {s}/{p}	Đang tìm… {s}/{p}
@@ -2825,3 +2834,10 @@ key	Space	Space
 	Copy object	Sao chép đối tượng
 	Comments are always in front of the page's text and images. Placed on the page, this one becomes a picture you can move, resize and send behind them; it is no longer a comment.	Nhận xét luôn nằm trước văn bản và hình ảnh của trang. Khi đặt lên trang, nhận xét này trở thành một hình ảnh bạn có thể di chuyển, đổi kích thước và đưa ra phía sau chúng; nó không còn là nhận xét nữa.
 	This file has Type 3 text, which Windows printing can't handle, so it is printed as an image (600 dpi).	Tệp này có văn bản bằng phông chữ Type 3 mà chức năng in của Windows không xử lý được, nên tệp được in dưới dạng hình ảnh (600 dpi).
+# Pages panel: the Page tools menu (#4415) (AI-assisted, not separately native-reviewed)
+	Page tools	Công cụ trang
+	Insert pages from a file after the selection…	Chèn trang từ tệp sau vùng chọn…
+	Rotate the selected pages counterclockwise	Xoay các trang đã chọn ngược chiều kim đồng hồ
+	Rotate the selected pages clockwise	Xoay các trang đã chọn theo chiều kim đồng hồ
+	Extract the selected pages…	Trích xuất các trang đã chọn…
+	Delete the selected pages	Xóa các trang đã chọn

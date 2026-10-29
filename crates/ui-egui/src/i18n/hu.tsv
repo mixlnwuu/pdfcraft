@@ -155,6 +155,15 @@
 	Available	Elérhető
 	Ready	Kész
 	Search tools and commands…	Eszközök és parancsok keresése…
+
+# Accessible names for inputs that have no visible label.
+	Added text	Hozzáadott szöveg
+	Link URL	Hivatkozás URL-je
+	Search tools and commands	Eszközök és parancsok keresése
+	Text editing line	Szövegszerkesztő sor
+	Text to place	Elhelyezendő szöveg
+	Tooltip	Elemleírás
+	Words or phrases to redact	Kitakarni kívánt szavak vagy kifejezések
 	No matching tools	Nincs illeszkedő eszköz
 	Tool	Eszköz
 	Command	Parancs
@@ -2557,3 +2566,10 @@ animation effects	Off	Ki
 	Copy to another page	Másolás másik oldalra
 	Copy object	Objektum másolása
 	This file has Type 3 text, which Windows printing can't handle, so it is printed as an image (600 dpi).	Ez a fájl Type 3 betűtípusú szöveget tartalmaz, amelyet a Windows nyomtatása nem tud kezelni, ezért képként nyomtatjuk ki (600 dpi).
+# Pages panel: the Page tools menu (#4415) (AI-assisted, not separately native-reviewed)
+	Page tools	Oldaleszközök
+	Insert pages from a file after the selection…	Oldalak beszúrása fájlból a kijelölés után…
+	Rotate the selected pages counterclockwise	A kijelölt oldalak forgatása az óramutató járásával ellentétesen
+	Rotate the selected pages clockwise	A kijelölt oldalak forgatása az óramutató járásával megegyezően
+	Extract the selected pages…	A kijelölt oldalak kibontása…
+	Delete the selected pages	A kijelölt oldalak törlése

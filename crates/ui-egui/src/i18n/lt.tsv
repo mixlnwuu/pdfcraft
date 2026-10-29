@@ -1067,6 +1067,15 @@
 	Scroll tabs right	Slinkti korteles dešinėn
 	Search comments	Ieškoti komentaruose
 	Search tools and commands…	Ieškoti įrankių ir komandų…
+
+# Accessible names for inputs that have no visible label.
+	Added text	Pridėtas tekstas
+	Link URL	Saito URL
+	Search tools and commands	Ieškoti įrankių ir komandų
+	Text editing line	Teksto redagavimo eilutė
+	Text to place	Tekstas, kurį reikia įdėti
+	Tooltip	Patarimas
+	Words or phrases to redact	Šalinami žodžiai ar frazės
 	Searchable Image (Exact)	Paveikslėlis su tiksliu atpažinimu
 	Searching… {s} of {p} pages	Ieškoma… {s} iš {p} puslapių
 	Searching… {s}/{p}	Ieškoma… {s}/{p}
@@ -2819,3 +2828,10 @@ theme	Appearance	Išvaizda
 	Copy to another page	Kopijuoti į kitą puslapį
 	Copy object	Kopijuoti objektą
 	This file has Type 3 text, which Windows printing can't handle, so it is printed as an image (600 dpi).	Šiame faile yra Type 3 šrifto teksto, kurio „Windows“ spausdinimas negali apdoroti, todėl jis spausdinamas kaip vaizdas (600 dpi).
+# Pages panel: the Page tools menu (#4415) (AI-assisted, not separately native-reviewed)
+	Page tools	Puslapių įrankiai
+	Insert pages from a file after the selection…	Įterpti puslapius iš failo po pasirinkimo…
+	Rotate the selected pages counterclockwise	Pasukti pasirinktus puslapius prieš laikrodžio rodyklę
+	Rotate the selected pages clockwise	Pasukti pasirinktus puslapius pagal laikrodžio rodyklę
+	Extract the selected pages…	Išskleisti pasirinktus puslapius…
+	Delete the selected pages	Ištrinti pasirinktus puslapius

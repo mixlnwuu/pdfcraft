@@ -177,6 +177,15 @@
 	Available	Доступно
 	Ready	Готово
 	Search tools and commands…	Поиск инструментов и команд…
+
+# Accessible names for inputs that have no visible label.
+	Added text	Добавленный текст
+	Link URL	URL-адрес ссылки
+	Search tools and commands	Поиск инструментов и команд
+	Text editing line	Строка редактирования текста
+	Text to place	Текст для размещения
+	Tooltip	Подсказка
+	Words or phrases to redact	Слова или фразы для скрытия
 	No matching tools	Нет подходящих инструментов
 	Tool	Инструмент
 	Command	Команда
@@ -2471,3 +2480,10 @@ animation effects	Off	Выкл
 	Copy to another page	Копировать на другую страницу
 	Copy object	Копировать объект
 	This file has Type 3 text, which Windows printing can't handle, so it is printed as an image (600 dpi).	В этом файле есть текст шрифтом Type 3, с которым печать Windows не справляется, поэтому он печатается как изображение (600 dpi).
+# Pages panel: the Page tools menu (#4415) (AI-assisted, not separately native-reviewed)
+	Page tools	Инструменты страниц
+	Insert pages from a file after the selection…	Вставить страницы из файла после выделения…
+	Rotate the selected pages counterclockwise	Повернуть выбранные страницы против часовой стрелки
+	Rotate the selected pages clockwise	Повернуть выбранные страницы по часовой стрелке
+	Extract the selected pages…	Извлечь выбранные страницы…
+	Delete the selected pages	Удалить выбранные страницы

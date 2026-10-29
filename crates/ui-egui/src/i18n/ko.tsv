@@ -162,6 +162,15 @@
 	Available	사용 가능
 	Ready	준비됨
 	Search tools and commands…	도구 및 명령 검색…
+
+# Accessible names for inputs that have no visible label.
+	Added text	추가한 텍스트
+	Link URL	링크 URL
+	Search tools and commands	도구 및 명령 검색
+	Text editing line	텍스트 편집 줄
+	Text to place	배치할 텍스트
+	Tooltip	도구 설명
+	Words or phrases to redact	민감 정보를 제거할 단어 또는 구문
 	No matching tools	일치하는 도구가 없습니다
 	Tool	도구
 	Command	명령
@@ -2795,3 +2804,10 @@ theme	Appearance	모양
 	Copy to another page	다른 페이지로 복사
 	Copy object	개체 복사
 	This file has Type 3 text, which Windows printing can't handle, so it is printed as an image (600 dpi).	이 파일에는 Windows 인쇄가 처리할 수 없는 Type 3 텍스트가 있어 이미지로 인쇄됩니다(600dpi).
+# Pages panel: the Page tools menu (#4415) (AI-assisted, not separately native-reviewed)
+	Page tools	페이지 도구
+	Insert pages from a file after the selection…	선택 영역 뒤에 파일에서 페이지 삽입…
+	Rotate the selected pages counterclockwise	선택한 페이지를 시계 반대 방향으로 회전
+	Rotate the selected pages clockwise	선택한 페이지를 시계 방향으로 회전
+	Extract the selected pages…	선택한 페이지 추출…
+	Delete the selected pages	선택한 페이지 삭제

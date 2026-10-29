@@ -1087,6 +1087,9 @@ fn save_prompt_fits_the_smallest_window_whatever_the_name() {
     let size = egui::vec2(820.0, 520.0);
     for name in names {
         let start: String = name.chars().take(10).collect();
+        if support::skip_without_glyphs(&format!("save_prompt_fits_the_smallest_window_whatever_the_name ({start}…)"), "en", &name) {
+            continue;
+        }
         let mut h = Harness::builder().with_size(size).build_eframe(move |_cc| {
             let mut app = PdfCraftApp::new();
             app.set_option("language", "en").unwrap();
@@ -1368,11 +1371,8 @@ fn edit_menu_names_the_step_to_undo() {
     let mut h = harness(2, |app| {
         app.apply_edit(pdfcraft_engine::Edit::RotatePages { pages: vec![0], degrees: 90 });
     });
-    h.get_by_label("Menu").click();
-    h.run_steps(2);
-    h.get_by_label("Edit ⏵").hover(); // submenus open on hover; their labels carry the arrow
-    h.run_steps(3);
-    h.get_by_label_contains("Undo Rotate page").click(); // the label includes the shortcut
+    support::open_menu(&mut h, "Edit");
+    support::menu_row(&h, "Undo Rotate page").click();
     h.run_steps(3);
     let app = h.state();
     let doc = app.session.get(app.views[0].id).unwrap();
@@ -3570,6 +3570,9 @@ fn an_applied_paragraph_keeps_its_edited_look_until_the_page_is_redrawn() {
 /// as a form field does; the editor used to close with the error and the typing was lost.
 #[test]
 fn a_paragraph_whose_edit_fails_stays_open_with_its_typing() {
+    if crate::support::skip_without_glyphs("a_paragraph_whose_edit_fails_stays_open_with_its_typing", "en", "Top అ") {
+        return;
+    }
     let bytes = source_font_fixture_with_text("BT /F1 24 Tf 20 220 Td (Top) Tj ET BT /F2 24 Tf 20 120 Td (Bottom) Tj ET");
     let mut h = Harness::builder().with_size(egui::vec2(1400.0, 900.0)).build_eframe(move |_cc| {
         let mut app = PdfCraftApp::new();
@@ -3585,8 +3588,9 @@ fn a_paragraph_whose_edit_fails_stays_open_with_its_typing() {
     let top = egui::pos2(r.left() + 30.0 * k, r.top() + (300.0 - 228.0) * k);
     double_click(&mut h, top);
     assert_eq!(h.state().views[0].line_editor.as_ref().map(|e| e.text.as_str()), Some("Top"));
-    // U+0E01 (Thai): neither the page's font nor a fallback face draws it.
-    h.state_mut().views[0].line_editor.as_mut().unwrap().text = "Top ก".into();
+    // U+0C05 (Telugu): neither the page's font nor a fallback face draws it (Thai edition: Thai,
+    // upstream's example, is drawn in TH Sarabun PSK).
+    h.state_mut().views[0].line_editor.as_mut().unwrap().text = "Top అ".into();
     h.run_steps(1);
     h.key_press_modifiers(Modifiers::COMMAND, Key::Enter);
     h.run_steps(3);
@@ -3594,7 +3598,7 @@ fn a_paragraph_whose_edit_fails_stays_open_with_its_typing() {
     assert!(s.toast.as_ref().is_some_and(|(m, _)| m.starts_with("Edit text failed")), "the failure is said: {:?}", s.toast);
     assert_eq!(s.session.get(s.views[0].id).unwrap().can_undo(), None, "nothing was applied");
     let ed = s.views[0].line_editor.as_ref().expect("the paragraph is still open");
-    assert_eq!((ed.block, ed.text.as_str()), (0, "Top ก"), "with what was typed");
+    assert_eq!((ed.block, ed.text.as_str()), (0, "Top అ"), "with what was typed");
     // Taking the letter out applies it.
     h.state_mut().views[0].line_editor.as_mut().unwrap().text = "Top edited".into();
     h.run_steps(1);
@@ -3693,7 +3697,7 @@ fn editing_existing_text_in_place() {
 /// paragraph editor and retypes it as "Chapter One", leaving the editor open.
 fn edit_tab_with_an_open_paragraph(h: &mut Harness<'static, PdfCraftApp>) {
     use pdfcraft_ui_egui::{Mode, QuickTool};
-    h.get_by_label("Edit").click();
+    support::outside_menus(h, "Edit").click();
     h.run_steps(3);
     assert_eq!((h.state().mode, h.state().quick_tool), (Mode::Edit, QuickTool::EditText));
     open_the_first_line(h);
@@ -4599,7 +4603,7 @@ fn a_click_in_the_open_editor_places_the_caret_and_keeps_it_open() {
         })
         .expect("the editor draws the paragraph");
     let row = &galley.rows[0];
-    let id = egui::Id::new("edit-text-line-input");
+    let id = egui::Id::unique("edit-text-line-input");
     for (i, g) in row.row.glyphs.iter().enumerate().filter(|(_, g)| g.advance_width > 1.0) {
         let p = egui::pos2(pos.x + row.pos.x + g.pos.x + g.advance_width * 0.25, pos.y + row.pos.y + row.row.size.y / 2.0);
         let start = h.ctx.input(|inp| inp.time) + 1.0;
@@ -6861,6 +6865,7 @@ fn a_paragraph_running_off_its_page_edits_without_covering_the_next_page() {
         delta: egui::vec2(0.0, -300.0),
         phase: egui::TouchPhase::Move,
         modifiers: egui::Modifiers::NONE,
+        source: egui::MouseWheelSource::Unknown,
     });
     h.run_steps(4);
     let scrolled = h.state().views[0].page_screen_rect(0).unwrap();

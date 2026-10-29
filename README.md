@@ -16,7 +16,7 @@ Downloads for Windows are on the [Releases](../../releases) page. To build it yo
 
 The Thai edition is developed by Non.sittith.
 
-This edition is based on PdfCraft by the ArtCraft team (upstream release v0.14.0). It is not made,
+This edition is based on PdfCraft by the ArtCraft team (upstream release v0.15.0). It is not made,
 endorsed or supported by the ArtCraft team. Please report problems with it here, not upstream.
 As the ArtCraft brand terms require of modified versions, the ArtCraft logos have been removed from
 this repository and from the program.

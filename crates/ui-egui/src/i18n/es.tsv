@@ -180,6 +180,15 @@
 	Available	Disponible
 	Ready	Listo
 	Search tools and commands…	Buscar herramientas y comandos…
+
+# Accessible names for inputs that have no visible label.
+	Added text	Texto añadido
+	Link URL	URL del enlace
+	Search tools and commands	Buscar herramientas y comandos
+	Text editing line	Línea de edición de texto
+	Text to place	Texto que colocar
+	Tooltip	Información sobre herramientas
+	Words or phrases to redact	Palabras o frases que censurar
 	No matching tools	Ninguna herramienta coincide
 	Tool	Herramienta
 	Command	Comando
@@ -2881,3 +2890,10 @@ theme	Appearance	Aspecto
 	Copy to another page	Copiar a otra página
 	Copy object	Copiar objeto
 	This file has Type 3 text, which Windows printing can't handle, so it is printed as an image (600 dpi).	Este archivo tiene texto en una fuente Type 3, que la impresión de Windows no puede procesar, así que se imprime como imagen (600 ppp).
+# Pages panel: the Page tools menu (#4415) (AI-assisted, not separately native-reviewed)
+	Page tools	Herramientas de página
+	Insert pages from a file after the selection…	Insertar páginas de un archivo después de la selección…
+	Rotate the selected pages counterclockwise	Girar las páginas seleccionadas en sentido antihorario
+	Rotate the selected pages clockwise	Girar las páginas seleccionadas en sentido horario
+	Extract the selected pages…	Extraer las páginas seleccionadas…
+	Delete the selected pages	Eliminar las páginas seleccionadas

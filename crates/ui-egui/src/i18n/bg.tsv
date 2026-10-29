@@ -1832,6 +1832,15 @@
 	Tool	Инструмент
 	Command	Команда
 	Search tools and commands…	Търсене на инструменти и команди…
+
+# Accessible names for inputs that have no visible label.
+	Added text	Добавен текст
+	Link URL	URL на връзката
+	Search tools and commands	Търсене на инструменти и команди
+	Text editing line	Ред за редактиране на текст
+	Text to place	Текст за поставяне
+	Tooltip	Подсказка
+	Words or phrases to redact	Думи или фрази за заличаване
 	No matching tools	Няма съответстващи инструменти
 	All tools	Всички инструменти
 	Read	Четене
@@ -2521,3 +2530,10 @@ animation effects	Off	Изключени
 	Copy to another page	Копиране на друга страница
 	Copy object	Копиране на обект
 	This file has Type 3 text, which Windows printing can't handle, so it is printed as an image (600 dpi).	Този файл съдържа текст с шрифт Type 3, с който печатът в Windows не може да се справи, затова се отпечатва като изображение (600 dpi).
+# Pages panel: the Page tools menu (#4415) (AI-assisted, not separately native-reviewed)
+	Page tools	Инструменти за страници
+	Insert pages from a file after the selection…	Вмъкване на страници от файл след избраното…
+	Rotate the selected pages counterclockwise	Завъртане на избраните страници обратно на часовниковата стрелка
+	Rotate the selected pages clockwise	Завъртане на избраните страници по часовниковата стрелка
+	Extract the selected pages…	Извличане на избраните страници…
+	Delete the selected pages	Изтриване на избраните страници

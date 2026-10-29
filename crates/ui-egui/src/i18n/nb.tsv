@@ -1020,6 +1020,15 @@
 	Scroll tabs right	Rull faner til høyre
 	Search comments	Søk i kommentarer
 	Search tools and commands…	Søk etter verktøy og kommandoer…
+
+# Accessible names for inputs that have no visible label.
+	Added text	Lagt til tekst
+	Link URL	URL for lenken
+	Search tools and commands	Søk etter verktøy og kommandoer
+	Text editing line	Tekstredigeringslinje
+	Text to place	Tekst som skal plasseres
+	Tooltip	Verktøytips
+	Words or phrases to redact	Ord eller fraser som skal sladdes
 	Searchable Image (Exact)	Søkbart bilde (eksakt)
 	Searching… {s} of {p} pages	Søker… {s} av {p} sider
 	Searching… {s}/{p}	Søker… {s}/{p}
@@ -2734,3 +2743,10 @@ key	Space	Mellomrom
 	Copy to another page	Kopier til en annen side
 	Copy object	Kopier objekt
 	This file has Type 3 text, which Windows printing can't handle, so it is printed as an image (600 dpi).	Denne filen har Type 3-tekst som utskrift i Windows ikke håndterer, så den skrives ut som et bilde (600 dpi).
+# Pages panel: the Page tools menu (#4415) (AI-assisted, not separately native-reviewed)
+	Page tools	Sideverktøy
+	Insert pages from a file after the selection…	Sett inn sider fra en fil etter utvalget…
+	Rotate the selected pages counterclockwise	Roter de valgte sidene mot klokken
+	Rotate the selected pages clockwise	Roter de valgte sidene med klokken
+	Extract the selected pages…	Trekk ut de valgte sidene…
+	Delete the selected pages	Slett de valgte sidene

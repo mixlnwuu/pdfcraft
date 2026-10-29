@@ -76,12 +76,38 @@ fn an_image_turns_by_any_angle_about_its_centre_and_saves_the_matrix() {
 }
 
 #[test]
+fn an_added_image_crop_keeps_some_of_each_axis() {
+    use crate::added::AddedImage;
+    assert!(AddedImage::crop_valid([0.7, 0.0, 0.0, 0.95]));
+    assert!(AddedImage::crop_valid([0.5, 0.45, 0.45, 0.5]));
+    // 0.05 + 0.9 rounds to just above 0.95: still the 5 % kept, accepted and left as it is.
+    assert!(AddedImage::crop_valid([0.05, 0.0, 0.9, 0.0]));
+    assert_eq!(AddedImage::clamp_crop([0.05, 0.0, 0.9, 0.0]), [0.05, 0.0, 0.9, 0.0]);
+    assert!(!AddedImage::crop_valid([0.06, 0.0, 0.9, 0.0]), "more than 95 % across");
+    assert!(!AddedImage::crop_valid([0.6, 0.0, 0.4, 0.0]), "nothing left across");
+    assert!(!AddedImage::crop_valid([-0.1, 0.0, 0.0, 0.0]));
+    assert!(!AddedImage::crop_valid([f64::NAN, 0.0, 0.0, 0.0]));
+    assert_eq!(AddedImage::clamp_crop([0.7, 0.0, 0.0, 0.0]), [0.7, 0.0, 0.0, 0.0], "a valid crop stays as it is");
+    // From a file: too much across keeps the two sides' proportion; nonsense trims nothing.
+    let [l, b, r, t] = AddedImage::clamp_crop([0.6, f64::INFINITY, 0.6, -1.0]);
+    assert!((l - 0.475).abs() < 1e-12 && (r - 0.475).abs() < 1e-12 && b == 0.0 && t == 0.0);
+    // Sides beyond the whole image keep their proportion too, and huge ones don't overflow.
+    let [l, _, r, _] = AddedImage::clamp_crop([1.5, 0.0, 0.5, 0.0]);
+    assert!((l - 0.7125).abs() < 1e-12 && (r - 0.2375).abs() < 1e-12, "{l} {r}");
+    let [l, _, r, _] = AddedImage::clamp_crop([f64::MAX, 0.0, f64::MAX, 0.0]);
+    assert!((l - 0.475).abs() < 1e-12 && (r - 0.475).abs() < 1e-12, "{l} {r}");
+    let [l, _, r, _] = AddedImage::clamp_crop([1.5, 0.0, 0.0, 0.0]);
+    assert!((l - 0.95).abs() < 1e-12 && r == 0.0, "one side alone is capped at the limit");
+}
+
+#[test]
 fn tokens_expand() {
     let c = cx();
     assert_eq!(expand("Page <<1>> of <<n>>", 3, 10, 0, &c), "Page 3 of 10");
     assert_eq!(expand("<<1 of n>> · <<Page 1>> · <<1/n>>", 2, 5, 0, &c), "2 of 5 · Page 2 · 2/5");
     assert_eq!(expand("<<m/d/yyyy>> <<yyyy-mm-dd>> <<mmmm d, yyyy>>", 1, 1, 0, &c), "10/1/2026 2026-10-01 October 1, 2026");
     assert_eq!(expand("<<yyyy/mm/dd>> <<yyyy/m/d>>", 1, 1, 0, &c), "2026/10/01 2026/10/1");
+    assert_eq!(expand("<<dd.mm.yyyy>> <<d.m.yyyy>> <<dd.mm.yy>> <<d.m.yy>>", 1, 1, 0, &c), "01.10.2026 1.10.2026 01.10.26 1.10.26");
     assert_eq!(expand("<<Bates Number#6#100#ABC#-X>>", 1, 1, 104, &c), "ABC000104-X");
     assert_eq!(expand("keep <<unknown>> and <<unclosed", 1, 1, 0, &c), "keep <<unknown>> and <<unclosed");
     assert_eq!(bates_start("x <<Bates Number#6#100#A#B>>"), Some(100));
@@ -1141,6 +1167,28 @@ fn added_text_and_images_are_page_content_that_stays_editable() {
     assert!(add_content(&mut doc, 0, &Content::Text(AddedText { rect: [0.0, 0.0, 100.0, 10.0], ..AddedText::default() })).is_err(), "empty text");
     // Page marks ignore added items.
     assert!(marks_present(&doc).is_empty());
+}
+
+/// #4464: a page left with one added item draws that item and nothing else.
+#[test]
+fn an_isolated_item_is_all_that_is_left_on_its_page() {
+    let mut doc = fixture();
+    let first = AddedText { rect: [72.0, 600.0, 300.0, 700.0], text: "First".into(), size: 14.0, ..AddedText::default() };
+    let second = AddedText { rect: [72.0, 400.0, 300.0, 500.0], text: "Second".into(), ..first.clone() };
+    add_content(&mut doc, 0, &Content::Text(first)).unwrap();
+    add_content(&mut doc, 0, &Content::Text(second)).unwrap();
+    let before = streams(&doc, 0).join("\n");
+    assert!(before.contains("(First) Tj") && before.contains("(Second) Tj"), "{before}");
+    assert!(isolate_content(&mut doc, 0, 2).is_err(), "no third item");
+    assert!(isolate_content(&mut doc, 9, 0).is_err(), "no such page");
+    let page = pdfcraft_model::pages(&doc).swap_remove(0);
+    doc.update_dict(page.obj, |d| d.set(b"Annots".to_vec(), Object::Array(Vec::new()))).unwrap();
+    isolate_content(&mut doc, 0, 1).unwrap();
+    let after = streams(&doc, 0).join("\n");
+    assert!(after.contains("(Second) Tj") && !after.contains("(First) Tj"), "{after}");
+    let page = pdfcraft_model::pages(&doc).swap_remove(0);
+    assert!(page.dict.get(b"Annots").is_none(), "no annotations are drawn over it");
+    assert_eq!(list_added(&doc).len(), 1);
 }
 
 /// Edit ▸ Paste (#2636): where a pasted item lands.
@@ -4190,8 +4238,15 @@ fn added_thai_text_wraps_clusters_and_survives_reopen() {
     add_content(&mut doc, 0, &Content::Text(t.clone())).unwrap();
     let reopened = reopen(&doc);
     assert_eq!(list_added(&reopened)[0].content, Content::Text(AddedText { rect: super::added::text_rect(&t), ..t.clone() }));
-    let narrow = AddedText { rect: [0.0, 0.0, 16.0, 200.0], text: "กิ่กิ่กิ่".into(), ..t.clone() };
-    assert_eq!(super::added::lines(&narrow), ["กิ่", "กิ่", "กิ่"]);
+    // A box one and a half clusters wide, whatever the Thai face's widths (Thai edition).
+    let cluster = super::added::text_width(&AddedText { text: "กิ่".into(), ..t.clone() });
+    let narrow = AddedText { rect: [0.0, 0.0, cluster * 1.5, 200.0], text: "กิ่กิ่กิ่".into(), ..t.clone() };
+    // Wrapped between clusters only: every line is whole clusters, never a letter apart from its
+    // vowel and tone mark.
+    let wrapped = super::added::lines(&narrow);
+    assert!(wrapped.len() >= 2, "{wrapped:?}");
+    assert!(wrapped.iter().all(|l| !l.is_empty() && l.replace("กิ่", "").is_empty()), "{wrapped:?}");
+    assert_eq!(wrapped.concat(), "กิ่กิ่กิ่");
     update_content(&mut doc, 0, 0, &Content::Text(AddedText { text: "แก้ไข น้ำ".into(), ..t.clone() })).unwrap();
     assert!(!own(&doc, 0).is_empty());
     let bad = Content::Text(AddedText { text: "ไทย 日".into(), ..t });
@@ -5212,6 +5267,40 @@ fn cropped_image_resizing_moves_private_clips_and_keeps_shared_ones() {
     assert_eq!(text::text_lines(&doc, 0).unwrap().len(), 1);
 }
 
+/// Report generators draw each picture as `q re W n cm Do Q` inside a section's clip that the
+/// section's text shares. Resizing the picture scales its own clip with it (the enlarged picture
+/// used to show only through its old box) while the section's clip and text stay put.
+#[test]
+fn resizing_an_image_under_a_shared_clip_moves_its_own_clip() {
+    // The picture's own clip as wide as the picture, and wider (both seen in one report).
+    for clip_width in [61.2, 85.0] {
+        let mut doc = image_page_with(&format!(
+            "q 20 20 560 760 re W n q 162 79 {clip_width} 28.3 re W n 61.2 0 0 28.3 162 79 cm /Im0 Do Q BT /F1 12 Tf 30 50 Td (Section text) Tj ET Q"
+        ));
+        let before = images::page_images(&doc, 0).unwrap()[0].clone();
+        assert!(close(before.visible_rect.unwrap(), [162.0, 79.0, 223.2, 107.3]), "{:?}", before.visible_rect);
+        let caption = text::text_lines(&doc, 0).unwrap();
+        let target = [162.0, 79.0, 284.4, 135.6];
+        let transform = images::rect_to_rect(before.visible_rect.unwrap(), target);
+        images::change_image(&mut doc, 0, 0, &images::ImageChange::Transform(transform)).unwrap();
+        doc = reopen(&doc);
+        let after = images::page_images(&doc, 0).unwrap()[0].clone();
+        let near = |a: [f64; 4], b: [f64; 4]| a.iter().zip(b).all(|(x, y)| (x - y).abs() < 0.05);
+        assert!(near(after.visible_rect.unwrap(), target), "clip {clip_width}: the whole enlarged picture shows, {:?}", after.visible_rect);
+        assert_eq!(after.object, before.object, "pixels are never resampled or replaced");
+        assert_eq!(
+            text::text_lines(&doc, 0).unwrap().iter().map(|l| (&l.text, l.rect, l.baseline())).collect::<Vec<_>>(),
+            caption.iter().map(|l| (&l.text, l.rect, l.baseline())).collect::<Vec<_>>(),
+            "the section's text stays where it was"
+        );
+        // The section's clip is shared, so it still bounds the picture: past it, nothing shows.
+        let past = images::rect_to_rect(after.visible_rect.unwrap(), [500.0, 79.0, 700.0, 135.6]);
+        images::change_image(&mut doc, 0, 0, &images::ImageChange::Transform(past)).unwrap();
+        let clipped = images::page_images(&reopen(&doc), 0).unwrap()[0].visible_rect.unwrap();
+        assert!(clipped[2] <= 580.05, "the section's clip stays in force: {clipped:?}");
+    }
+}
+
 #[test]
 fn private_image_crop_with_intervening_state_resizes_across_streams() {
     let variants: Vec<Vec<&[u8]>> = vec![
@@ -6027,12 +6116,13 @@ fn a_subset_program_is_not_trusted_for_new_characters_and_the_error_names_the_ch
     let face = pdfcraft_fonts::document_japanese_font_for_style(false, false).map_or("Inter", |f| f.family);
     assert_eq!(edit.substituted, Some(format!("{face} Type3")));
     assert_eq!(text::text_blocks(&reopen(&doc), 0).unwrap()[0].editor_text, "Stable tőxt");
-    // A character no fallback face has is refused, named, and left as it was.
+    // A character no fallback face has is refused, named, and left as it was (Thai edition:
+    // Telugu, as Thai is drawn in TH Sarabun PSK).
     let mut doc = embedded_program_page("BT /F1 12 Tf 72 700 Td (Stable text) Tj ET", "ABCDEF+Inter-Regular");
     let before = page_content_bytes(&doc, 0);
-    let result = text::rewrite_block(&mut doc, 0, 0, Some("Stable กtext"), &text::BlockStyle::default());
+    let result = text::rewrite_block(&mut doc, 0, 0, Some("Stable అtext"), &text::BlockStyle::default());
     let Err(EditError::Invalid(msg)) = result else { panic!("expected a clear error, got {result:?}") };
-    assert!(msg.contains("ก (U+0E01)") && msg.contains("Load font") && !msg.contains("Japanese"), "{msg}");
+    assert!(msg.contains("అ (U+0C05)") && msg.contains("Load font") && !msg.contains("Japanese"), "{msg}");
     assert_eq!(page_content_bytes(&doc, 0), before);
 }
 
@@ -6919,12 +7009,124 @@ fn actual_text_pairs_past_the_marked_content_cap() {
     }
 }
 
-/// #2992: the colour a page is painted with before anything else is its background, for exports
-/// that keep a page colour. Edit a PDF ▸ Background's fill is found under the text it goes
-/// behind; a page that paints anything else first, a fill that doesn't cover the page, a
-/// translucent or clipped one, or a colour that isn't plain gray, RGB or CMYK has none.
+fn page_background_from_content(content: &str, resources: &str) -> Option<[f64; 3]> {
+    let objects = [
+        "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
+        format!("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 600 800] /CropBox [0 0 500 700] /Contents 4 0 R /Resources << {resources} >> >>"),
+        format!("<< /Length {} >>\nstream\n{content}\nendstream", content.len()),
+    ];
+    let mut bytes = b"%PDF-1.7\n".to_vec();
+    let mut offsets = Vec::new();
+    for (index, object) in objects.iter().enumerate() {
+        offsets.push(bytes.len());
+        bytes.extend_from_slice(format!("{} 0 obj\n{object}\nendobj\n", index + 1).as_bytes());
+    }
+    let xref_offset = bytes.len();
+    bytes.extend_from_slice(b"xref\n0 5\n0000000000 65535 f \n");
+    for offset in offsets {
+        bytes.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+    }
+    bytes.extend_from_slice(format!("trailer\n<< /Size 5 /Root 1 0 R >>\nstartxref\n{xref_offset}\n%%EOF\n").as_bytes());
+    page_background(&Document::open(Arc::new(bytes)).unwrap(), 0).unwrap()
+}
+
+fn assert_page_background_fill_cases(gs: &str) {
+    assert_eq!(page_background_from_content("1 g 0 0 600 800 re f", ""), Some([1.0; 3]), "a producer's white page fill");
+    assert_eq!(page_background_from_content("0 0 1 0 k 0 0 500 700 re f", ""), Some([1.0, 1.0, 0.0]), "CMYK, covering the crop box");
+    assert_eq!(page_background_from_content("/DeviceRGB cs 1 0 0 sc 0 0 500 700 re f", ""), Some([1.0, 0.0, 0.0]), "cs and sc");
+    assert_eq!(page_background_from_content("/Full gs q 2 0 0 2 0 0 cm 0 1 0 rg 0 0 300 400 re f Q", gs), Some([0.0, 1.0, 0.0]), "under a cm");
+    assert_eq!(page_background_from_content("1 0 0 rg 0 0 300 800 re f", ""), None, "half the page");
+    assert_eq!(page_background_from_content("1 0 0 rg 0 0 300 800 re 300 0 300 800 re f", ""), None, "two halves are not one covering rectangle");
+    assert_eq!(
+        page_background_from_content("1 0 0 rg 0 0 300 800 re 0 0 600 800 re f", ""),
+        Some([1.0, 0.0, 0.0]),
+        "one of the rectangles covers it"
+    );
+    // #2994 review: a second rectangle that cuts a hole: any one under even-odd, one wound the
+    // other way under nonzero.
+    assert_eq!(page_background_from_content("1 0 0 rg 0 0 600 800 re 100 100 200 200 re f*", ""), None, "even-odd hole");
+    assert_eq!(page_background_from_content("1 0 0 rg 0 0 600 800 re 300 100 -200 200 re f", ""), None, "nonzero, reversed inner rectangle");
+    assert_eq!(
+        page_background_from_content("1 0 0 rg 0 0 600 800 re 100 100 200 200 re f", ""),
+        Some([1.0, 0.0, 0.0]),
+        "nonzero, same winding: no hole"
+    );
+    assert_eq!(
+        page_background_from_content("1 0 0 rg q -1 0 0 1 600 0 cm 0 0 600 800 re Q 100 100 200 200 re f", ""),
+        None,
+        "reversed by a mirroring cm"
+    );
+    assert_eq!(page_background_from_content("/Half gs 1 0 0 rg 0 0 600 800 re f", gs), None, "translucent");
+    assert_eq!(page_background_from_content("/Mul gs 1 0 0 rg 0 0 600 800 re f", gs), None, "blended");
+    assert_eq!(page_background_from_content("0 0 100 100 re W n 1 0 0 rg 0 0 600 800 re f", ""), None, "clipped to a corner");
+    assert_eq!(page_background_from_content("0 0 600 800 re W n 1 0 0 rg 0 0 600 800 re f", ""), Some([1.0, 0.0, 0.0]), "a page-sized clip");
+    assert_eq!(page_background_from_content("/Pattern cs /P1 scn 0 0 600 800 re f", ""), None, "a pattern");
+    assert_eq!(page_background_from_content("BT ET 0 0 600 800 re S 1 0 0 rg 0 0 600 800 re f", ""), None, "a stroke first");
+    assert_eq!(page_background_from_content("0 0 m 600 0 l 600 800 l 0 800 l h f", ""), None, "a path that isn't a rectangle");
+    assert_eq!(
+        page_background_from_content("1 0 0 rg 0 0 600 800 re 100 100 m 200 100 l 200 200 l h f*", ""),
+        None,
+        "a page fill with a hole cut in it"
+    );
+}
+
+fn assert_page_background_transform_and_clip_cases() {
+    // #2994 review: a rectangle turned 45° about the crop box's centre covers it only if the crop
+    // box's corners are inside it; its bounding box covering the crop box isn't enough. This one
+    // reaches 500 from the centre along each axis (its box covers the 500 × 700 crop box) but
+    // 354 along the diagonals, short of the corners. One reaching 707 covers them.
+    let turned = "0.70710678 0.70710678 -0.70710678 0.70710678 250 350 cm";
+    assert_eq!(
+        page_background_from_content(&format!("1 0 0 rg {turned} -353.553 -353.553 707.107 707.107 re f"), ""),
+        None,
+        "a turned fill short of the corners"
+    );
+    assert_eq!(
+        page_background_from_content(&format!("1 0 0 rg {turned} -500 -500 1000 1000 re f"), ""),
+        Some([1.0, 0.0, 0.0]),
+        "a turned fill over them"
+    );
+    // The same for a clip.
+    assert_eq!(
+        page_background_from_content(&format!("{turned} -353.553 -353.553 707.107 707.107 re W n 1 0 0 rg -2000 -2000 4000 4000 re f"), ""),
+        None,
+        "a turned clip"
+    );
+    assert_eq!(
+        page_background_from_content(&format!("{turned} -500 -500 1000 1000 re W n 1 0 0 rg -2000 -2000 4000 4000 re f"), ""),
+        Some([1.0, 0.0, 0.0]),
+        "a turned clip over the corners"
+    );
+    // Clips add up: two that each cover the page leave it covered, one that doesn't among them
+    // doesn't.
+    assert_eq!(
+        page_background_from_content("0 0 600 800 re W n 0 0 550 750 re W n 1 0 0 rg 0 0 600 800 re f", ""),
+        Some([1.0, 0.0, 0.0]),
+        "two covering clips"
+    );
+    assert_eq!(
+        page_background_from_content("0 0 600 800 re W n 0 0 300 750 re W n 1 0 0 rg 0 0 600 800 re f", ""),
+        None,
+        "the second clip doesn't cover"
+    );
+    // Past 64 clipping rectangles the clip counts as unknown.
+    let clips = "0 0 600 800 re W n ".repeat(65);
+    assert_eq!(page_background_from_content(&format!("{clips}1 0 0 rg 0 0 600 800 re f"), ""), None, "too many clips to follow");
+    // A rectangle drawn the other way round (negative width) covers the page all the same.
+    assert_eq!(page_background_from_content("1 0 0 rg 600 0 -600 800 re f", ""), Some([1.0, 0.0, 0.0]), "drawn clockwise");
+    // The crop box counts as covered within half a percent of its size (2.5 × 3.5 here), the
+    // edge of that included.
+    assert_eq!(page_background_from_content("1 0 0 rg 2 3 496 694 re f", ""), Some([1.0, 0.0, 0.0]), "within the tolerance");
+    assert_eq!(page_background_from_content("1 0 0 rg 2.5 3.5 495 693 re f", ""), Some([1.0, 0.0, 0.0]), "on the tolerance's edge");
+    assert_eq!(page_background_from_content("1 0 0 rg 3 4 494 692 re f", ""), None, "past the tolerance");
+}
+
+/// #2992: page background detection follows the first full-page fill under text and ignores
+/// partial, translucent, clipped, or unsupported fills.
 #[test]
 fn a_page_painted_first_with_a_full_page_fill_has_that_background() {
+    let gs = "/ExtGState << /Half << /ca 0.5 >> /Mul << /BM /Multiply >> /Full << /ca 1 /SMask /None >> >>";
     let mut doc = fixture();
     assert_eq!(page_background(&doc, 0).unwrap(), None, "text first");
     add_background(&mut doc, &[0, 1], &Background { color: [0.0, 0.5, 0.5], opacity: 1.0, ..Background::default() }, false).unwrap();
@@ -6935,77 +7137,8 @@ fn a_page_painted_first_with_a_full_page_fill_has_that_background() {
     assert_eq!(page_background(&doc, 2).unwrap(), None, "a page with no content");
     assert!(page_background(&doc, 9).is_err());
 
-    let page = |content: &str, resources: &str| {
-        let objs: Vec<String> = vec![
-            "<< /Type /Catalog /Pages 2 0 R >>".into(),
-            "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".into(),
-            format!("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 600 800] /CropBox [0 0 500 700] /Contents 4 0 R /Resources << {resources} >> >>"),
-            format!("<< /Length {} >>\nstream\n{content}\nendstream", content.len()),
-        ];
-        let mut out = b"%PDF-1.7\n".to_vec();
-        let mut offs = Vec::new();
-        for (i, o) in objs.iter().enumerate() {
-            offs.push(out.len());
-            out.extend_from_slice(format!("{} 0 obj\n{o}\nendobj\n", i + 1).as_bytes());
-        }
-        let x = out.len();
-        out.extend_from_slice(b"xref\n0 5\n0000000000 65535 f \n");
-        for o in offs {
-            out.extend_from_slice(format!("{o:010} 00000 n \n").as_bytes());
-        }
-        out.extend_from_slice(format!("trailer\n<< /Size 5 /Root 1 0 R >>\nstartxref\n{x}\n%%EOF\n").as_bytes());
-        page_background(&Document::open(Arc::new(out)).unwrap(), 0).unwrap()
-    };
-    let gs = "/ExtGState << /Half << /ca 0.5 >> /Mul << /BM /Multiply >> /Full << /ca 1 /SMask /None >> >>";
-    assert_eq!(page("1 g 0 0 600 800 re f", ""), Some([1.0; 3]), "a producer's white page fill");
-    assert_eq!(page("0 0 1 0 k 0 0 500 700 re f", ""), Some([1.0, 1.0, 0.0]), "CMYK, covering the crop box");
-    assert_eq!(page("/DeviceRGB cs 1 0 0 sc 0 0 500 700 re f", ""), Some([1.0, 0.0, 0.0]), "cs and sc");
-    assert_eq!(page("/Full gs q 2 0 0 2 0 0 cm 0 1 0 rg 0 0 300 400 re f Q", gs), Some([0.0, 1.0, 0.0]), "under a cm");
-    assert_eq!(page("1 0 0 rg 0 0 300 800 re f", ""), None, "half the page");
-    assert_eq!(page("1 0 0 rg 0 0 300 800 re 300 0 300 800 re f", ""), None, "two halves are not one covering rectangle");
-    assert_eq!(page("1 0 0 rg 0 0 300 800 re 0 0 600 800 re f", ""), Some([1.0, 0.0, 0.0]), "one of the rectangles covers it");
-    // #2994 review: a second rectangle that cuts a hole: any one under even-odd, one wound the
-    // other way under nonzero.
-    assert_eq!(page("1 0 0 rg 0 0 600 800 re 100 100 200 200 re f*", ""), None, "even-odd hole");
-    assert_eq!(page("1 0 0 rg 0 0 600 800 re 300 100 -200 200 re f", ""), None, "nonzero, reversed inner rectangle");
-    assert_eq!(page("1 0 0 rg 0 0 600 800 re 100 100 200 200 re f", ""), Some([1.0, 0.0, 0.0]), "nonzero, same winding: no hole");
-    assert_eq!(page("1 0 0 rg q -1 0 0 1 600 0 cm 0 0 600 800 re Q 100 100 200 200 re f", ""), None, "reversed by a mirroring cm");
-    assert_eq!(page("/Half gs 1 0 0 rg 0 0 600 800 re f", gs), None, "translucent");
-    assert_eq!(page("/Mul gs 1 0 0 rg 0 0 600 800 re f", gs), None, "blended");
-    assert_eq!(page("0 0 100 100 re W n 1 0 0 rg 0 0 600 800 re f", ""), None, "clipped to a corner");
-    assert_eq!(page("0 0 600 800 re W n 1 0 0 rg 0 0 600 800 re f", ""), Some([1.0, 0.0, 0.0]), "a page-sized clip");
-    assert_eq!(page("/Pattern cs /P1 scn 0 0 600 800 re f", ""), None, "a pattern");
-    assert_eq!(page("BT ET 0 0 600 800 re S 1 0 0 rg 0 0 600 800 re f", ""), None, "a stroke first");
-    assert_eq!(page("0 0 m 600 0 l 600 800 l 0 800 l h f", ""), None, "a path that isn't a rectangle");
-    assert_eq!(page("1 0 0 rg 0 0 600 800 re 100 100 m 200 100 l 200 200 l h f*", ""), None, "a page fill with a hole cut in it");
-    // #2994 review: a rectangle turned 45° about the crop box's centre covers it only if the crop
-    // box's corners are inside it; its bounding box covering the crop box isn't enough. This one
-    // reaches 500 from the centre along each axis (its box covers the 500 × 700 crop box) but
-    // 354 along the diagonals, short of the corners. One reaching 707 covers them.
-    let turned = "0.70710678 0.70710678 -0.70710678 0.70710678 250 350 cm";
-    assert_eq!(page(&format!("1 0 0 rg {turned} -353.553 -353.553 707.107 707.107 re f"), ""), None, "a turned fill short of the corners");
-    assert_eq!(page(&format!("1 0 0 rg {turned} -500 -500 1000 1000 re f"), ""), Some([1.0, 0.0, 0.0]), "a turned fill over them");
-    // The same for a clip.
-    assert_eq!(page(&format!("{turned} -353.553 -353.553 707.107 707.107 re W n 1 0 0 rg -2000 -2000 4000 4000 re f"), ""), None, "a turned clip");
-    assert_eq!(
-        page(&format!("{turned} -500 -500 1000 1000 re W n 1 0 0 rg -2000 -2000 4000 4000 re f"), ""),
-        Some([1.0, 0.0, 0.0]),
-        "a turned clip over the corners"
-    );
-    // Clips add up: two that each cover the page leave it covered, one that doesn't among them
-    // doesn't.
-    assert_eq!(page("0 0 600 800 re W n 0 0 550 750 re W n 1 0 0 rg 0 0 600 800 re f", ""), Some([1.0, 0.0, 0.0]), "two covering clips");
-    assert_eq!(page("0 0 600 800 re W n 0 0 300 750 re W n 1 0 0 rg 0 0 600 800 re f", ""), None, "the second clip doesn't cover");
-    // Past 64 clipping rectangles the clip counts as unknown.
-    let clips = "0 0 600 800 re W n ".repeat(65);
-    assert_eq!(page(&format!("{clips}1 0 0 rg 0 0 600 800 re f"), ""), None, "too many clips to follow");
-    // A rectangle drawn the other way round (negative width) covers the page all the same.
-    assert_eq!(page("1 0 0 rg 600 0 -600 800 re f", ""), Some([1.0, 0.0, 0.0]), "drawn clockwise");
-    // The crop box counts as covered within half a percent of its size (2.5 × 3.5 here), the
-    // edge of that included.
-    assert_eq!(page("1 0 0 rg 2 3 496 694 re f", ""), Some([1.0, 0.0, 0.0]), "within the tolerance");
-    assert_eq!(page("1 0 0 rg 2.5 3.5 495 693 re f", ""), Some([1.0, 0.0, 0.0]), "on the tolerance's edge");
-    assert_eq!(page("1 0 0 rg 3 4 494 692 re f", ""), None, "past the tolerance");
+    assert_page_background_fill_cases(gs);
+    assert_page_background_transform_and_clip_cases();
 }
 
 #[test]

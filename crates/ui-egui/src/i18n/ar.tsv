@@ -16,9 +16,9 @@
 # Product and technology names (PdfCraft, PDF, Acrobat JavaScript ...) stay in Latin letters;
 # the trailing "…" of dialog commands is kept. Digits are Western (0-9).
 #
-# Write every entry in logical (typing) order. The interface draws text left to right, so
-# i18n/mod.rs puts each entry into display order when it loads the catalog (bidi::display_rtl);
-# spaces and a colon at either end of an entry stay at that end, next to what the code appends.
+# Write every entry in logical (typing) order. Catalogs stay logical: epaint shapes and
+# reorders each line with UAX #9, so preordering here would reverse right-to-left text twice.
+# Spaces and a colon at either end of an entry stay at that end, next to what the code appends.
 
 	Menu	القائمة
 	File	ملف
@@ -184,6 +184,15 @@
 	Available	متاح
 	Ready	جاهز
 	Search tools and commands…	البحث في الأدوات والأوامر…
+
+# Accessible names for inputs that have no visible label.
+	Added text	النص المضاف
+	Link URL	عنوان URL للرابط
+	Search tools and commands	البحث في الأدوات والأوامر
+	Text editing line	سطر تحرير النص
+	Text to place	النص المراد وضعه
+	Tooltip	تلميح
+	Words or phrases to redact	الكلمات أو العبارات المراد حجبها
 	No matching tools	لا توجد أدوات مطابقة
 	Tool	أداة
 	Command	أمر
@@ -2834,3 +2843,10 @@ certificate	Version	الإصدار
 	Copy to another page	نسخ إلى صفحة أخرى
 	Copy object	نسخ الكائن
 	This file has Type 3 text, which Windows printing can't handle, so it is printed as an image (600 dpi).	يحتوي هذا الملف على نص بخط Type 3 لا تستطيع طباعة Windows التعامل معه، لذا تتم طباعته كصورة (600 نقطة لكل بوصة).
+# Pages panel: the Page tools menu (#4415) (AI-assisted, not separately native-reviewed)
+	Page tools	أدوات الصفحات
+	Insert pages from a file after the selection…	إدراج صفحات من ملف بعد التحديد…
+	Rotate the selected pages counterclockwise	تدوير الصفحات المحددة عكس اتجاه عقارب الساعة
+	Rotate the selected pages clockwise	تدوير الصفحات المحددة باتجاه عقارب الساعة
+	Extract the selected pages…	استخراج الصفحات المحددة…
+	Delete the selected pages	حذف الصفحات المحددة
