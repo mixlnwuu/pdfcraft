@@ -323,7 +323,7 @@ fn edit_paragraph(h: &mut Harness<'_, PdfCraftApp>) {
     }
     h.run_steps(4);
     assert!(h.state().views[0].line_editor.is_some(), "the paragraph opens for typing");
-    assert!(h.ctx.memory(|m| m.has_focus(egui::Id::new("edit-text-line-input"))), "with the keyboard");
+    assert!(h.ctx.memory(|m| m.has_focus(egui::Id::unique("edit-text-line-input"))), "with the keyboard");
 }
 
 /// The open paragraph's line spacing, if a paragraph is open.

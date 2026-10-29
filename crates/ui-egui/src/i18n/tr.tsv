@@ -142,6 +142,15 @@
 	Available	Kullanılabilir
 	Ready	Hazır
 	Search tools and commands…	Araçları ve komutları ara…
+
+# Accessible names for inputs that have no visible label.
+	Added text	Eklenen metin
+	Link URL	Bağlantı URL'si
+	Search tools and commands	Araçları ve komutları ara
+	Text editing line	Metin düzenleme satırı
+	Text to place	Yerleştirilecek metin
+	Tooltip	İpucu
+	Words or phrases to redact	Karartılacak sözcükler veya ifadeler
 	No matching tools	Eşleşen araç yok
 	Tool	Araç
 	Command	Komut
@@ -2554,3 +2563,10 @@ animation effects	Off	Kapalı
 	Copy to another page	Başka sayfaya kopyala
 	Copy object	Nesneyi kopyala
 	This file has Type 3 text, which Windows printing can't handle, so it is printed as an image (600 dpi).	Bu dosyada Windows yazdırmanın işleyemediği Type 3 yazı tipinde metin var, bu yüzden resim olarak yazdırılıyor (600 dpi).
+# Pages panel: the Page tools menu (#4415) (AI-assisted, not separately native-reviewed)
+	Page tools	Sayfa araçları
+	Insert pages from a file after the selection…	Seçimin ardından dosyadan sayfa ekle…
+	Rotate the selected pages counterclockwise	Seçili sayfaları saat yönünün tersine döndür
+	Rotate the selected pages clockwise	Seçili sayfaları saat yönünde döndür
+	Extract the selected pages…	Seçili sayfaları ayıkla…
+	Delete the selected pages	Seçili sayfaları sil

@@ -38,11 +38,20 @@ pub(crate) fn printers() -> Vec<Printer> {
 
 /// Whether the printer's driver takes two-sided settings: its PrintCapabilities offer a two-sided
 /// option for the feature the job's ticket sets. `None` when the capabilities can't be read. A
-/// driver without one drops two-sided from the ticket and prints its own way.
+/// driver without one cannot confirm an explicit two-sided request, which is refused before submission.
 fn two_sided(device: &PrinterDevice) -> Option<bool> {
     let capabilities = PrintCapabilities::fetch(device).ok()?;
     let duplex = OwnedName::qualified("JobDuplexAllDocumentsContiguously", NS_PSK, Some("psk"));
     Some(capabilities.options_for_feature(duplex).any(|o| o.name.as_ref().is_some_and(|n| n.local_name.starts_with("TwoSided"))))
+}
+
+/// What the driver's PrintCapabilities offer for the job options [`ticket::verify_job_options`]
+/// checks; all unknown when they can't be read.
+fn driver_offers(device: &PrinterDevice) -> ticket::Offered {
+    PrintCapabilities::fetch_xml_for_ticket(device, None)
+        .ok()
+        .and_then(|xml| String::from_utf8(xml).ok())
+        .map_or_else(ticket::Offered::default, |xml| ticket::offered(&xml))
 }
 
 /// The queue the job goes to: the one asked for, else the default. Never another one: a job
@@ -150,6 +159,7 @@ fn submit_as(
     progress: &mut dyn FnMut(usize, usize),
 ) -> Result<String, Error> {
     let read = sheets::read(pdf)?;
+    read.check_print_annotations()?;
     let count = read.sheets.len();
     let first = read.sheets.first().map(sheets::Sheet::size).ok_or_else(|| spool_error("the print-ready PDF has no pages"))?;
     let landscape = first.0 > first.1 + SAME;
@@ -165,7 +175,32 @@ fn submit_as(
     let read = &read;
     // The worker is joined before `dir` is dropped: the spooler reads the file.
     let result = crate::progress::run(progress, move |sender| {
-        let (ticket, paper) = driver_ticket(&device, job, first, landscape)?;
+        let (mut ticket, mut paper) = driver_ticket(&device, job, first, landscape)?;
+        let xml = std::str::from_utf8(ticket.get_xml()).map_err(spool_error)?;
+        let mut repeat = None;
+        // Jobs of one copy each, for collated copies that can't be one job.
+        let mut jobs = 1;
+        // The capabilities are read when the ticket lacks a requested value: they tell a driver
+        // that dropped it from one that never had the feature. Unreadable stays strict. A driver
+        // can also keep a collation it doesn't offer, so collated copies always read them.
+        let checked = ticket::verify_job_options(xml, job, count, ticket::Offered::default());
+        if checked.is_err() || ticket::collated_copies(job, count) {
+            let offered = driver_offers(&device);
+            if ticket::repeats_collated(job, count, offered) {
+                let single = Job { copies: 1, ..job.clone() };
+                (ticket, paper) = driver_ticket(&device, &single, first, landscape)?;
+                let xml = std::str::from_utf8(ticket.get_xml()).map_err(spool_error)?;
+                ticket::verify_job_options(xml, &single, count, offered)?;
+                // Two-sided as the driver will print it, the queue's default included.
+                let copies = job.copies.clamp(1, 999);
+                match ticket::one_job_sides(xml) {
+                    Some(two_sided) => repeat = Some(sheets::Repeat { copies, two_sided }),
+                    None => jobs = copies,
+                }
+            } else if checked.is_err() {
+                ticket::verify_job_options(xml, job, count, offered)?;
+            }
+        }
         let (fit, paper) = match job.scaling {
             Scaling::Exact => (Fit::Exact, first),
             Scaling::ShrinkToFit => {
@@ -174,19 +209,56 @@ fn submit_as(
             }
         };
         let edits = sheets::plan(&read.sheets, paper, fit)?;
-        let updated = if edits.is_empty() { None } else { Some(read.update(&edits)?) };
+        let mut updated = None;
+        if let Some(r) = repeat {
+            updated = read.repeated(&edits, r)?;
+            if updated.is_none() {
+                (repeat, jobs) = (None, r.copies);
+            }
+        }
+        if updated.is_none() && !edits.is_empty() {
+            updated = Some(read.update(&edits)?);
+        }
         let print_ready = updated.as_deref().unwrap_or(pdf);
+        let jobs = jobs as usize;
+        // PdfCraft patch: a job printed as pictures goes to the spooler as a multi-page TIFF the
+        // caller draws from the print-ready PDF, through winprint's ImagePrinter.
         if let Some(pictures) = pictures {
-            let _ = sender.send((0, count));
+            let _ = sender.send((0, jobs * count));
             let tiff = pictures(print_ready).map_err(|e| spool_error(format!("the pages could not be drawn as pictures: {e}")))?;
             let image_path = path.with_extension("tif");
             let mut file = std::fs::OpenOptions::new().write(true).create_new(true).open(&image_path).map_err(written)?;
             file.write_all(&tiff).map_err(written)?;
             drop(file);
-            return ImagePrinter::new(device)
-                .print(&image_path, ticket)
-                .map(|()| {
-                    let _ = sender.send((count, count));
+            let printer = ImagePrinter::new(device);
+            for copy in 0..jobs {
+                printer.print(&image_path, ticket.clone()).map_err(|e| {
+                    let mut message = e.to_string();
+                    let mut cause = std::error::Error::source(&e);
+                    while let Some(source) = cause {
+                        message.push_str(&format!(": {source}"));
+                        cause = source.source();
+                    }
+                    if copy > 0 {
+                        message = format!("{copy} of {jobs} copies were sent, each as a job of its own, and the next was not: {message}");
+                    }
+                    spool_error(message)
+                })?;
+                let _ = sender.send(((copy + 1) * count, jobs * count));
+            }
+            return Ok((repeat, jobs));
+        }
+        let mut file = std::fs::OpenOptions::new().write(true).create_new(true).open(&path).map_err(written)?;
+        file.write_all(print_ready).map_err(written)?;
+        drop(file);
+        let printer = WinPdfPrinter::new(device);
+        for copy in 0..jobs {
+            printer
+                .print_with_progress(&path, ticket.clone(), |processed, total| {
+                    // Page acceptance is distinct from terminal job success. The callback
+                    // drains on the submitter's thread, so it can retain non-Send UI state.
+                    let (processed, total) = (processed as usize, total as usize);
+                    let _ = sender.send((copy * total + processed, jobs * total));
                 })
                 .map_err(|e| {
                     let mut message = e.to_string();
@@ -195,31 +267,20 @@ fn submit_as(
                         message.push_str(&format!(": {source}"));
                         cause = source.source();
                     }
+                    if copy > 0 {
+                        message = format!("{copy} of {jobs} copies were sent, each as a job of its own, and the next was not: {message}");
+                    }
                     spool_error(message)
-                });
+                })?;
         }
-        let mut file = std::fs::OpenOptions::new().write(true).create_new(true).open(&path).map_err(written)?;
-        file.write_all(print_ready).map_err(written)?;
-        drop(file);
-        WinPdfPrinter::new(device)
-            .print_with_progress(&path, ticket, |processed, total| {
-                // Page acceptance is distinct from terminal job success. The callback
-                // drains on the submitter's thread, so it can retain non-Send UI state.
-                let _ = sender.send((processed as usize, total as usize));
-            })
-            .map_err(|e| {
-                let mut message = e.to_string();
-                let mut cause = std::error::Error::source(&e);
-                while let Some(source) = cause {
-                    message.push_str(&format!(": {source}"));
-                    cause = source.source();
-                }
-                spool_error(message)
-            })
+        Ok((repeat, jobs))
     });
     drop(dir);
-    result?;
-    Ok(format!("spooled {count} sheet(s)"))
+    Ok(match result? {
+        (Some(repeat), _) => format!("spooled {count} sheet(s) {} times, collated", repeat.copies),
+        (None, jobs) if jobs > 1 => format!("spooled {count} sheet(s) as {jobs} jobs, one per collated copy"),
+        _ => format!("spooled {count} sheet(s)"),
+    })
 }
 
 #[cfg(test)]
@@ -232,20 +293,38 @@ mod tests {
         assert!(select_device(Vec::new(), None, None).is_err());
     }
 
-    /// What a real driver makes of a job's ticket: Letter, portrait, two copies, two-sided on
-    /// the long edge, grayscale. Sends no job. `CRAFT_PRINT_TEST_PRINTER` names the queue;
+    /// What a real driver makes of a job's ticket: Letter, portrait, two copies. Checks explicit
+    /// option retention separately; unsupported options must fail before submission. Sends no job.
+    /// `CRAFT_PRINT_TEST_PRINTER` names the queue;
     /// `CRAFT_PRINT_TEST_TICKET_OUTPUT` keeps the validated ticket, to see which options it kept.
     #[test]
     #[ignore = "needs CRAFT_PRINT_TEST_PRINTER naming an installed printer; sends no job"]
     fn an_installed_driver_validates_the_ticket() {
         let name = std::env::var("CRAFT_PRINT_TEST_PRINTER").unwrap();
         let device = select_device(PrinterDevice::all().unwrap(), Some(&name), None).unwrap();
-        let job = Job { copies: 2, duplex: Some(crate::Duplex::LongEdge), grayscale: true, ..Job::default() };
+        let job = Job { copies: 2, ..Job::default() };
         let (ticket, paper) = driver_ticket(&device, &job, (612.0, 792.0), false).unwrap();
+        ticket::verify_job_options(std::str::from_utf8(ticket.get_xml()).unwrap(), &job, 1, ticket::Offered::default()).unwrap();
         assert_eq!(paper, (215_900, 279_400));
         eprintln!("unprintable margin: {} pt", imageable_margin(&device, &ticket));
         if let Ok(path) = std::env::var("CRAFT_PRINT_TEST_TICKET_OUTPUT") {
             std::fs::write(path, ticket.get_xml()).unwrap();
+        }
+        let capabilities = PrintCapabilities::fetch(&device).unwrap();
+        for (feature, wanted, requested) in [
+            ("PageOutputColor", "Monochrome", Job { grayscale: true, ..Job::default() }),
+            ("JobDuplexAllDocumentsContiguously", "TwoSidedLongEdge", Job { duplex: Some(crate::Duplex::LongEdge), ..Job::default() }),
+            ("DocumentCollate", "Collated", Job { copies: 2, ..Job::default() }),
+        ] {
+            let (ticket, _) = driver_ticket(&device, &requested, (612.0, 792.0), false).unwrap();
+            let retained = ticket::verify_job_options(std::str::from_utf8(ticket.get_xml()).unwrap(), &requested, 3, ticket::Offered::default());
+            eprintln!("{feature}={wanted}: {retained:?}");
+            let offered = capabilities
+                .options_for_feature(OwnedName::qualified(feature, NS_PSK, Some("psk")))
+                .any(|o| o.name.as_ref().is_some_and(|n| n.local_name == wanted || (feature == "PageOutputColor" && n.local_name == "Grayscale")));
+            if !offered {
+                assert!(retained.is_err(), "unsupported explicit option must not be silently dropped");
+            }
         }
     }
 
@@ -267,5 +346,31 @@ mod tests {
         let sent = crate::submit(&pdf, &job);
         eprintln!("{sent:?}");
         assert!(sent.is_ok());
+    }
+
+    /// A colour chosen in the driver's own preferences (Properties…) reaches the job when the job
+    /// doesn't ask for grayscale: the validated ticket has the colour of the user's preferences,
+    /// whatever they are (storytold/pdfcraft#2422; it was always Color before). Set the queue to
+    /// black and white in its preferences to see the case that failed. Sends no job.
+    #[test]
+    #[ignore = "needs CRAFT_PRINT_TEST_PRINTER naming an installed printer; sends no job"]
+    fn the_preferences_colour_reaches_a_job_without_grayscale() {
+        fn colour(ticket: &PrintTicket) -> Option<String> {
+            let xml = std::str::from_utf8(ticket.get_xml()).ok()?;
+            let document = roxmltree::Document::parse(xml).ok()?;
+            let feature = document
+                .root_element()
+                .children()
+                .find(|n| n.has_tag_name((ticket::NS_PSF, "Feature")) && n.attribute("name").is_some_and(|a| a.ends_with(":PageOutputColor")))?;
+            feature.children().find(|n| n.has_tag_name((ticket::NS_PSF, "Option")))?.attribute("name").map(str::to_owned)
+        }
+        let name = std::env::var("CRAFT_PRINT_TEST_PRINTER").unwrap();
+        let device = select_device(PrinterDevice::all().unwrap(), Some(&name), None).unwrap();
+        let mut builder = PrintTicketBuilder::new(&device).unwrap();
+        builder.merge(PrintTicket::from_xml(winprint::ticket::DEFAULT_PRINT_TICKET_XML.as_bytes().to_vec())).unwrap();
+        let preferences = colour(&builder.build().unwrap());
+        eprintln!("the preferences' colour: {preferences:?}");
+        let (ticket, _) = driver_ticket(&device, &Job::default(), (595.28, 841.89), false).unwrap();
+        assert_eq!(colour(&ticket), preferences, "a job without grayscale keeps the preferences' colour");
     }
 }

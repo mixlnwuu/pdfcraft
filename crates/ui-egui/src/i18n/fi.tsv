@@ -178,6 +178,15 @@
 	Available	Käytettävissä
 	Ready	Valmis
 	Search tools and commands…	Hae työkaluja ja komentoja…
+
+# Accessible names for inputs that have no visible label.
+	Added text	Lisätty teksti
+	Link URL	Linkin URL-osoite
+	Search tools and commands	Hae työkaluja ja komentoja
+	Text editing line	Tekstin muokkausrivi
+	Text to place	Sijoitettava teksti
+	Tooltip	Työkaluvihje
+	Words or phrases to redact	Peitettävät sanat tai lauseet
 	No matching tools	Ei vastaavia työkaluja
 	Tool	Työkalu
 	Command	Komento
@@ -2828,3 +2837,10 @@ theme	Appearance	Teema
 	Copy to another page	Kopioi toiselle sivulle
 	Copy object	Kopioi objekti
 	This file has Type 3 text, which Windows printing can't handle, so it is printed as an image (600 dpi).	Tiedostossa on Type 3 -tekstiä, jota Windowsin tulostus ei pysty käsittelemään, joten se tulostetaan kuvana (600 dpi).
+# Pages panel: the Page tools menu (#4415) (AI-assisted, not separately native-reviewed)
+	Page tools	Sivutyökalut
+	Insert pages from a file after the selection…	Lisää sivuja tiedostosta valinnan jälkeen…
+	Rotate the selected pages counterclockwise	Kierrä valittuja sivuja vastapäivään
+	Rotate the selected pages clockwise	Kierrä valittuja sivuja myötäpäivään
+	Extract the selected pages…	Pura valitut sivut…
+	Delete the selected pages	Poista valitut sivut

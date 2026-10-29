@@ -1839,6 +1839,15 @@
 	Tool	工具
 	Command	命令
 	Search tools and commands…	搜索工具和命令…
+
+# Accessible names for inputs that have no visible label.
+	Added text	已添加的文本
+	Link URL	链接 URL
+	Search tools and commands	搜索工具和命令
+	Text editing line	文本编辑行
+	Text to place	要放置的文本
+	Tooltip	提示
+	Words or phrases to redact	要密文的单词或短语
 	No matching tools	没有匹配的工具
 	All tools	所有工具
 	Read	阅读
@@ -2522,3 +2531,10 @@ animation effects	Off	关
 	Copy to another page	复制到其他页面
 	Copy object	复制对象
 	This file has Type 3 text, which Windows printing can't handle, so it is printed as an image (600 dpi).	此文件包含 Windows 打印无法处理的 Type 3 字体文本，因此将作为图像打印（600 dpi）。
+# Pages panel: the Page tools menu (#4415) (AI-assisted, not separately native-reviewed)
+	Page tools	页面工具
+	Insert pages from a file after the selection…	在所选内容后插入文件中的页面…
+	Rotate the selected pages counterclockwise	逆时针旋转所选页面
+	Rotate the selected pages clockwise	顺时针旋转所选页面
+	Extract the selected pages…	提取所选页面…
+	Delete the selected pages	删除所选页面

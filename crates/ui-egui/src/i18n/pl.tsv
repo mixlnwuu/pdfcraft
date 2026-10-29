@@ -180,6 +180,15 @@
 	Available	Dostępne
 	Ready	Gotowe
 	Search tools and commands…	Szukaj narzędzi i poleceń…
+
+# Accessible names for inputs that have no visible label.
+	Added text	Dodany tekst
+	Link URL	Adres URL łącza
+	Search tools and commands	Szukaj narzędzi i poleceń
+	Text editing line	Wiersz edycji tekstu
+	Text to place	Tekst do umieszczenia
+	Tooltip	Podpowiedź
+	Words or phrases to redact	Słowa lub frazy do utajenia
 	No matching tools	Brak pasujących narzędzi
 	Tool	Narzędzie
 	Command	Polecenie
@@ -2654,3 +2663,10 @@ animation effects	Off	Wyłączone
 	Copy to another page	Kopiuj na inną stronę
 	Copy object	Kopiuj obiekt
 	This file has Type 3 text, which Windows printing can't handle, so it is printed as an image (600 dpi).	Ten plik zawiera tekst czcionką Type 3, której drukowanie w systemie Windows nie obsługuje, więc jest drukowany jako obraz (600 dpi).
+# Pages panel: the Page tools menu (#4415) (AI-assisted, not separately native-reviewed)
+	Page tools	Narzędzia stron
+	Insert pages from a file after the selection…	Wstaw strony z pliku po zaznaczeniu…
+	Rotate the selected pages counterclockwise	Obróć zaznaczone strony w lewo
+	Rotate the selected pages clockwise	Obróć zaznaczone strony w prawo
+	Extract the selected pages…	Wyodrębnij zaznaczone strony…
+	Delete the selected pages	Usuń zaznaczone strony

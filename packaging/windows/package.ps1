@@ -16,15 +16,29 @@
 
 .EXAMPLE
   pwsh packaging/windows/package.ps1 -Arch x64
-  pwsh packaging/windows/package.ps1 -Arch x86 -SkipBuild
+  pwsh packaging/windows/package.ps1 -Arch x86 -SkipBuild   # set CRAFT_FONTS_DIR, or -BuiltWithoutCraftFonts
   pwsh packaging/windows/package.ps1 -Arch arm64     # cross-compiled; needs the MSVC ARM64 build tools
 #>
 param(
   [ValidateSet('x64', 'x86', 'arm64')] [string] $Arch = 'x64',
-  [switch] $SkipBuild
+  [switch] $SkipBuild,
+  # -SkipBuild only: the existing binaries were built without CRAFT_FONTS_DIR, so they embed no
+  # craft-fonts faces. Without CRAFT_FONTS_DIR this assertion is required: package.ps1 cannot
+  # otherwise know whether the binaries need the fonts' OFL notices.
+  [switch] $BuiltWithoutCraftFonts
 )
 $ErrorActionPreference = 'Stop'
 $Root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
+
+if ($BuiltWithoutCraftFonts -and -not $SkipBuild) {
+  throw '-BuiltWithoutCraftFonts describes an existing build made without CRAFT_FONTS_DIR; use it only with -SkipBuild.'
+}
+if ($BuiltWithoutCraftFonts -and $env:CRAFT_FONTS_DIR) {
+  throw '-BuiltWithoutCraftFonts cannot be combined with CRAFT_FONTS_DIR.'
+}
+if ($SkipBuild -and -not $env:CRAFT_FONTS_DIR -and -not $BuiltWithoutCraftFonts) {
+  throw 'package.ps1 -SkipBuild needs CRAFT_FONTS_DIR to stage the OFL notices of embedded craft-fonts, or -BuiltWithoutCraftFonts when the binaries were built without it.'
+}
 
 function Invoke-Native([string] $What, [scriptblock] $Block) {
   Write-Output "==> $What"
@@ -118,6 +132,11 @@ if ($env:CRAFT_FONTS_DIR) {
 # the MSI and the portable zip take the whole folder, so new models ship without naming them here.
 $Models = Join-Path $Stage 'models'
 New-Item -ItemType Directory -Force -Path $Models | Out-Null
+# Thai edition: models already fetched into assets\models (git-ignored) are used as they are; xtask
+# checks each one's SHA-256 and fetches only what is missing or different, so a download host that is
+# down doesn't stop a release.
+$Cached = Join-Path $Root 'assets\models'
+if (Test-Path $Cached) { Copy-Item (Join-Path $Cached '*') $Models -Force }
 Push-Location $Root
 try { Invoke-Native 'cargo xtask models' { cargo xtask models $Models } } finally { Pop-Location }
 Remove-Item -Force (Join-Path $Models '*.part') -ErrorAction SilentlyContinue
@@ -125,17 +144,41 @@ if (-not (Test-Path (Join-Path $Models 'ATTRIBUTION.txt')) -or -not (Get-ChildIt
   throw "no OCR models in $Models after cargo xtask models"
 }
 
+# ---- font notices for the MSI ------------------------------------------------------------------
+# The portable ZIP already carries these notices; stage the complete files before MSI creation too.
+$Docs = Join-Path $Stage 'font-licences'
+New-Item -ItemType Directory -Force -Path $Docs | Out-Null
+$HasCraftFontLicences = 0
+if ($env:CRAFT_FONTS_DIR) {
+  . (Join-Path $PSScriptRoot 'font-notices.ps1')
+  # Validate both native manifests before copying anything. One family's notice cannot
+  # stand in for another's; retain complete files, including copyright and reserved names.
+  $fontNotices = @(Get-CraftFontNotices $env:CRAFT_FONTS_DIR (Test-Path Env:CRAFT_FONTS_REQUIRED))
+  foreach ($ofl in $fontNotices) {
+    $kind = if ($ofl.Name -eq 'LICENSE.txt') { 'LICENSE' } else { 'OFL' }
+    Copy-Item -LiteralPath $ofl.FullName -Destination (Join-Path $Docs "$kind-$($ofl.Directory.Name).txt")
+    $HasCraftFontLicences = 1
+  }
+}
+# ---- end font notices for the MSI --------------------------------------------------------------
+
 # ---- MSI ---------------------------------------------------------------------------------------
 $Msi = Join-Path $Dist "pdfcraft-$Version-windows-$Arch.msi"
 Invoke-Native 'wix build' {
   wix build (Join-Path $PSScriptRoot 'pdfcraft.wxs') -arch $Arch `
     (Join-Path $PSScriptRoot 'installer-ui.wxs') `
     -d "Version=$MsiVersion" -d "BinDir=$Stage" -d "ModelsDir=$Models" -d "IconPath=$(Join-Path $Root 'assets\app-icon\pdfcraft.ico')" `
+    -d "DocsDir=$Docs" -d "HasCraftFontLicences=$HasCraftFontLicences" `
     -o $Msi
 }
 # Inspect the built MSI, not just the XML, before signing/publishing it. In a child process, so
 # its Windows Installer database handle is gone before signtool opens the MSI.
-Invoke-Native 'test-msi' { & (Get-Process -Id $PID).Path -NoProfile -File (Join-Path $PSScriptRoot 'test-msi.ps1') $Msi }
+Invoke-Native 'test-msi' {
+  & (Get-Process -Id $PID).Path -NoProfile -File (Join-Path $PSScriptRoot 'test-msi.ps1') $Msi `
+    -CraftFontLicences $HasCraftFontLicences -ExpectedFontNoticesDirectory $Docs
+}
+# Check the compiled scope, path and registration contract before signing.
+& (Join-Path $PSScriptRoot 'check-install-policy.ps1') -MsiPath $Msi
 # wix writes its debug symbols (.wixpdb) next to the MSI; keep them out of the release assets.
 Remove-Item -Force -ErrorAction SilentlyContinue ([IO.Path]::ChangeExtension($Msi, '.wixpdb'))
 & (Join-Path $PSScriptRoot 'sign.ps1') $Msi
@@ -153,16 +196,12 @@ foreach ($f in 'README.md', 'README-TH.md', 'LICENSE', 'LICENSE-MIT', 'LICENSE-A
   $p = Join-Path $Root $f
   if (Test-Path $p) { Copy-Item $p $Portable }
 }
-# Builds made with craft-fonts (CRAFT_FONTS_DIR, set for every release) embed its fonts: ship their
-# licences, fonts\<family>\OFL.txt -> OFL-<family>.txt.
-if ($env:CRAFT_FONTS_DIR) {
-  Get-ChildItem -Path (Join-Path $env:CRAFT_FONTS_DIR 'fonts') -Directory -ErrorAction SilentlyContinue | ForEach-Object {
-    $ofl = Join-Path $_.FullName 'OFL.txt'
-    if (Test-Path $ofl) { Copy-Item $ofl (Join-Path $Portable "OFL-$($_.Name).txt") }
-    # A family under another licence (TH Sarabun PSK: GPL-2.0-or-later with the font exception).
-    $other = Join-Path $_.FullName 'LICENSE.txt'
-    if (Test-Path $other) { Copy-Item $other (Join-Path $Portable "LICENSE-$($_.Name).txt") }
-  }
+# Builds made with craft-fonts (CRAFT_FONTS_DIR, set for every release) embed its fonts: ship the
+# same verified notices the MSI carries, fonts\<family>\OFL.txt -> OFL-<family>.txt (and TH Sarabun
+# PSK's LICENSE.txt -> LICENSE-th-sarabun-psk.txt, Thai edition).
+if ($HasCraftFontLicences -eq 1) {
+  Copy-Item (Join-Path $Docs 'OFL-*.txt') $Portable
+  Copy-Item (Join-Path $Docs 'LICENSE-*.txt') $Portable -ErrorAction SilentlyContinue
 }
 # portable.txt beside pdfcraft.exe switches on portable mode: settings, logs, recovery files and new
 # digital IDs go to PdfCraftData\ next to the exe instead of %APPDATA% (#157; see
