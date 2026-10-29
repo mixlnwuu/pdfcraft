@@ -1345,7 +1345,8 @@ fn mode_tabs_keep_the_hand_over_added_text_scrolled_under_them() {
     h.run_steps(2);
     let p = at(&h, 10.0, 120.0);
     click(&mut h, p);
-    h.event(egui::Event::Text("Approved".into()));
+    // The open box hugs its text too, so it is as long (Thai edition).
+    h.event(egui::Event::Text("Approved by the whole team".into()));
     h.run_steps(2);
     assert_eq!(texts(&h), ["Reviewed by the whole team"]);
     let kept = added(&h)[0].content.rect();
@@ -1420,4 +1421,43 @@ fn a_resized_added_picture_shows_only_at_its_new_size() {
     h.run_steps(2);
     let pixels = h.render().unwrap();
     assert!(red(&pixels, kept) > 100 && red(&pixels, gone) == 0, "the page raster has the picture at its new size");
+}
+
+/// Thai edition: a text box that hugs its text follows what is typed: it starts narrow rather
+/// than at its default width, grows on one line instead of wrapping in the editor (whose screen
+/// font measures differently from the page's), and opened again it is one line still.
+#[test]
+fn a_text_box_hugs_what_is_typed_on_one_line() {
+    let mut h = harness_with_step_dt(1.0 / 60.0);
+    assert!(h.state_mut().execute("edit.text"));
+    h.run_steps(2);
+    let p = at(&h, 60.0, 202.0);
+    click(&mut h, p);
+    h.event(egui::Event::Text("M".into()));
+    h.run_steps(2);
+    let one = h.get_by_label("Added text").rect();
+    let narrow = h.state().views[0].content.draft.as_ref().expect("typing").rect;
+    assert!(narrow[2] - narrow[0] < 60.0, "a short text gets a short box: {narrow:?}");
+    h.event(egui::Event::Text("MMMMMMMMMMMMMMM".into()));
+    h.run_steps(2);
+    let long = h.get_by_label("Added text").rect();
+    assert!(long.width() > one.width() + 50.0, "the box grows with the text: {one:?} → {long:?}");
+    assert!((long.height() - one.height()).abs() < 1.0, "on one line: {one:?} → {long:?}");
+    h.get_by_label("Done adding text").click();
+    h.run_steps(3);
+    let rect = added(&h)[0].content.rect();
+    let center = at(&h, ((rect[0] + rect[2]) / 2.0) as f32, (400.0 - (rect[1] + rect[3]) / 2.0) as f32);
+    h.run_steps(60);
+    h.hover_at(center);
+    h.run_steps(1);
+    for _ in 0..2 {
+        for pressed in [true, false] {
+            h.event(egui::Event::PointerButton { pos: center, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE });
+        }
+        h.run_steps(1);
+    }
+    h.run_steps(2);
+    assert!(h.state().views[0].content.draft.is_some(), "open again");
+    let again = h.get_by_label("Added text").rect();
+    assert!((again.height() - one.height()).abs() < 1.0, "opened again, still one line: {one:?} → {again:?}");
 }

@@ -214,6 +214,7 @@ use tools::measure_ui;
 use tools::object_ui;
 pub use tools::prepare;
 use tools::redact_ui;
+use tools::restyle;
 use tools::sign_ui;
 use tools::stamps_ui;
 use tools::tags_ui;

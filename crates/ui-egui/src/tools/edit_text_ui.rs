@@ -25,10 +25,11 @@ pub use image::{CropMode, ImageSelection};
 pub(crate) use image::{ImageAction, ImageCx, image_input, image_owns_pointer};
 #[cfg(test)]
 use image::{rotate_knob, turn_degrees};
+pub(crate) use layout::look_of;
 #[cfg(test)]
 use layout::{DARK_EDITOR_FILL, contrast};
 pub(crate) use layout::{caret_color_on, editor_fill, editor_font, install_source_fonts};
-use layout::{color32, editor_galley, editor_job, look_of, luminance, unseen};
+use layout::{color32, editor_galley, editor_job, luminance, unseen};
 
 const ACCENT: Color32 = Color32::from_rgb(0x14, 0x73, 0xE6);
 
@@ -190,6 +191,17 @@ impl LineEditor {
             });
         }
         style
+    }
+
+    /// The paragraph's own font as the PDF names it (Thai edition: the format painter).
+    pub(crate) fn source_font(&self) -> Option<&str> {
+        self.source.as_ref().map(|(b, _)| b.base_font.as_str())
+    }
+
+    /// Whether the paragraph is still shown in its own font, which this computer doesn't have
+    /// (Thai edition: Format text says so beside the font's name).
+    pub(crate) fn own_font_missing(&self) -> bool {
+        !self.family_chosen && self.font_resource.is_none() && self.source_font().is_some_and(|f| !crate::restyle::font_available(f))
     }
 
     /// After applying formatting: the paragraph now has it.

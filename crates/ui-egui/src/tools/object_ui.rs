@@ -20,6 +20,9 @@ pub(crate) struct ObjectSelection {
     gesture: Option<Gesture>,
     /// Expected geometry after our own edit, for remapping indexes that grouping can change.
     pending: Option<Vec<EditableObject>>,
+    /// The pending edit restyles the selection (Thai edition): its boxes keep their text but not
+    /// their size, so they are found again by their text, nearest to where they were.
+    restyled: bool,
     pub notice: Option<String>,
     pub hold_editor: bool,
     /// A plain click on empty page space: back to the Select tool (Thai edition).
@@ -51,6 +54,17 @@ impl ObjectSelection {
 
     pub fn count(&self) -> usize {
         self.selected.len()
+    }
+
+    /// The page and the selected objects (Thai edition: Format text for all of them).
+    pub(crate) fn selection(&self) -> Option<(usize, &[EditableObject])> {
+        self.page.filter(|_| !self.selected.is_empty()).map(|p| (p, self.selected.as_slice()))
+    }
+
+    /// The next edit restyles the selection: keep it selected afterwards (Thai edition).
+    pub(crate) fn keep_after_restyle(&mut self) {
+        self.pending = Some(self.selected.clone());
+        self.restyled = true;
     }
 
     /// The one selected object and its page, when exactly one is selected (Copy).
@@ -90,8 +104,12 @@ impl ObjectSelection {
             self.cache.clear();
             self.gesture = None;
             let expected = self.pending.take();
+            let restyled = std::mem::take(&mut self.restyled);
             let remapped = self.page.zip(expected).and_then(|(page, expected)| {
                 let inventory = doc.editable_objects(page).ok()?;
+                if restyled {
+                    return refind_restyled(&inventory, &expected);
+                }
                 let mut out = Vec::new();
                 for old in expected {
                     let mut matches = inventory.iter().filter(|o| {
@@ -117,6 +135,7 @@ impl ObjectSelection {
         } else {
             // A refused edit keeps the generation and the original selection.
             self.pending = None;
+            self.restyled = false;
         }
         if self.page.is_some() && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
             self.clear();
@@ -139,6 +158,60 @@ impl ObjectSelection {
         }
         self.cache.entry(page).or_insert_with(|| doc.editable_objects(page)).clone()
     }
+}
+
+/// The selected boxes again after they were restyled (Thai edition): each by its kind and text,
+/// the nearest to where it was of those not already taken. `None` when one can't be found.
+fn refind_restyled(inventory: &[EditableObject], expected: &[EditableObject]) -> Option<Vec<EditableObject>> {
+    let mut out: Vec<EditableObject> = Vec::new();
+    for old in expected {
+        let distance = |o: &EditableObject| (o.rect[0] - old.rect[0]).hypot(o.rect[3] - old.rect[3]);
+        let object = inventory
+            .iter()
+            .filter(|o| o.target.kind == old.target.kind && o.text == old.text && !out.iter().any(|t| t.target == o.target))
+            .min_by(|a, b| distance(a).total_cmp(&distance(b)))?;
+        out.push(object.clone());
+    }
+    Some(out)
+}
+
+/// The format painter over `page` (Thai edition): a click on a text box gives it the painter's
+/// look (one box, or every box clicked while it is kept); Esc puts it down. `true` when it took
+/// the pointer.
+fn painter_input(cx: PageToolContext<'_>, view: &mut DocView) -> bool {
+    let PageToolContext { ui, resp, xf, ptr, page, doc, .. } = cx;
+    if ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
+        view.format_painter = None;
+        return true;
+    }
+    let Some(p) = ptr.pos.filter(|p| xf.rect.contains(*p) && ui.clip_rect().contains(*p) && resp.rect.contains(*p)) else { return false };
+    let Ok(objects) = view.objects.inventory(doc, page) else { return false };
+    let info = &doc.info;
+    let added: Vec<&pdfcraft_engine::Added> = doc.added().iter().filter(|a| a.page == page).collect();
+    let is_text = |o: &&EditableObject| match o.target.kind {
+        ObjectKind::Text => true,
+        ObjectKind::Added => added.get(o.target.index).is_some_and(|a| matches!(a.content, pdfcraft_engine::AddedContent::Text(_))),
+        ObjectKind::Image => false,
+    };
+    // Added text over the page's own, as for selecting.
+    let hit = [ObjectKind::Added, ObjectKind::Text]
+        .into_iter()
+        .find_map(|kind| objects.iter().rev().filter(is_text).find(|o| o.target.kind == kind && screen(xf, info, page, o).expand(2.0).contains(p)));
+    let Some(target) = hit.map(|o| o.target) else { return false };
+    ui.ctx().set_cursor_icon(egui::CursorIcon::Copy);
+    if ptr.pressed().is_some()
+        && let Some(painter) = view.format_painter.clone()
+    {
+        if view.pending_edit.is_none()
+            && let Some(edit) = crate::restyle::restyle_edit(doc, page, &[target], &crate::restyle::all_of(&painter.look, None))
+        {
+            view.pending_edit = Some(edit);
+        }
+        if !painter.keep {
+            view.format_painter = None;
+        }
+    }
+    true
 }
 
 /// The text box a Ctrl+drag of `target` (its user-space `rect`) drops `delta` (screen) away: a
@@ -337,6 +410,10 @@ pub(crate) fn page_input(cx: PageToolContext<'_>, view: &mut DocView) -> bool {
             return true;
         }
         return false;
+    }
+    // The format painter takes a click on a text box (Thai edition).
+    if view.format_painter.is_some() && painter_input(cx, view) {
+        return true;
     }
     // A click in the open paragraph editor places its caret (edit_text_ui::overlay); it must not
     // select the paragraph under it, which would close the editor.

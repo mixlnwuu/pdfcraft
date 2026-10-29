@@ -8870,6 +8870,50 @@ fn need_appearances_buttons_are_displayed_from_their_captions() {
 /// box comes in front of it, exactly as drawn (its box and text unchanged); the paragraph after it
 /// in the same text object stays where it was; it goes back behind the box again; and one undo
 /// restores the page.
+/// A page whose one paragraph is set in `base_font`, a subset of Inter (embedded, WinAnsi).
+fn subset_font_page(base_font: &str) -> Vec<u8> {
+    use pdfcraft_cos::{Dict, Document as Cos, ObjRef, Object, Stream};
+    let bytes = one_line_page("/Font << /F1 4 0 R >>", "BT /F1 24 Tf 20 150 Td (Stable text) Tj ET");
+    let mut doc = Cos::open(Arc::new(bytes)).unwrap();
+    let program = doc.add(Object::Stream(Stream::flate(Dict::new(), include_bytes!("../../../assets/fonts/Inter-Regular.ttf"))));
+    let mut descriptor = Dict::new();
+    descriptor.set(b"Type".to_vec(), Object::name("FontDescriptor"));
+    descriptor.set(b"FontName".to_vec(), Object::name(base_font));
+    descriptor.set(b"FontFile2".to_vec(), Object::Ref(program));
+    let mut font = Dict::new();
+    font.set(b"Type".to_vec(), Object::name("Font"));
+    font.set(b"Subtype".to_vec(), Object::name("TrueType"));
+    font.set(b"BaseFont".to_vec(), Object::name(base_font));
+    font.set(b"Encoding".to_vec(), Object::name("WinAnsiEncoding"));
+    font.set(b"FirstChar".to_vec(), Object::Int(32));
+    font.set(b"LastChar".to_vec(), Object::Int(126));
+    font.set(b"Widths".to_vec(), Object::Array((32..=126).map(|_| Object::Int(560)).collect()));
+    font.set(b"FontDescriptor".to_vec(), Object::Dict(descriptor));
+    doc.set(ObjRef::new(4, 0), Object::Dict(font));
+    pdfcraft_cos::write_full(&doc, &pdfcraft_cos::SaveOptions::default()).unwrap()
+}
+
+/// Thai edition: a paragraph kept in its own font that another face had to draw (its subset can't
+/// encode a typed character, and no such font is installed) names that font, without the subset
+/// tag, so the interface can say which font to install. Choosing a family names nothing.
+#[test]
+fn a_paragraph_drawn_in_another_face_names_its_missing_font() {
+    let mut session = Session::new();
+    let id = session.open("subset.pdf", None, Arc::new(subset_font_page("ABCDEF+AngsanaNew-Bold")), None).unwrap();
+    let block = |s: &Session| s.get(id).unwrap().text_blocks(0).into_iter().position(|b| b.text == "Stable text").expect("the paragraph");
+    let b = block(&session);
+    session.apply(id, Edit::EditTextBlock { page: 0, block: b, text: "Stable t\u{151}xt".into(), style: BlockStyle::default() }).unwrap();
+    let fallbacks = &session.get(id).unwrap().font_fallbacks;
+    assert_eq!(fallbacks.len(), 1, "{fallbacks:?}");
+    assert_eq!((fallbacks[0].page, fallbacks[0].font.as_str()), (0, "AngsanaNew-Bold"));
+    assert!(!fallbacks[0].used.is_empty() && !fallbacks[0].used.ends_with("Type3"), "{fallbacks:?}");
+    // A chosen family is the font the user asked for: nothing is missing.
+    let b = session.get(id).unwrap().text_blocks(0).into_iter().position(|b| b.text.starts_with("Stable")).unwrap();
+    let style = BlockStyle { family: Some((FontFamily::Times, false, false)), ..Default::default() };
+    session.apply(id, Edit::EditTextBlock { page: 0, block: b, text: "Stable again".into(), style }).unwrap();
+    assert!(session.get(id).unwrap().font_fallbacks.is_empty());
+}
+
 #[test]
 fn a_paragraph_of_the_page_comes_in_front_and_goes_behind() {
     let body = "BT /F1 24 Tf 1 0 0 rg 20 150 Td (Hidden) Tj 0 -60 Td (Below) Tj ET 0 0 1 rg 10 140 300 40 re f";

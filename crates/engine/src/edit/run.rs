@@ -177,6 +177,8 @@ pub(crate) struct EditCtx {
     /// The overlay streams the edit's applied redactions added, which alone the renderer's check
     /// leaves out.
     pub(crate) redaction_overlays: Vec<pdfcraft_cos::ObjRef>,
+    /// Paragraphs rewritten in their own font but drawn in another face (Thai edition).
+    pub(crate) font_fallbacks: Vec<crate::FontFallback>,
 }
 
 impl EditCtx {
@@ -205,6 +207,7 @@ impl EditCtx {
             count: 0,
             renamed_fields: Vec::new(),
             redaction_overlays: Vec::new(),
+            font_fallbacks: Vec::new(),
         }
     }
 
@@ -545,7 +548,15 @@ pub(crate) fn run_edit(doc: &mut pdfcraft_cos::Document, edit: &Edit, cx: &mut E
         }
         Edit::MoveObjects { page, objects, offset } => pdfcraft_edit::move_objects(doc, *page, objects, *offset)?,
         Edit::EditTextBlock { page, block, text, style } => {
-            pdfcraft_edit::rewrite_block(doc, *page, *block, Some(text), style)?;
+            // Thai edition: a paragraph kept in its own font names that font when another face had
+            // to draw it, so the interface can say which font to install. Deleting draws nothing.
+            let own = (style.family.is_none() && style.resource.is_none() && !text.is_empty())
+                .then(|| pdfcraft_edit::text_blocks(doc, *page).ok()?.get(*block).map(|b| b.base_font.clone()))
+                .flatten();
+            let edit = pdfcraft_edit::rewrite_block(doc, *page, *block, Some(text), style)?;
+            if let (Some(font), Some(used)) = (own, edit.substituted) {
+                cx.font_fallbacks.push(crate::FontFallback { page: *page, font: plain_font_name(&font), used: plain_font_name(&used) });
+            }
         }
         Edit::RegisterTextFont { page, bytes } => {
             pdfcraft_edit::text::register_text_font(doc, *page, bytes)?;
@@ -757,4 +768,14 @@ pub(crate) fn run_edit(doc: &mut pdfcraft_cos::Document, edit: &Edit, cx: &mut E
         }
     }
     Ok(())
+}
+
+/// A font name as shown to people (Thai edition): without the `ABCDEF+` subset tag a PDF adds, or
+/// the `Type3` suffix a generated fallback font carries.
+fn plain_font_name(name: &str) -> String {
+    let name = match name.split_once('+') {
+        Some((tag, rest)) if tag.len() == 6 && tag.bytes().all(|b| b.is_ascii_uppercase()) => rest,
+        _ => name,
+    };
+    name.strip_suffix(" Type3").unwrap_or(name).to_owned()
 }

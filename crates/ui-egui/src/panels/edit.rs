@@ -89,6 +89,9 @@ pub(super) fn edit_panel(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens, g
         let shown = if more { content.len() } else { EDIT_CONTENT_SHOWN.min(content.len()) };
         for i in content.iter().take(shown) {
             let resp = edit_row(ui, t, i.icon, tl!(i.label), i.availability);
+            // Thai edition: the tool's keyboard shortcut in its tip (Ctrl+T for Add text).
+            let keys = crate::commands::command_shortcut_label(ui.ctx(), i.command);
+            let resp = if keys.is_empty() { resp } else { resp.tip(format!("{} ({keys})", tl!(i.label))) };
             // Header and footer, Watermark and Background open their Add / Update / Remove menu.
             if i.actions.is_empty() {
                 if resp.clicked() {
@@ -267,7 +270,13 @@ fn format_section(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens) {
             .into_iter()
             .map(|f| (f.resource, f.face))
             .collect();
-        let shown = ed.font_shown(&sources);
+        let mut shown = ed.font_shown(&sources);
+        // Thai edition: the paragraph's own font, when this computer doesn't have it.
+        if ed.own_font_missing() {
+            shown = format!("{shown} ({})", tl!("not on this computer"));
+        }
+        let source_font = ed.source_font().map(str::to_owned);
+        painter_button(app, ui, i, &ed.look, source_font.as_deref());
         let out = crate::format_text_ui::panel(ui, t, &mut ed.look, Some(&mut ed.extras), Fonts { sources: Some(&sources), shown });
         let mut changed = out.changed;
         match out.font {
@@ -293,6 +302,9 @@ fn format_section(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens) {
         if changed {
             app.apply_line_format(i, ed, Some(ui.ctx()));
         }
+        return;
+    }
+    if selected_boxes_format(app, ui, t) {
         return;
     }
     let image = app.active_ids().and_then(|(i, id)| {
@@ -326,6 +338,9 @@ fn format_section(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens) {
     });
     match selected {
         Some((page, index, text, page_width)) => {
+            if let Some((i, _)) = app.active_ids() {
+                painter_button(app, ui, i, &text, None);
+            }
             let mut style = text.clone();
             added_text_format(ui, t, &mut style);
             if style != text {
@@ -345,6 +360,72 @@ fn format_section(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens) {
         }
         None => {}
     }
+}
+
+/// Format text for the text boxes selected on the page (Thai edition): one click, Shift+click or
+/// a box dragged around them, paragraphs of the page and added text alike. It shows the first
+/// box's look, and what is changed there is changed in every box, the rest of each box's look
+/// kept, as one undo step; the boxes stay selected. `false` when no text box is selected.
+fn selected_boxes_format(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens) -> bool {
+    let Some((i, id)) = app.active_ids() else { return false };
+    if app.views[i].line_editor.is_some() {
+        return false;
+    }
+    let Some(doc) = app.session.get(id) else { return false };
+    let Some((page, targets)) = crate::restyle::text_targets(&app.views[i], doc) else { return false };
+    let Some(first) = targets.first().and_then(|t| crate::restyle::look_of(doc, page, *t)) else { return false };
+    if targets.len() > 1 {
+        ui.label(egui::RichText::new(crate::i18n::fmt(tl!("{n} text boxes"), &[("n", &targets.len().to_string())])).color(t.text_muted));
+    }
+    painter_button(app, ui, i, &first.text, first.source_font.as_deref());
+    let mut look = first.text.clone();
+    let mut extras = crate::edit_text_ui::Extras::default();
+    let mut shown = match &first.source_font {
+        Some(font) => crate::restyle::plain_name(font).to_owned(),
+        None => look.family.label().to_owned(),
+    };
+    if first.source_font.as_deref().is_some_and(|f| !crate::restyle::font_available(f)) {
+        shown = format!("{shown} ({})", tl!("not on this computer"));
+    }
+    let out = crate::format_text_ui::panel(ui, t, &mut look, Some(&mut extras), crate::format_text_ui::Fonts { sources: None, shown });
+    if let Some(crate::format_text_ui::FontChoice::Family(family)) = out.font {
+        look.family = family;
+    }
+    let underline = (extras.underline != crate::edit_text_ui::Extras::default().underline).then_some(extras.underline);
+    let change = crate::restyle::change_between(&first.text, &look, underline);
+    if change.is_empty() {
+        return true;
+    }
+    let Some(doc) = app.session.get(id) else { return true };
+    if let Some(edit) = crate::restyle::restyle_edit(doc, page, &targets, &change) {
+        app.views[i].objects.keep_after_restyle();
+        app.apply_edit(edit);
+    }
+    true
+}
+
+/// The format painter (Thai edition), as in Word: a click takes `look` for the next text box
+/// clicked, a double click for every box clicked until Esc. `source_font` is the paragraph's own
+/// font: one this computer lacks is named, as the boxes it is given to get a stand-in.
+fn painter_button(app: &mut PdfCraftApp, ui: &mut egui::Ui, i: usize, look: &pdfcraft_engine::AddedText, source_font: Option<&str>) {
+    let on = app.views.get(i).is_some_and(|v| v.format_painter.is_some());
+    let resp = ui
+        .horizontal(|ui| crate::widgets::icon_pill(ui, "brush", tl!("Format painter"), on))
+        .inner
+        .tip(tl!("Click, then click a text box to give it this format. Double-click to format several boxes; Esc stops."));
+    let Some(view) = app.views.get_mut(i) else { return };
+    let keep = resp.double_clicked();
+    if resp.clicked() || keep {
+        view.format_painter = if on && !keep { None } else { Some(crate::restyle::Painter { look: look.clone(), keep }) };
+        if view.format_painter.is_some()
+            && let Some(font) = source_font.filter(|f| !crate::restyle::font_available(f))
+            && let Some(message) =
+                crate::restyle::missing_font_message(&[(crate::restyle::plain_name(font).to_owned(), look.family.label().to_owned())])
+        {
+            app.notify(message);
+        }
+    }
+    ui.add_space(4.0);
 }
 
 /// Format text for added text: the standard families, size, colour, style and alignment.

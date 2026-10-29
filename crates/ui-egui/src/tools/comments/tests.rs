@@ -1,3 +1,4 @@
+use super::paint::constrained;
 use super::*;
 
 /// A selected line is drawn where it is going: moved by its body (both ends follow the
@@ -362,6 +363,22 @@ fn tools_round_trip_through_their_commands() {
         assert!(icons::exists(t.icon()), "icon {}", t.icon());
         assert!(GROUPS[t.group()].contains(&t));
     }
+}
+
+/// Thai edition: Shift while drawing, as in Word.
+#[test]
+fn shift_makes_squares_circles_and_45_degree_lines() {
+    // A square or circle on the longer side, whichever way it is dragged.
+    assert_eq!(constrained(CommentTool::Rectangle, [0.0, 0.0], [10.0, 4.0]), [10.0, 10.0]);
+    assert_eq!(constrained(CommentTool::Oval, [10.0, 10.0], [7.0, 18.0]), [2.0, 18.0]);
+    // A line, or a polygon's side from its last corner, at the nearest 45 degrees, as long.
+    let level = constrained(CommentTool::Line, [0.0, 0.0], [10.0, 3.0]);
+    assert!((level[0] - 10.0f64.hypot(3.0)).abs() < 1e-9 && level[1] == 0.0, "{level:?}");
+    assert_eq!(constrained(CommentTool::Arrow, [5.0, 5.0], [5.5, -20.0])[0], 5.0, "upright");
+    let diagonal = constrained(CommentTool::Polygon, [0.0, 0.0], [10.0, 9.0]);
+    assert!((diagonal[0] - diagonal[1]).abs() < 1e-9, "{diagonal:?}");
+    // Freehand drawing follows the pointer.
+    assert_eq!(constrained(CommentTool::Ink, [0.0, 0.0], [3.0, 7.0]), [3.0, 7.0]);
 }
 
 #[test]

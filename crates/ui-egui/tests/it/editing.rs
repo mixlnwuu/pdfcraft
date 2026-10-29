@@ -4568,6 +4568,15 @@ fn format_text_previews_what_the_pointer_rests_on() {
     assert!(!dirty(&h), "a preview applies nothing");
 }
 
+/// Ctrl+T picks Add text (Thai edition: T for Text, free in the registry).
+#[test]
+fn ctrl_t_picks_add_text() {
+    let mut h = harness(1, |_| {});
+    h.key_press_modifiers(Modifiers::COMMAND, Key::T);
+    h.run_steps(3);
+    assert_eq!(h.state().quick_tool, pdfcraft_ui_egui::QuickTool::AddText);
+}
+
 /// Ctrl+E opens Edit text & images, and its button on the floating toolbar says so (Thai edition).
 #[test]
 fn ctrl_e_opens_edit_text_and_its_button_shows_the_shortcut() {

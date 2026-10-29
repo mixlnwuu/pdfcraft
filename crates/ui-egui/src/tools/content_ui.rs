@@ -823,6 +823,9 @@ pub(crate) fn after_refresh(view: &mut DocView, added: &[Added]) {
     }
 }
 
+/// The added-text editor's inset on either side (screen points).
+const EDITOR_MARGIN: f32 = 4.0;
+
 /// The in-place text editor, with Done and Discard beside it. Returns the edit once the text is
 /// committed (a click away, or Done), and whether Done finished adding text. Discard or Escape
 /// throws the draft away.
@@ -842,14 +845,25 @@ pub(crate) fn editor(ctx: &egui::Context, view: &mut DocView, info: &DocInfo, ad
         draft.rect = *rect;
     } else {
         let source = draft.style.rect;
-        if draft.index.is_some() && draft.text == draft.style.text {
+        if draft.index.is_some() && draft.text == draft.style.text && !draft.auto {
             draft.rect = source;
         } else {
             let natural = ctx.fonts_mut(|f| f.layout_no_wrap(draft.text.clone(), font.clone(), Color32::BLACK).size().x) as f64 / zoom as f64;
             let width = natural.max(pdfcraft_engine::added_text_width(&text)) + 2.0;
-            let available = page_width - source[0];
-            let width = width.max(source[2] - source[0]).min(available.max(1.0));
-            draft.rect = [source[0], source[1], source[0] + width, source[3]];
+            // A box that hugs its text follows it while it is typed, narrower as well as wider
+            // (Thai edition), keeping the edge its alignment holds; a wrapped box keeps its width.
+            let (width, x0) = if draft.auto {
+                let x0 = match draft.style.align {
+                    pdfcraft_engine::TextAlign::Right => source[2] - width,
+                    pdfcraft_engine::TextAlign::Center => (source[0] + source[2] - width) / 2.0,
+                    pdfcraft_engine::TextAlign::Left | pdfcraft_engine::TextAlign::Justify => source[0],
+                };
+                let x0 = x0.clamp(0.0, (page_width - width).max(0.0));
+                (width.min((page_width - x0).max(1.0)), x0)
+            } else {
+                (width.max(source[2] - source[0]).min((page_width - source[0]).max(1.0)), source[0])
+            };
+            draft.rect = [x0, source[1], x0 + width, source[3]];
             draft.rect = pdfcraft_engine::added_text_rect(&AddedText { rect: draft.rect, ..text.clone() });
         }
         view.content.layout = Some((text, zoom, page_width, draft.rect));
@@ -859,7 +873,13 @@ pub(crate) fn editor(ctx: &egui::Context, view: &mut DocView, info: &DocInfo, ad
     // At least 60 points wide, so a short box can still be clicked into. Where that is wider than
     // the box, the editor reaches past it away from the edge its text keeps (the right edge for
     // right-aligned text, both halves for centred), so the text stays where the page draws it.
-    let width = r.width().max(60.0);
+    // A box that hugs its text is not wrapped by the editor while it fits beside the page's edge
+    // (Thai edition): the screen font measures a little differently from the page's, so the box
+    // takes the editor's margins and the text lays out on one line per line typed. A box that
+    // has reached the edge wraps there, as before.
+    let room = info.pages.get(page).map_or(0.0, |p| f64::from(p.width)) - draft.rect[0];
+    let hugs = draft.auto && draft.rect[2] - draft.rect[0] < room - 0.5;
+    let width = if hugs { r.width() + 2.0 * EDITOR_MARGIN } else { r.width() }.max(60.0);
     let anchor = match draft.style.align {
         pdfcraft_engine::TextAlign::Center => 0.5,
         pdfcraft_engine::TextAlign::Right => 1.0,
@@ -899,6 +919,7 @@ pub(crate) fn editor(ctx: &egui::Context, view: &mut DocView, info: &DocInfo, ad
             // Character spacing shows as the page will draw it, scaled like the font.
             let letter_spacing = (t.style.char_spacing * f64::from(zoom)) as f32;
             let mut spaced = |ui: &egui::Ui, text: &dyn egui::TextBuffer, wrap_width: f32| {
+                let wrap_width = if hugs { f32::INFINITY } else { wrap_width };
                 let job = spaced_job(text.as_str(), &font, Color32::from_rgb(cr, cg, cb), letter_spacing, wrap_width, halign);
                 ui.fonts_mut(|f| f.layout_job(job))
             };
@@ -911,12 +932,12 @@ pub(crate) fn editor(ctx: &egui::Context, view: &mut DocView, info: &DocInfo, ad
                     .align(egui::Align2::new(halign, egui::Align::TOP))
                     // Keep the page editor's original inset; the theme's larger button padding
                     // otherwise shifts narrow right-aligned boxes away from their text edge.
-                    .margin(egui::Margin::symmetric(4, 2))
+                    .margin(egui::Margin::symmetric(EDITOR_MARGIN as i8, 2))
                     .background_color(if background_ready { Color32::TRANSPARENT } else { Color32::WHITE })
                     .text_color(Color32::from_rgb(cr, cg, cb))
                     .hint_text(tl!("Type text"))
                     .id_salt("added-text-edit");
-                if letter_spacing != 0.0 {
+                if letter_spacing != 0.0 || hugs {
                     edit = edit.layouter(&mut spaced);
                 }
                 let resp = ui.add(edit).accessible_name(tl!("Added text"));
@@ -1220,7 +1241,7 @@ pub(crate) fn previewed_look(ctx: &egui::Context) -> Option<LookPreview> {
 /// The selected text as it would look with what the pointer rests on in Format text, drawn over
 /// the page until the pointer moves on. Nothing is changed in the document.
 /// Returns the box the previewed text takes, for the selection frame to follow.
-fn paint_look_preview(ui: &egui::Ui, painter: &egui::Painter, xf: &PageXform, page: usize, info: &DocInfo, t: &AddedText) -> Option<Rect> {
+pub(crate) fn paint_look_preview(ui: &egui::Ui, painter: &egui::Painter, xf: &PageXform, page: usize, info: &DocInfo, t: &AddedText) -> Option<Rect> {
     let preview = previewed_look(ui.ctx())?;
     let mut look = t.clone();
     preview.apply(&mut look);

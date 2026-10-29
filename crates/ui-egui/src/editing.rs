@@ -162,6 +162,22 @@ impl PdfCraftApp {
                 if let Some(n) = self.session.get(id).and_then(|d| d.edit_notices.first()).cloned() {
                     self.notify(crate::content_ui::undrawn_message(&n));
                 }
+                // A paragraph kept in its own font that another face drew: which font to install
+                // (Thai edition). Standard fonts and installed ones need nothing.
+                let missing: Vec<(String, String)> = self
+                    .session
+                    .get(id)
+                    .map(|d| {
+                        d.font_fallbacks
+                            .iter()
+                            .filter(|f| !crate::restyle::font_available(&f.font))
+                            .map(|f| (f.font.clone(), f.used.clone()))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                if let Some(message) = crate::restyle::missing_font_message(&missing) {
+                    self.notify(message);
+                }
                 let out = self.session.take_js_output(id);
                 self.handle_js(id, out);
                 true

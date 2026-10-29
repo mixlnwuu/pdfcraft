@@ -431,6 +431,8 @@ pub struct DocView {
     /// Edit text & images: the images per page (by document generation), and the selected one.
     pub(crate) edit_images: HashMap<usize, (u64, Vec<pdfcraft_engine::PageImage>)>,
     pub(crate) objects: crate::object_ui::ObjectSelection,
+    /// The format painter's look, while it waits for a text box to click (Thai edition).
+    pub(crate) format_painter: Option<crate::restyle::Painter>,
     pub image_selection: Option<crate::edit_text_ui::ImageSelection>,
     /// Select tool: the picture clicked, to copy in its original format.
     pub picked_image: Option<crate::image_pick::PickedImage>,
@@ -684,6 +686,7 @@ impl DocView {
             move_background: Default::default(),
             edit_images: HashMap::new(),
             objects: Default::default(),
+            format_painter: None,
             image_selection: None,
             picked_image: None,
             block_drag: None,
@@ -1594,6 +1597,8 @@ fn page_overlays(ui: &mut egui::Ui, view: &mut DocView, frame: &mut PageFrame<'_
         crate::content_ui::paint_page(ui, painter, &xf, i, info, added, view, pointer);
     }
     if tool == QuickTool::EditText {
+        // Thai edition: what the pointer rests on in Format text, on every selected text box.
+        crate::restyle::paint_preview(ui, painter, &xf, i, doc, view);
         crate::object_ui::paint(painter, &xf, i, info, &view.objects);
     }
     if tool == QuickTool::EnhanceCamera {

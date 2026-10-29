@@ -1,5 +1,10 @@
 use super::{Arc, BTreeMap, Color32, DocInfo, FontFamily, FontId, LineEditor, PageXform, Rect};
 
+/// The Thai fonts that come with Windows and Office (lower case, as PDFs name them), which a
+/// computer without them shows in TH Sarabun PSK (Thai edition).
+const THAI_SYSTEM_FONTS: [&str; 10] =
+    ["angsana", "browallia", "cordia", "dilleniaupc", "eucrosiaupc", "freesiaupc", "irisupc", "jasmineupc", "kodchiang", "lilyupc"];
+
 /// The look shown for a paragraph: the family and weight guessed from its PDF font name.
 fn source_look(base_font: &str, size: f64, color: [f64; 3], detected_bold: bool, detected_italic: bool) -> pdfcraft_engine::AddedText {
     use pdfcraft_engine::FontFamily as F;
@@ -11,6 +16,9 @@ fn source_look(base_font: &str, size: f64, color: [f64; 3], detected_bold: bool,
     } else {
         F::Helvetica
     };
+    // Thai edition: a Thai font of Windows and Office that this machine lacks stands in as TH
+    // Sarabun PSK, which draws Thai, rather than the Latin guess.
+    let family = if THAI_SYSTEM_FONTS.iter().any(|f| name.contains(f)) && F::Sarabun.craft(false, false).is_some() { F::Sarabun } else { family };
     // The font itself, when this build or this machine has it: the menu then names it, and text
     // typed in it previews in its own face.
     let family = F::like_font(base_font).unwrap_or(family);
@@ -24,7 +32,7 @@ fn source_look(base_font: &str, size: f64, color: [f64; 3], detected_bold: bool,
     }
 }
 
-pub(super) fn look_of(b: &pdfcraft_engine::TextBlock) -> pdfcraft_engine::AddedText {
+pub(crate) fn look_of(b: &pdfcraft_engine::TextBlock) -> pdfcraft_engine::AddedText {
     source_look(&b.base_font, b.size, b.color, b.bold, b.italic)
 }
 

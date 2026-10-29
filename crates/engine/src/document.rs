@@ -62,6 +62,21 @@ pub struct Document {
     /// What the last successful [`Session::apply`](crate::Session::apply) wrote that its fonts can't draw: kept as typed,
     /// drawn with `?` in its place (see [`TextNotice`]). The interface shows it; tools return it.
     pub edit_notices: Vec<TextNotice>,
+    /// Paragraphs the last successful apply rewrote in their own font that had to be drawn in
+    /// another face (Thai edition): the interface names the font to install.
+    pub font_fallbacks: Vec<FontFallback>,
+}
+
+/// A paragraph rewritten in its own font, drawn in another face because its font couldn't draw
+/// the text (a subset without the characters, and no such font on this computer; Thai edition).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FontFallback {
+    /// The page (0-based).
+    pub page: usize,
+    /// The paragraph's font as the PDF names it, without a subset tag (`AngsanaNew-Bold`).
+    pub font: String,
+    /// The face that drew it instead (`TH Sarabun PSK`).
+    pub used: String,
 }
 
 /// Text an edit stored as typed but drew with `?` in place of `ch`, because the font it is drawn

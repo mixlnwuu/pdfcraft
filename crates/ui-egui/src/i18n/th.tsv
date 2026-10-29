@@ -2650,6 +2650,11 @@ key	Space	Space
 	Find untagged content	ค้นหาเนื้อหาที่ไม่มีแท็ก
 	Font size	ขนาดฟอนต์
 	Common font sizes	ขนาดที่ใช้บ่อย
+	Format painter	ตัวคัดวางรูปแบบ
+	Click, then click a text box to give it this format. Double-click to format several boxes; Esc stops.	คลิก แล้วคลิกกล่องข้อความเพื่อให้ได้รูปแบบเดียวกัน ดับเบิลคลิกเพื่อใช้กับหลายกล่อง กด Esc เพื่อหยุด
+	not on this computer	ไม่มีในเครื่อง
+	{n} text boxes	กล่องข้อความ {n} กล่อง
+	{fonts} isn't on this computer, so {used} was used instead. Install {font} and open PdfCraft again for text that matches the original.	ไม่มีฟอนต์ {fonts} ในเครื่อง จึงใช้ {used} แทน ติดตั้งฟอนต์ {font} แล้วเปิด PdfCraft ใหม่ ข้อความจะตรงกับต้นฉบับ
 	Found {n} untagged content problems.	พบปัญหาเนื้อหาที่ไม่มีแท็ก {n} รายการ
 	Full Screen	เต็มหน้าจอ
 	Hide hover previews for highlights without comment text	ซ่อนตัวอย่างเมื่อชี้ของไฮไลต์ที่ไม่มีข้อความความคิดเห็น

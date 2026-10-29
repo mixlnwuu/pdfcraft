@@ -51,6 +51,12 @@ impl Std14 {
         Self::recognise(base).map(|(face, _)| face)
     }
 
+    /// Whether `base` names a standard-14 face or a well-known alias of one ([`Match::Alias`]),
+    /// which every PDF viewer can draw: not a font to install (Thai edition).
+    pub fn names_standard(base: &str) -> bool {
+        matches!(Self::recognise(base), Some((_, Match::Alias)))
+    }
+
     /// [`Std14::from_base_font`], also saying *how* the name matched.
     ///
     /// Reporting needs the difference. "Arial" really is a request for Helvetica, but

@@ -2657,3 +2657,46 @@ fn text_comments_can_save_a_zero_width_default() {
     assert_eq!(restored.comment_prefs.style(CommentTool::TextBox).width, 0.0);
     assert_eq!(restored.comment_prefs.style(CommentTool::Callout).width, 0.0);
 }
+
+/// A drag from `a` to `b` (page points) with Shift held throughout.
+fn drag_pt_shift(h: &mut Harness<'static, PdfCraftApp>, a: (f32, f32), b: (f32, f32)) {
+    let (from, to) = (at(h, a.0, a.1), at(h, b.0, b.1));
+    let mods = egui::Modifiers::SHIFT;
+    let button = |pos, pressed| egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: mods };
+    h.hover_at(from);
+    h.run_steps(1);
+    h.event_modifiers(button(from, true), mods);
+    h.run_steps(1);
+    for k in 1..=4 {
+        h.event_modifiers(egui::Event::PointerMoved(from + (to - from) * (k as f32 / 4.0)), mods);
+        h.run_steps(1);
+    }
+    h.event_modifiers(button(to, false), mods);
+    h.run_steps(3);
+}
+
+/// Thai edition: Shift held while drawing, as in Word: a rectangle comes out square and an oval
+/// round on the longer side dragged, and a line turns level (the nearest 45 degrees).
+#[test]
+fn shift_draws_squares_circles_and_straight_lines() {
+    use pdfcraft_ui_egui::comments::CommentTool;
+    let mut h = harness(|_| {});
+    let size = |a: &Annotation| (a.rect[2] - a.rect[0], a.rect[3] - a.rect[1]);
+    // Apart on the page, so the second drag doesn't start on the first shape.
+    for (tool, x) in [(CommentTool::Rectangle, 30.0), (CommentTool::Oval, 160.0)] {
+        h.state_mut().quick_tool = QuickTool::Comment(tool);
+        drag_pt_shift(&mut h, (x, 150.0), (x + 100.0, 110.0));
+        let (w, ht) = size(comments(&h).last().expect("drawn"));
+        assert!((w - ht).abs() < 0.5 && w > 90.0, "{tool:?} is as tall as wide, on the longer side: {w} × {ht}");
+    }
+    h.state_mut().quick_tool = QuickTool::Comment(CommentTool::Line);
+    drag_pt_shift(&mut h, (40.0, 60.0), (200.0, 75.0));
+    let line = comments(&h).last().expect("drawn").clone();
+    let (w, ht) = size(&line);
+    assert!(w > 150.0 && ht < 12.0, "a level line: {w} × {ht}");
+    // Without Shift the drag is drawn as it went.
+    h.state_mut().quick_tool = QuickTool::Comment(CommentTool::Rectangle);
+    drag_pt(&mut h, (40.0, 190.0), (140.0, 170.0));
+    let (w, ht) = size(comments(&h).last().expect("drawn"));
+    assert!(w - ht > 50.0, "no Shift, no square: {w} × {ht}");
+}

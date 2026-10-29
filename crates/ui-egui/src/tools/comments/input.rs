@@ -2,7 +2,7 @@ use super::geometry::{
     CARET_SIZE, HANDLES, clamp_to, corner_ratio, drawn_box, grabs_points, handle_pos, is_markup, point_handle, reshapable, reshaped, resizable,
     resized, snapped_caret,
 };
-use super::paint::{drawn_shape, edit_anchor, erase, new_comment};
+use super::paint::{constrained, drawn_shape, edit_anchor, erase, new_comment};
 use super::state::{Composer, ComposerKind, Gesture, PageCx};
 use super::{Annotation, CommentTool, DocInfo, DocView, Edit, Pos2, QuickTool, Rect, Shape, vec2};
 
@@ -364,6 +364,11 @@ impl Gestures<'_> {
                 }
             } else {
                 points.truncate(1);
+                // Shift: a square, a circle, or a line at a multiple of 45 degrees (Thai edition).
+                let u = match points.first() {
+                    Some(first) if ui.input(|i| i.modifiers.shift) => constrained(*tool, *first, u),
+                    _ => u,
+                };
                 points.push(u);
             }
         }
@@ -435,6 +440,11 @@ impl Gestures<'_> {
                         return true;
                     }
                     if !repeat {
+                        // Shift: this side at a multiple of 45 degrees (Thai edition).
+                        let u = match points.last() {
+                            Some(last) if ui.input(|i| i.modifiers.shift) => constrained(tool, *last, u),
+                            _ => u,
+                        };
                         points.push(u);
                     }
                 }
