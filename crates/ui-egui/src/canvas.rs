@@ -876,6 +876,7 @@ struct PageEnv<'a> {
     visible_pages: &'a Vec<usize>,
     y_shift: f32,
     fill_text_size: f64,
+    fill_text_font: &'a pdfcraft_engine::TextFont,
     today: (i64, u32, u32),
 }
 
@@ -1122,6 +1123,7 @@ fn page_tool_input(ui: &mut egui::Ui, view: &mut DocView, frame: &mut PageFrame<
         tool,
         units,
         fill_text_size,
+        fill_text_font,
         ..
     } = frame.env;
     let PageSlot { i, xf, .. } = *slot;
@@ -1188,6 +1190,7 @@ fn page_tool_input(ui: &mut egui::Ui, view: &mut DocView, frame: &mut PageFrame<
             crate::fill_sign::PageInput {
                 tool: ft,
                 text_size: fill_text_size,
+                text_font: fill_text_font,
                 signature: signature.as_ref(),
                 initials: initials.as_ref(),
                 preview: frame.signature_preview,
@@ -3009,6 +3012,7 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
     let can_crop = doc.allows_assembly();
     let signature = app.signature.clone();
     let initials = app.initials.clone();
+    let fill_text_font = app.fill_text_font.clone();
     let author = app.comment_prefs.author.clone();
     let today = app.session.today();
     // In Preferences ▸ Date format, or why it can't be stamped into the PDF.
@@ -3100,6 +3104,7 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
         visible_pages: &visible_pages,
         y_shift,
         fill_text_size: app.fill_text_size,
+        fill_text_font: &fill_text_font,
         today,
     };
     let mut page_out = PageOut::default();

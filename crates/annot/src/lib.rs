@@ -23,6 +23,7 @@ mod draw;
 mod info;
 mod lookup;
 mod modify;
+mod text_font;
 mod types;
 
 #[cfg(test)]
@@ -38,8 +39,9 @@ pub(crate) use modify::n;
 pub use modify::{
     Arrange, add_reply, add_text_replacement, arrange_annotation, arranged_comment, arranged_position, copyable_comment, delete_annotation,
     duplicate_annotation, erase_ink, fillable, goes_with, move_annotation, set_contents, set_fill, set_font_size, set_locked, set_marked, set_points,
-    set_rect, set_review_state, set_style, with_replies_and_popups,
+    set_rect, set_review_state, set_style, set_text_font, with_replies_and_popups,
 };
+pub use text_font::TextFont;
 pub use types::{
     AttachIcon, FillMark, LineEnding, Markup, Meta, NOTE_SIZE, NewAnnotation, NoteIcon, OverlayFont, OverlayLook, ReviewState, Rgb, Shape,
     StampGroup, StampKind, Style, StyleChange, TextReplacement, rect_quad,

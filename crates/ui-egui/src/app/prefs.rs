@@ -104,6 +104,7 @@ impl PdfCraftApp {
             "ui_scale": self.ui_scale,
             "flatten_fill_sign": self.flatten_fill_sign_on_save,
             "fill_text_size": self.fill_text_size,
+            "fill_text_font": { "family": self.fill_text_font.family, "bold": self.fill_text_font.bold, "italic": self.fill_text_font.italic },
             "date_format": self.session.date_format(),
             // Null follows the interface language.
             "date_language": self.session.date_language(),
@@ -119,6 +120,8 @@ impl PdfCraftApp {
                     "opacity": s.opacity,
                     "width": s.width,
                     "fill": s.fill,
+                    // Thai edition: a text box's font.
+                    "font": { "family": s.font.family, "bold": s.font.bold, "italic": s.font.italic },
                 }))
                 .collect::<Vec<_>>(),
             // Drawn signatures keep their original form (older settings read the same).
@@ -268,6 +271,10 @@ impl PdfCraftApp {
         if let Some(size) = v["fill_text_size"].as_f64().and_then(fill_sign::valid_text_size) {
             self.fill_text_size = size;
         }
+        if let Some(family) = v["fill_text_font"]["family"].as_str() {
+            let style = |key: &str| v["fill_text_font"][key].as_bool().unwrap_or(false);
+            self.fill_text_font = pdfcraft_engine::TextFont::new(family, style("bold"), style("italic"));
+        }
         if let Some(prefs) = RedactPrefs::from_json(&v["redact_prefs"]) {
             self.redact_prefs = prefs.clone();
             self.redact_defaults = prefs;
@@ -329,6 +336,12 @@ impl PdfCraftApp {
                 if let Some(fill) = fill {
                     let mut s = self.comment_prefs.style(tool);
                     s.fill = fill;
+                    self.comment_prefs.set_style(tool, s);
+                }
+                if let Some(family) = e["font"]["family"].as_str() {
+                    let style = |key: &str| e["font"][key].as_bool().unwrap_or(false);
+                    let mut s = self.comment_prefs.style(tool);
+                    s.font = pdfcraft_engine::TextFont::new(family, style("bold"), style("italic"));
                     self.comment_prefs.set_style(tool, s);
                 }
             }

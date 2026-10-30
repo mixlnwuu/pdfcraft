@@ -41,6 +41,36 @@ pub fn first_undrawable(s: &str) -> Option<char> {
     s.chars().find(|c| !matches!(c, '\n' | '\r') && !crate::win_ansi_encodable(*c) && !(thai && is_thai(*c)))
 }
 
+/// The faces a line is drawn in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Faces {
+    /// The caller's standard font, with Thai in TH Sarabun PSK in the asked style.
+    Standard { bold: bool, italic: bool },
+    /// A chosen face (TH Sarabun PSK or an installed font) drawing everything it has, Latin
+    /// included; Thai it lacks is drawn as in [`Faces::Standard`] and anything else in the
+    /// caller's standard font.
+    Whole { face: ShapedScript, bold: bool, italic: bool },
+}
+
+impl Faces {
+    fn style(self) -> (bool, bool) {
+        match self {
+            Faces::Standard { bold, italic } | Faces::Whole { bold, italic, .. } => (bold, italic),
+        }
+    }
+}
+
+/// The first character of `s` an appearance drawn in `faces` can't draw.
+pub fn first_undrawable_in(s: &str, faces: Faces) -> Option<char> {
+    match faces {
+        Faces::Standard { .. } => first_undrawable(s),
+        Faces::Whole { face, .. } => {
+            let thai = available();
+            s.chars().find(|c| !matches!(c, '\n' | '\r') && !crate::face_has(face, *c) && !crate::win_ansi_encodable(*c) && !(thai && is_thai(*c)))
+        }
+    }
+}
+
 /// The face Thai is drawn in: TH Sarabun PSK in the asked style, else the document Thai face.
 fn face(bold: bool, italic: bool) -> Option<ShapedScript> {
     (bold || italic)
@@ -61,48 +91,79 @@ fn shape(text: &str, face: ShapedScript) -> Result<Vec<ShapedCluster>, GlyphErro
     }
 }
 
-/// A line split into runs: standard-font text, and shaped Thai clusters.
+/// A line split into runs: standard-font text, and shaped clusters drawn at a scale of the size.
 enum Run {
     Latin(String),
-    Thai(Vec<ShapedCluster>),
+    Shaped(Vec<ShapedCluster>, f64),
 }
 
-fn runs(line: &str, bold: bool, italic: bool) -> Result<Vec<Run>, GlyphError> {
+/// Who draws a character: the standard font, the chosen face (its Latin or its Thai), or the
+/// Thai face beside a standard font.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Seg {
+    Latin,
+    Own,
+    OwnThai,
+    Thai,
+}
+
+fn runs(line: &str, faces: Faces) -> Result<Vec<Run>, GlyphError> {
+    let (bold, italic) = faces.style();
+    let seg = |c: char| match faces {
+        Faces::Whole { face, .. } if crate::face_has(face, c) => {
+            if is_thai(c) {
+                Seg::OwnThai
+            } else {
+                Seg::Own
+            }
+        }
+        _ if is_thai(c) => Seg::Thai,
+        _ => Seg::Latin,
+    };
     let mut out = Vec::new();
     let mut current = String::new();
-    let mut thai = false;
-    let flush = |current: &mut String, thai: bool, out: &mut Vec<Run>| -> Result<(), GlyphError> {
+    let mut kind = Seg::Latin;
+    let flush = |current: &mut String, kind: Seg, out: &mut Vec<Run>| -> Result<(), GlyphError> {
         if current.is_empty() {
             return Ok(());
         }
         let text = std::mem::take(current);
-        out.push(if thai { Run::Thai(shape(&text, face(bold, italic).ok_or(GlyphError::NoFont)?)?) } else { Run::Latin(text) });
+        out.push(match (kind, faces) {
+            (Seg::Latin, _) => Run::Latin(text),
+            (Seg::Own | Seg::OwnThai, Faces::Whole { face, .. }) => Run::Shaped(crate::shape_face(&text, face, kind == Seg::OwnThai)?, 1.0),
+            _ => Run::Shaped(shape(&text, face(bold, italic).ok_or(GlyphError::NoFont)?)?, THAI_SCALE),
+        });
         Ok(())
     };
     for c in line.chars() {
-        let t = is_thai(c);
-        if t != thai {
-            flush(&mut current, thai, &mut out)?;
-            thai = t;
+        let k = seg(c);
+        if k != kind {
+            flush(&mut current, kind, &mut out)?;
+            kind = k;
         }
         current.push(c);
     }
-    flush(&mut current, thai, &mut out)?;
+    flush(&mut current, kind, &mut out)?;
     Ok(out)
 }
 
 /// The width of `line` at `size`: Thai from the shaped clusters, the rest by `latin_width`
 /// (the caller's standard font, at `size`).
 pub fn line_width(line: &str, size: f64, bold: bool, italic: bool, latin_width: &dyn Fn(&str, f64) -> f64) -> f64 {
-    if !has_thai(line) {
+    line_width_in(line, size, Faces::Standard { bold, italic }, latin_width)
+}
+
+/// [`line_width`] for a line drawn in `faces`.
+pub fn line_width_in(line: &str, size: f64, faces: Faces, latin_width: &dyn Fn(&str, f64) -> f64) -> f64 {
+    if matches!(faces, Faces::Standard { .. }) && !has_thai(line) {
         return latin_width(line, size);
     }
-    match runs(line, bold, italic) {
+    match runs(line, faces) {
         Ok(runs) => runs
             .iter()
             .map(|r| match r {
                 Run::Latin(s) => latin_width(s, size),
-                Run::Thai(clusters) => clusters.iter().map(|c| c.advance).sum::<f64>() * size * THAI_SCALE,
+                Run::Shaped(clusters, scale) => clusters.iter().map(|c| c.advance).sum::<f64>() * size * scale,
             })
             .sum(),
         Err(_) => latin_width(line, size),
@@ -113,7 +174,12 @@ pub fn line_width(line: &str, size: f64, bold: bool, italic: bool, latin_width: 
 /// Thai has no spaces between words — inside a run that is still too wide, between clusters (a
 /// letter keeps its vowels and tone marks).
 pub fn wrap(text: &str, size: f64, width: f64, bold: bool, italic: bool, latin_width: &dyn Fn(&str, f64) -> f64) -> Vec<String> {
-    let measure = |s: &str| line_width(s, size, bold, italic, latin_width);
+    wrap_in(text, size, width, Faces::Standard { bold, italic }, latin_width)
+}
+
+/// [`wrap`] for text drawn in `faces`.
+pub fn wrap_in(text: &str, size: f64, width: f64, faces: Faces, latin_width: &dyn Fn(&str, f64) -> f64) -> Vec<String> {
+    let measure = |s: &str| line_width_in(s, size, faces, latin_width);
     let mut lines = Vec::new();
     for para in text.split('\n').map(|p| p.trim_end_matches('\r')) {
         let mut line = String::new();
@@ -197,15 +263,28 @@ pub fn draw(
     latin_width: &dyn Fn(&str, f64) -> f64,
     prefix: &str,
 ) -> Result<Drawn, GlyphError> {
+    draw_in(doc, lines, size, Faces::Standard { bold, italic }, latin, latin_width, prefix)
+}
+
+/// [`draw`] in `faces`.
+pub fn draw_in(
+    doc: &mut Document,
+    lines: &[(String, f64, f64)],
+    size: f64,
+    faces: Faces,
+    latin: &str,
+    latin_width: &dyn Fn(&str, f64) -> f64,
+    prefix: &str,
+) -> Result<Drawn, GlyphError> {
     if lines.iter().map(|(s, ..)| s.chars().count()).sum::<usize>() > MAX_CHARS || !size.is_finite() {
         return Err(GlyphError::TooComplex);
     }
-    let laid: Vec<(Vec<Run>, f64, f64)> = lines.iter().map(|(s, x, y)| runs(s, bold, italic).map(|r| (r, *x, *y))).collect::<Result<_, _>>()?;
+    let laid: Vec<(Vec<Run>, f64, f64)> = lines.iter().map(|(s, x, y)| runs(s, faces).map(|r| (r, *x, *y))).collect::<Result<_, _>>()?;
     // Every distinct cluster is one glyph.
     let mut keys: Vec<&ShapedCluster> = Vec::new();
     let mut index: HashMap<Key, usize> = HashMap::new();
     for c in laid.iter().flat_map(|(runs, ..)| runs).flat_map(|r| match r {
-        Run::Thai(clusters) => clusters.as_slice(),
+        Run::Shaped(clusters, _) => clusters.as_slice(),
         Run::Latin(_) => &[],
     }) {
         index.entry(key(c)).or_insert_with(|| {
@@ -229,6 +308,7 @@ pub fn draw(
     for (runs, x, y) in &laid {
         let mut pen = *x;
         let mut current: Option<&str> = None;
+        let mut current_scale = 0.0;
         for run in runs {
             match run {
                 Run::Latin(s) => {
@@ -241,20 +321,23 @@ pub fn draw(
                     ops.extend_from_slice(b" Tj\n");
                     pen += latin_width(s, size);
                 }
-                Run::Thai(clusters) => {
+                Run::Shaped(clusters, scale) => {
                     for c in clusters {
                         let Some(&k) = index.get(&key(c)) else { continue };
                         let Some((name, _)) = fonts.get(k / GLYPHS_PER_FONT) else { continue };
                         // Codes start at 1; k % 240 + 1 is at most 240.
                         let code = u8::try_from(k % GLYPHS_PER_FONT + 1).unwrap_or(1);
-                        if current != Some(name.as_str()) {
-                            ops.extend(format!("/{name} {} Tf ", num(size * THAI_SCALE)).bytes());
+                        // One font can carry clusters drawn at two scales: the size is set again
+                        // whenever the scale changes.
+                        if current != Some(name.as_str()) || current_scale != *scale {
+                            ops.extend(format!("/{name} {} Tf ", num(size * scale)).bytes());
                             current = Some(name.as_str());
+                            current_scale = *scale;
                         }
                         ops.extend(format!("1 0 0 1 {} {} Tm ", num(pen), num(*y)).bytes());
                         ops.extend(crate::literal(&[code]));
                         ops.extend_from_slice(b" Tj\n");
-                        pen += c.advance * size * THAI_SCALE;
+                        pen += c.advance * size * scale;
                     }
                 }
             }

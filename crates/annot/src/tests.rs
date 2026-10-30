@@ -40,7 +40,7 @@ fn new(page: usize, shape: Shape) -> NewAnnotation {
     NewAnnotation {
         page,
         shape,
-        style: Style { color: [0.0, 0.4, 1.0], opacity: 1.0, width: 2.0, fill: None },
+        style: Style { color: [0.0, 0.4, 1.0], opacity: 1.0, width: 2.0, fill: None, font: TextFont::default() },
         contents: "hello".into(),
         author: "Ada".into(),
     }
@@ -845,8 +845,8 @@ fn cloud_ys(path: &str) -> Vec<f64> {
 fn replace_text_groups_a_strikeout_and_a_caret() {
     let mut doc = fixture();
     let quads = [[100.0, 720.0, 200.0, 720.0, 100.0, 706.0, 200.0, 706.0]];
-    let red = Style { color: [0.89, 0.13, 0.13], opacity: 1.0, width: 1.0, fill: None };
-    let blue = Style { color: [0.0, 0.47, 0.84], opacity: 1.0, width: 1.0, fill: None };
+    let red = Style { color: [0.89, 0.13, 0.13], opacity: 1.0, width: 1.0, fill: None, font: TextFont::default() };
+    let blue = Style { color: [0.0, 0.47, 0.84], opacity: 1.0, width: 1.0, fill: None, font: TextFont::default() };
     let i = add_text_replacement(
         &mut doc,
         TextReplacement {
@@ -2165,4 +2165,71 @@ fn degenerate_and_absurd_leader_and_caption_values_do_not_panic() {
     ));
     assert!(long.contains(&format!("({}) Tj", "w".repeat(256))), "cut to 256");
     assert!(!long.contains(&"w".repeat(257)));
+}
+
+/// Thai edition: a text box's font is recorded (`/PCFont`, `/PCBold`, `/PCItalic`), named in
+/// `/DA` and the rich text, drawn in the matching standard font, and read back by `props`.
+#[test]
+fn a_text_box_takes_a_standard_font_and_style() {
+    let mut doc = fixture();
+    let t = add_annotation(&mut doc, &new(0, Shape::TextBox { rect: [100.0, 680.0, 220.0, 692.0], font_size: 12.0 }), &meta("t")).unwrap();
+    set_contents(&mut doc, 0, t, "Signed", &meta("")).unwrap();
+    set_text_font(&mut doc, 0, t, &TextFont::new("Times", true, false), &meta("")).unwrap();
+    let doc = reopen(&doc);
+    let d = &list(&doc, 0)[t];
+    assert_eq!(text(d, b"DA"), "0 0.4 1 rg /TiBo 12 Tf");
+    assert_eq!(text(d, b"PCFont"), "Times");
+    assert!(matches!(d.get(b"PCBold"), Some(Object::Bool(true))));
+    assert!(text(d, b"RC").contains("font-weight:bold") && text(d, b"RC").contains("font-family:Times"), "{}", text(d, b"RC"));
+    assert!(text(d, b"DS").starts_with("font: bold Times 12pt;"), "{}", text(d, b"DS"));
+    let ap = ap_content(&doc, d);
+    assert!(ap.contains("/TiBo 12 Tf") && !ap.contains("/Helv"), "{ap}");
+    assert_eq!(props(&doc, 0, t).unwrap().font, Some(TextFont::new("Times", true, false)));
+    // Another font size or colour keeps the font.
+    let mut doc = doc;
+    set_font_size(&mut doc, 0, t, 20.0, &meta("")).unwrap();
+    set_style(&mut doc, 0, t, StyleChange::new(Some([1.0, 0.0, 0.0]), None, None, None), &meta("")).unwrap();
+    assert_eq!(text(&list(&doc, 0)[t], b"DA"), "1 0 0 rg /TiBo 20 Tf");
+    // Back to Helvetica: the PdfCraft keys go.
+    set_text_font(&mut doc, 0, t, &TextFont::default(), &meta("")).unwrap();
+    let d = &list(&doc, 0)[t];
+    assert_eq!(text(d, b"DA"), "1 0 0 rg /Helv 20 Tf");
+    assert!(!d.contains(b"PCFont") && !d.contains(b"PCBold"));
+    // Only text comments have a font.
+    let note = add_annotation(&mut doc, &new(0, Shape::Note { at: [50.0, 50.0], icon: NoteIcon::Note }), &meta("n")).unwrap();
+    assert!(set_text_font(&mut doc, 0, note, &TextFont::new("Times", false, false), &meta("")).is_err());
+}
+
+/// Thai edition: a new text box made with a font in its style starts in that font, and a text
+/// box another program wrote with only `/DA` reads its family and style from it.
+#[test]
+fn a_new_text_box_starts_in_its_styles_font() {
+    let mut doc = fixture();
+    let mut a = new(0, Shape::Typewriter { rect: [100.0, 680.0, 220.0, 692.0], font_size: 10.0 });
+    a.style.font = TextFont::new("Courier", false, true);
+    a.contents = "Typed".into();
+    let t = add_annotation(&mut doc, &a, &meta("t")).unwrap();
+    let d = &list(&doc, 0)[t];
+    assert_eq!(text(d, b"DA"), "0 0.4 1 rg /CoOb 10 Tf");
+    assert!(ap_content(&doc, d).contains("/CoOb 10 Tf"));
+    let mut foreign = Dict::new();
+    foreign.set(b"DA".to_vec(), PdfString::literal(b"0 g /TiBI 9 Tf".to_vec()));
+    assert_eq!(TextFont::of(&foreign), TextFont::new("Times", true, true));
+}
+
+/// Thai edition: TH Sarabun PSK draws a text box's Latin and Thai alike from its own outlines,
+/// as Type 3 glyphs (the standard font is left for what it lacks).
+#[test]
+fn a_text_box_in_sarabun_draws_from_its_own_outlines() {
+    if pdfcraft_fonts::document_family_font("TH Sarabun PSK", false, false).is_none() {
+        return;
+    }
+    let mut doc = fixture();
+    let t = add_annotation(&mut doc, &new(0, Shape::TextBox { rect: [100.0, 680.0, 220.0, 692.0], font_size: 12.0 }), &meta("t")).unwrap();
+    set_contents(&mut doc, 0, t, "Hello", &meta("")).unwrap();
+    set_text_font(&mut doc, 0, t, &TextFont::new("TH Sarabun PSK", false, false), &meta("")).unwrap();
+    let doc = reopen(&doc);
+    let d = &list(&doc, 0)[t];
+    let ap = ap_content(&doc, d);
+    assert!(ap.contains("/PCTh0 12 Tf") && !ap.contains("(Hello)"), "Latin is drawn in the face too: {ap}");
 }

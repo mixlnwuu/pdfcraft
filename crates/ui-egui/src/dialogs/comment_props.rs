@@ -107,6 +107,9 @@ impl PdfCraftApp {
         if p.fillable && tool.has_fill() {
             style.fill = p.fill;
         }
+        if let Some(font) = &p.font {
+            style.font = font.clone();
+        }
         self.comment_prefs.set_style(tool, style);
         // Keep invisible defaults out of tools where a zero stroke would make them disappear.
         self.comment_prefs.set_opacity(tool, p.opacity);
@@ -147,6 +150,11 @@ pub fn edits(d: &PropsDraft) -> Vec<Edit> {
         && let Some(size) = e.font_size.filter(|s| Some(*s) != o.font_size)
     {
         out.push(Edit::FontSizeAnnotation { page: d.page, index: d.index, size });
+    }
+    if e.restylable
+        && let Some(font) = e.font.as_ref().filter(|f| Some(*f) != o.font.as_ref())
+    {
+        out.push(Edit::FontAnnotation { page: d.page, index: d.index, font: font.clone() });
     }
     let author = (e.author != o.author).then(|| e.author.clone());
     let subject = (e.subject != o.subject).then(|| e.subject.clone());
@@ -229,6 +237,11 @@ pub(crate) fn body(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &Tokens) -> (boo
                     if let Some(size) = e.font_size.as_mut() {
                         ui.label(tl!("Font size"));
                         ui.add(egui::DragValue::new(size).range(1.0..=400.0).speed(0.5).suffix(" pt"));
+                        ui.end_row();
+                    }
+                    if let Some(font) = e.font.as_mut() {
+                        ui.label(tl!("Font"));
+                        ui.horizontal(|ui| crate::content_ui::text_font_controls(ui, font, 24.0));
                         ui.end_row();
                     }
                     ui.label(tl!("Opacity"));

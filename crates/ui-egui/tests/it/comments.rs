@@ -831,14 +831,14 @@ fn a_text_box_is_sized_by_dragging() {
     assert!(near(r, [150.0, 180.0, 250.0, 190.0]), "{r:?}");
 
     // Drags of two and four pixels are clicks: the box fits its text.
-    let fitted = pdfcraft_ui_egui::comments::text_box_rect([0.0, 0.0], "Hi", 12.0, 0);
+    let fitted = pdfcraft_ui_egui::comments::text_box_rect([0.0, 0.0], "Hi", 12.0, &Default::default(), 0);
     for (text, x, d) in [("Hi", 200.0, 2.0), ("Hi again", 270.0, 4.0)] {
         h.state_mut().set_option("quick", "freetext").unwrap();
         let p = at(&h, x, 40.0);
         drag(&mut h, p, p + egui::vec2(d, d));
         post_text(&mut h, text);
         let r = rect_of(&h, text).map(f64::from);
-        let fitted = if text == "Hi" { fitted } else { pdfcraft_ui_egui::comments::text_box_rect([0.0, 0.0], text, 12.0, 0) };
+        let fitted = if text == "Hi" { fitted } else { pdfcraft_ui_egui::comments::text_box_rect([0.0, 0.0], text, 12.0, &Default::default(), 0) };
         assert!((r[2] - r[0] - (fitted[2] - fitted[0])).abs() < 1.0 && (r[3] - r[1] - (fitted[3] - fitted[1])).abs() < 1.0, "{text}: {r:?}");
     }
 }
@@ -1144,6 +1144,31 @@ fn comment_properties_change_appearance_and_author() {
     let doc = s.session.get(s.views[0].id).unwrap();
     let p = doc.comment_props(0, 0).unwrap();
     assert_eq!((p.color, p.width, p.author.as_str()), (Some([0.0, 0.0, 1.0]), Some(5.0), "Grace"));
+    assert_eq!(doc.can_undo(), Some("Change comment properties"), "one undo step");
+}
+
+/// Thai edition: a text box's Properties offer its font; Bold there restyles it in one step.
+#[test]
+fn text_box_properties_change_its_font() {
+    use pdfcraft_engine::{Edit, NewAnnotation, Shape, Style, TextFont};
+    let mut h = harness(|_| {});
+    let shape = Shape::TextBox { rect: [40.0, 600.0, 160.0, 620.0], font_size: 12.0 };
+    let style = Style { font: TextFont::new("Courier", false, false), ..Style::default_for(&shape) };
+    let id = h.state().views[0].id;
+    h.state_mut()
+        .session
+        .apply(id, Edit::AddAnnotation(NewAnnotation { page: 0, shape, style, contents: "Boxed".into(), author: "Ada".into() }))
+        .unwrap();
+    h.state_mut().open_comment_props(0, 0);
+    h.run_steps(2);
+    h.get_by_label("Font");
+    h.query_all_by_label("Bold").next().expect("Bold in Properties").click();
+    h.run_steps(2);
+    h.get_by_label("OK").click();
+    h.run_steps(3);
+    let s = h.state();
+    let doc = s.session.get(s.views[0].id).unwrap();
+    assert_eq!(doc.comment_props(0, 0).unwrap().font, Some(TextFont::new("Courier", true, false)));
     assert_eq!(doc.can_undo(), Some("Change comment properties"), "one undo step");
 }
 

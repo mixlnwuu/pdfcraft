@@ -121,17 +121,17 @@ pub(crate) fn composer(ctx: &egui::Context, view: &mut DocView, info: &DocInfo, 
         ComposerKind::TextBox { size } => {
             view.comments.tool_done = true;
             let rotation = page_rotation(info, page);
-            let border = prefs.style(CommentTool::TextBox).width;
+            let style = prefs.style(CommentTool::TextBox);
             let rect = match (size, info.pages.get(page)) {
-                (Some(size), Some(p)) => drawn_text_box_rect(p, c.at, size, &text, 12.0, border),
-                _ => text_box_rect(c.at, &text, 12.0, rotation),
+                (Some(size), Some(p)) => drawn_text_box_rect(p, c.at, size, &text, 12.0, &style.font, style.width),
+                _ => text_box_rect(c.at, &text, 12.0, &style.font, rotation),
             };
             Some(new_comment(&cx, CommentTool::TextBox, Shape::TextBox { rect, font_size: 12.0 }, text))
         }
         ComposerKind::Callout { point } => {
             view.comments.tool_done = true;
             // A callout's leader and box stay in user-space axes (its appearance isn't turned).
-            let rect = text_box_rect(c.at, &text, 10.0, 0);
+            let rect = text_box_rect(c.at, &text, 10.0, &Default::default(), 0);
             let side = if point[0] < rect[0] {
                 rect[0]
             } else if point[0] > rect[2] {

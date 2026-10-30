@@ -372,8 +372,8 @@ pub fn add_annotation(doc: &mut Document, new: &NewAnnotation, meta: &Meta) -> R
                 d.set(b"IT".to_vec(), Object::name("FreeTextTypeWriter"));
             }
             let size = if font_size.is_finite() && *font_size > 0.0 { font_size.clamp(1.0, 400.0) } else { 12.0 };
-            let [r, g, b] = style.color.map(|x| x.clamp(0.0, 1.0));
-            d.set(b"DA".to_vec(), PdfString::literal(format!("{} {} {} rg /Helv {} Tf", n(r), n(g), n(b), n(size)).into_bytes()));
+            d.set(b"DA".to_vec(), PdfString::literal(style.font.da(style.color.map(|x| x.clamp(0.0, 1.0)), size).into_bytes()));
+            style.font.write(&mut d);
             d.set(b"Q".to_vec(), Object::Int(0));
             if let Some(f) = style.fill {
                 d.set(b"C".to_vec(), rgb(f));

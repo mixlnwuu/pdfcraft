@@ -1033,6 +1033,53 @@ pub(crate) fn family_menu(ui: &mut egui::Ui, family: &mut FontFamily) {
         });
 }
 
+/// The font of a text comment or Fill & Sign text (Thai edition): the font menu, then Bold and
+/// Italic. True when one changed.
+pub(crate) fn text_font_controls(ui: &mut egui::Ui, font: &mut pdfcraft_engine::TextFont, box_size: f32) -> bool {
+    let before = font.clone();
+    // A family this machine doesn't have shows as Helvetica, and stays as it is until another
+    // is picked.
+    let old = FontFamily::from_name(font.family_label()).unwrap_or_default();
+    let mut family = old;
+    family_menu(ui, &mut family);
+    if family != old {
+        font.family = if family == FontFamily::Helvetica { String::new() } else { family.label().to_string() };
+    }
+    if crate::icons::button(ui, "bold", box_size, font.bold, tl!("Bold")).clicked() {
+        font.bold = !font.bold;
+    }
+    if crate::icons::button(ui, "italic", box_size, font.italic, tl!("Italic")).clicked() {
+        font.italic = !font.italic;
+    }
+    *font != before
+}
+
+/// [`text_font_controls`] for a tool rail (Thai edition): a button that opens Bold, Italic and
+/// the font list beside the rail. True when one changed.
+pub(crate) fn text_font_rail(ui: &mut egui::Ui, font: &mut pdfcraft_engine::TextFont) -> bool {
+    let before = font.clone();
+    let tip = format!("{}: {}", tl!("Font"), font.family_label());
+    let resp = crate::icons::rail_button(ui, "type", 32.0, false, &tip);
+    egui::Popup::menu(&resp).align(egui::RectAlign::RIGHT_START).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| {
+        ui.horizontal(|ui| {
+            if crate::icons::button(ui, "bold", 24.0, font.bold, tl!("Bold")).clicked() {
+                font.bold = !font.bold;
+            }
+            if crate::icons::button(ui, "italic", 24.0, font.italic, tl!("Italic")).clicked() {
+                font.italic = !font.italic;
+            }
+        });
+        let current = FontFamily::from_name(font.family_label());
+        egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
+            if let Some(f) = family_list(ui, ui.make_persistent_id("rail-font-search"), current, &mut None) {
+                font.family = if f == FontFamily::Helvetica { String::new() } else { f.label().to_string() };
+                ui.close();
+            }
+        });
+    });
+    *font != before
+}
+
 /// The inside of a font menu (Thai edition): a search box, the bundled families, then the
 /// families installed on this machine, Thai ones marked TH. Returns the family picked (a click,
 /// or Enter on the first match), which also closes the menu; `current` is ticked and `hovered`

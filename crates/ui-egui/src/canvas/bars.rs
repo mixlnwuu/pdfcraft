@@ -445,10 +445,13 @@ pub(super) fn quick_bar(app: &mut PdfCraftApp, area: Rect, ui: &mut egui::Ui) {
                                 .speed(0.25)
                                 .suffix(" pt"),
                         );
+                        let resized = (size.changed() && !size.dragged()) || size.drag_stopped();
+                        // The font, Bold and Italic (Thai edition).
+                        let refonted = crate::content_ui::text_font_rail(ui, &mut app.fill_text_font);
                         // #1274: the size also applies to the Fill & Sign text that is selected,
                         // once per change (a typed value, or the end of a drag), so a drag adds
-                        // one undo step and not one per frame.
-                        if ((size.changed() && !size.dragged()) || size.drag_stopped())
+                        // one undo step and not one per frame. So does the font.
+                        if (resized || refonted)
                             && let Some((index, id)) = app.active_ids()
                             && let Some((page, annotation)) = app.views.get(index).and_then(|view| view.comments.selected)
                             && app.session.get(id).is_some_and(|doc| {
@@ -460,7 +463,11 @@ pub(super) fn quick_bar(app: &mut PdfCraftApp, area: Rect, ui: &mut egui::Ui) {
                                         .any(|a| a.page == page && a.index == annotation && a.fill_sign && a.subtype == "FreeText" && !a.locked)
                             })
                         {
-                            app.apply_edit(Edit::FontSizeAnnotation { page, index: annotation, size: app.fill_text_size });
+                            app.apply_edit(if resized {
+                                Edit::FontSizeAnnotation { page, index: annotation, size: app.fill_text_size }
+                            } else {
+                                Edit::FontAnnotation { page, index: annotation, font: app.fill_text_font.clone() }
+                            });
                         }
                     }
                     if let QuickTool::Comment(tool) = app.quick_tool {

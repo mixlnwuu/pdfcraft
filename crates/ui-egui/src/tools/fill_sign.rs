@@ -213,6 +213,8 @@ pub struct TypeBox {
     pub at: [f64; 2],
     pub text: String,
     pub size: f64,
+    /// The font chosen for it (Thai edition).
+    pub font: pdfcraft_engine::TextFont,
     pub focus: bool,
 }
 
@@ -238,9 +240,11 @@ fn new(page: usize, shape: Shape, contents: String, author: &str) -> Edit {
 
 /// A typewriter annotation sized to its text, its displayed top-left at `at` on a page turned by
 /// `rotation` (its `/Rotate`).
-pub fn typed(page: usize, at: [f64; 2], text: &str, size: f64, rotation: i64, author: &str) -> Edit {
-    let rect = crate::comments::text_box_rect(at, text, size, rotation);
-    new(page, Shape::Typewriter { rect, font_size: size }, text.to_string(), author)
+pub fn typed(page: usize, at: [f64; 2], text: &str, size: f64, font: &pdfcraft_engine::TextFont, rotation: i64, author: &str) -> Edit {
+    let rect = crate::comments::text_box_rect(at, text, size, font, rotation);
+    let shape = Shape::Typewriter { rect, font_size: size };
+    let style = Style { font: font.clone(), ..Style::default_for(&shape) };
+    Edit::AddAnnotation(NewAnnotation { page, shape, style, contents: text.to_string(), author: author.to_string() })
 }
 
 /// Place a saved signature (strokes normalised to a 0–1 box, y up) with its left edge at `at`,
@@ -433,6 +437,7 @@ pub(crate) fn paint_saved(ui: &egui::Ui, rect: egui::Rect, saved: &SavedSig, cac
 pub(crate) struct PageInput<'a> {
     pub(crate) tool: FillTool,
     pub(crate) text_size: f64,
+    pub(crate) text_font: &'a pdfcraft_engine::TextFont,
     pub(crate) signature: Option<&'a SavedSig>,
     pub(crate) initials: Option<&'a SavedSig>,
     pub(crate) preview: &'a mut Option<(SavedSig, egui::TextureHandle)>,
@@ -443,7 +448,7 @@ pub(crate) struct PageInput<'a> {
 /// Preview and clicks with a Fill & Sign tool on one page.
 pub(crate) fn page_input(cx: PageToolContext<'_>, input: PageInput<'_>, view: &mut DocView) -> Option<FillAction> {
     let PageToolContext { ui, resp, xf, ptr, page, info, .. } = cx;
-    let PageInput { tool, text_size, signature, initials, preview, author, date_text } = input;
+    let PageInput { tool, text_size, text_font, signature, initials, preview, author, date_text } = input;
     let pointer = ptr.within(xf.rect)?;
     let p = info.pages.get(page)?;
     let at = to_user(xf, info, page, pointer);
@@ -471,13 +476,21 @@ pub(crate) fn page_input(cx: PageToolContext<'_>, input: PageInput<'_>, view: &m
         FillTool::Text => {
             // Clicking away from an open box commits it: the page sees this click before the box
             // sees its lost focus, so replacing the box first would drop what was typed.
-            let open = view.fill_text.replace(TypeBox { page, at: top, text: String::new(), size: text_size, focus: true });
+            let open = view.fill_text.replace(TypeBox { page, at: top, text: String::new(), size: text_size, font: text_font.clone(), focus: true });
             open.filter(|tb| !tb.text.trim().is_empty()).map(|tb| {
-                FillAction::Edit(Box::new(typed(tb.page, tb.at, tb.text.trim(), tb.size, crate::comments::page_rotation(info, tb.page), author)))
+                FillAction::Edit(Box::new(typed(
+                    tb.page,
+                    tb.at,
+                    tb.text.trim(),
+                    tb.size,
+                    &tb.font,
+                    crate::comments::page_rotation(info, tb.page),
+                    author,
+                )))
             })
         }
         FillTool::Date => Some(match date_text {
-            Ok(text) => FillAction::Edit(Box::new(typed(page, top, text, text_size, rotation, author))),
+            Ok(text) => FillAction::Edit(Box::new(typed(page, top, text, text_size, text_font, rotation, author))),
             Err(why) => FillAction::Refused(why.clone()),
         }),
         FillTool::Signature => match signature {
@@ -565,7 +578,7 @@ pub(crate) fn type_box(ctx: &egui::Context, view: &mut DocView, info: &DocInfo, 
     if commit {
         let tb = view.fill_text.take()?;
         if !tb.text.trim().is_empty() {
-            return Some(typed(tb.page, tb.at, tb.text.trim(), tb.size, crate::comments::page_rotation(info, tb.page), author));
+            return Some(typed(tb.page, tb.at, tb.text.trim(), tb.size, &tb.font, crate::comments::page_rotation(info, tb.page), author));
         }
     }
     None
