@@ -615,8 +615,8 @@ type Shaped = (Vec<u8>, pdfcraft_fonts::source_shaping::ShapedRun, String);
 
 /// Shape in the source or an explicitly registered matching full face. Never use interface fonts.
 /// Thai the source can't shape (word processors embed subsets without a usable character map)
-/// takes a complete document face instead: the installed font the source names, else TH Sarabun
-/// PSK, embedded whole so later edits can add letters.
+/// takes a complete document face instead: the bundled or installed font the source names, else
+/// TH Sarabun PSK, embedded whole so later edits can add letters.
 fn shape_source(doc: &Document, fonts: &Dict, name: &str, text: &str) -> Result<Option<Shaped>, EditError> {
     match shape_own(doc, fonts, name, text) {
         Err(e) if text.chars().any(is_thai) => {
@@ -631,12 +631,9 @@ fn shape_source(doc: &Document, fonts: &Dict, name: &str, text: &str) -> Result<
 fn thai_face(base_font: &str, text: &str) -> Option<Shaped> {
     let lower = base_font.to_ascii_lowercase();
     let (bold, italic) = (lower.contains("bold"), lower.contains("italic") || lower.contains("oblique"));
-    let installed = pdfcraft_fonts::installed_family_like(base_font).and_then(|family| {
-        let face = pdfcraft_fonts::installed_face(family, bold, italic)?;
-        Some((face, pdfcraft_fonts::installed_families().get(usize::from(family))?.name.to_string()))
-    });
+    let own = crate::added::Family::like_font(base_font).and_then(|family| Some((family.craft(bold, italic)?, family.label().to_string())));
     let sarabun = pdfcraft_fonts::document_family_font("TH Sarabun PSK", bold, italic).map(|face| (face, "TH Sarabun PSK".to_string()));
-    installed.into_iter().chain(sarabun).find_map(|(face, family)| {
+    own.into_iter().chain(sarabun).find_map(|(face, family)| {
         // A face inside a collection can't be embedded as one TrueType program.
         let (bytes, 0) = pdfcraft_fonts::face_data(face)? else { return None };
         if !pdfcraft_fonts::embedding::covers(bytes, text) || pdfcraft_fonts::embedding::validate(bytes).is_err() {

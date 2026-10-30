@@ -1,5 +1,5 @@
-# Builds PdfCraft Thai for Windows x64: the upstream craft-fonts revision plus TH Sarabun PSK
-# (thai/fonts), statically linked like the official release. Needs Rust (rustup) and the
+# Builds PdfCraft Thai for Windows x64: the upstream craft-fonts revision plus TH Sarabun PSK and
+# Sarabun (thai/fonts), statically linked like the official release. Needs Rust (rustup) and the
 # Visual Studio Build Tools (C++ workload). Output: target\x86_64-pc-windows-msvc\release\
 # pdfcraft.exe and pdfcraft-cli.exe (where packaging\windows\package.ps1 -SkipBuild looks).
 #
@@ -21,12 +21,17 @@ if (-not (Test-Path (Join-Path $Fonts 'fonts\manifest.txt'))) {
     Expand-Archive $zip $Work -Force
 }
 
-# Add TH Sarabun PSK to the font set (once).
+# Add TH Sarabun PSK and Sarabun to the font set: each family folder, and each manifest line not
+# there yet (so a font set made by an earlier version of this script gains the newer lines).
 $manifest = Join-Path $Fonts 'fonts\manifest.txt'
-Copy-Item -Recurse -Force (Join-Path $PSScriptRoot 'fonts\th-sarabun-psk') (Join-Path $Fonts 'fonts')
-if (-not (Select-String -Path $manifest -Pattern '^TH Sarabun PSK' -Quiet)) {
-    $add = [System.IO.File]::ReadAllText((Join-Path $PSScriptRoot 'fonts\manifest-additions.txt'))
-    [System.IO.File]::AppendAllText($manifest, "`n" + $add.Trim() + "`n", (New-Object System.Text.UTF8Encoding $false))
+foreach ($family in 'th-sarabun-psk', 'sarabun') {
+    Copy-Item -Recurse -Force (Join-Path $PSScriptRoot "fonts\$family") (Join-Path $Fonts 'fonts')
+}
+$have = [System.IO.File]::ReadAllLines($manifest) | ForEach-Object { $_.Trim() }
+$add = [System.IO.File]::ReadAllLines((Join-Path $PSScriptRoot 'fonts\manifest-additions.txt')) |
+    ForEach-Object { $_.Trim() } | Where-Object { $_ -and ($have -notcontains $_) }
+if ($add) {
+    [System.IO.File]::AppendAllText($manifest, "`n" + ($add -join "`n") + "`n", (New-Object System.Text.UTF8Encoding $false))
 }
 
 $env:CRAFT_FONTS_DIR = $Fonts
