@@ -19,10 +19,10 @@
   <launchable type="desktop-id">ai.storyteller.pdfcraft.desktop</launchable>
   <icon type="stock">ai.storyteller.pdfcraft</icon>
   <!-- Only url types known to appstream 0.15 (Ubuntu 22.04, where CI validates): no vcs-browser. -->
-  <url type="homepage">https://getartcraft.com/apps/pdfcraft</url>
-  <url type="bugtracker">https://github.com/storytold/pdfcraft/issues</url>
+  <url type="homepage">https://mixlnwuu.github.io/pdfcraft/</url>
+  <url type="bugtracker">https://github.com/mixlnwuu/pdfcraft/issues</url>
   <url type="help">https://github.com/storytold/pdfcraft</url>
-  <url type="contact">https://discord.gg/artcraft</url>
+  <url type="contact">https://github.com/mixlnwuu/pdfcraft/issues</url>
   <categories>
     <category>Office</category>
     <category>Viewer</category>

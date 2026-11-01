@@ -346,6 +346,123 @@ pub fn draw_in(
     Ok(Drawn { ops, fonts })
 }
 
+/// The font name of [`invisible_font`]. Text in it was never set in a font: it has no look of
+/// its own to keep, and nothing to install.
+pub const INVISIBLE_NAME: &str = "PdfCraftInvisible";
+
+/// A font that draws nothing, for invisible text of any language (an OCR layer over a scan): a
+/// Type 0 font whose character codes are UTF-16 code units, each mapped to the same Unicode, one em
+/// wide. Its program is one empty glyph, made here, so no viewer goes looking for a font and
+/// no font is embedded for text nobody sees. Type 3 fonts won't do: they ignore `3 Tr`.
+pub fn invisible_font(doc: &mut Document) -> ObjRef {
+    let mut program = Dict::new();
+    let ttf = empty_truetype();
+    program.set(b"Length1".to_vec(), Object::Int(i64::try_from(ttf.len()).unwrap_or(0)));
+    let program = doc.add(Object::Stream(Stream::flate(program, &ttf)));
+    let mut descriptor = Dict::new();
+    descriptor.set(b"Type".to_vec(), Object::name("FontDescriptor"));
+    descriptor.set(b"FontName".to_vec(), Object::name(INVISIBLE_NAME));
+    descriptor.set(b"Flags".to_vec(), Object::Int(4));
+    descriptor.set(b"FontBBox".to_vec(), Object::Array([0, 0, 1000, 1000].map(Object::Int).to_vec()));
+    descriptor.set(b"ItalicAngle".to_vec(), Object::Int(0));
+    descriptor.set(b"Ascent".to_vec(), Object::Int(1000));
+    descriptor.set(b"Descent".to_vec(), Object::Int(0));
+    descriptor.set(b"CapHeight".to_vec(), Object::Int(1000));
+    descriptor.set(b"StemV".to_vec(), Object::Int(0));
+    descriptor.set(b"FontFile2".to_vec(), Object::Ref(program));
+    let mut info = Dict::new();
+    info.set(b"Registry".to_vec(), Object::String(pdfcraft_cos::PdfString::literal(b"Adobe".to_vec())));
+    info.set(b"Ordering".to_vec(), Object::String(pdfcraft_cos::PdfString::literal(b"Identity".to_vec())));
+    info.set(b"Supplement".to_vec(), Object::Int(0));
+    let mut cid = Dict::new();
+    cid.set(b"Type".to_vec(), Object::name("Font"));
+    cid.set(b"Subtype".to_vec(), Object::name("CIDFontType2"));
+    cid.set(b"BaseFont".to_vec(), Object::name(INVISIBLE_NAME));
+    cid.set(b"CIDSystemInfo".to_vec(), Object::Dict(info));
+    cid.set(b"FontDescriptor".to_vec(), Object::Dict(descriptor));
+    cid.set(b"DW".to_vec(), Object::Int(1000));
+    cid.set(b"CIDToGIDMap".to_vec(), Object::name("Identity"));
+    // A bfrange stays within one high byte, at most 100 to a block.
+    let mut cmap = String::from(
+        "/CIDInit /ProcSet findresource begin\n12 dict begin\nbegincmap\n/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def\n\
+         /CMapName /PdfCraftInvisible def\n/CMapType 2 def\n1 begincodespacerange\n<0000> <FFFF>\nendcodespacerange\n",
+    );
+    let high: Vec<u32> = (0..=255).filter(|h| !(0xD8..=0xDF).contains(h)).collect();
+    for block in high.chunks(100) {
+        cmap.push_str(&format!("{} beginbfrange\n", block.len()));
+        for h in block {
+            cmap.push_str(&format!("<{h:02X}00> <{h:02X}FF> <{h:02X}00>\n"));
+        }
+        cmap.push_str("endbfrange\n");
+    }
+    cmap.push_str("endcmap\nCMapName currentdict /CMap defineresource pop\nend\nend\n");
+    let to_unicode = doc.add(Object::Stream(Stream::flate(Dict::new(), cmap.as_bytes())));
+    let mut font = Dict::new();
+    font.set(b"Type".to_vec(), Object::name("Font"));
+    font.set(b"Subtype".to_vec(), Object::name("Type0"));
+    font.set(b"BaseFont".to_vec(), Object::name(INVISIBLE_NAME));
+    font.set(b"Encoding".to_vec(), Object::name("Identity-H"));
+    font.set(b"DescendantFonts".to_vec(), Object::Array(vec![Object::Dict(cid)]));
+    font.set(b"ToUnicode".to_vec(), Object::Ref(to_unicode));
+    doc.add(Object::Dict(font))
+}
+
+/// A TrueType program with one empty glyph, 1000 units to the em.
+fn empty_truetype() -> Vec<u8> {
+    fn be16(out: &mut Vec<u8>, values: &[u16]) {
+        out.extend(values.iter().flat_map(|v| v.to_be_bytes()));
+    }
+    let mut head = Vec::new();
+    be16(&mut head, &[1, 0, 1, 0]); // version, revision
+    head.extend([0; 4]); // checkSumAdjustment, patched below
+    head.extend(0x5F0F_3CF5u32.to_be_bytes());
+    be16(&mut head, &[0, 1000]); // flags, unitsPerEm
+    head.extend([0; 16]); // created, modified
+    be16(&mut head, &[0, 0, 1000, 1000, 0, 8, 2, 0, 0]); // box, style, ppem, direction, loca, glyf format
+    let mut hhea = Vec::new();
+    be16(&mut hhea, &[1, 0, 1000, 0, 0, 1000, 0, 0, 1000, 1, 0, 0, 0, 0, 0, 0, 0, 1]);
+    let mut maxp = Vec::new();
+    be16(&mut maxp, &[1, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0]);
+    let mut hmtx = Vec::new();
+    be16(&mut hmtx, &[1000, 0]);
+    let loca = vec![0u8; 4];
+    let glyf = vec![0u8; 4];
+    let tables: [(&[u8; 4], Vec<u8>); 6] = [(b"glyf", glyf), (b"head", head), (b"hhea", hhea), (b"hmtx", hmtx), (b"loca", loca), (b"maxp", maxp)];
+    let sum = |bytes: &[u8]| {
+        bytes.chunks(4).fold(0u32, |s, c| {
+            let mut word = [0u8; 4];
+            word.iter_mut().zip(c).for_each(|(w, b)| *w = *b);
+            s.wrapping_add(u32::from_be_bytes(word))
+        })
+    };
+    let mut out = Vec::new();
+    out.extend(0x0001_0000u32.to_be_bytes());
+    be16(&mut out, &[6, 64, 2, 32]);
+    let mut offset = 12 + 16 * tables.len();
+    let mut body = Vec::new();
+    let mut head_at = None;
+    for (tag, data) in &tables {
+        out.extend(*tag);
+        out.extend(sum(data).to_be_bytes());
+        out.extend(u32::try_from(offset).unwrap_or(0).to_be_bytes());
+        out.extend(u32::try_from(data.len()).unwrap_or(0).to_be_bytes());
+        if *tag == b"head" {
+            head_at = Some(offset);
+        }
+        body.extend_from_slice(data);
+        let padded = data.len().next_multiple_of(4);
+        body.resize(body.len() + padded - data.len(), 0);
+        offset += padded;
+    }
+    out.extend(body);
+    let adjust = 0xB1B0_AFBAu32.wrapping_sub(sum(&out));
+    // The file was just built with `head` at this offset: its slot is there.
+    if let Some(slot) = head_at.and_then(|at: usize| out.get_mut(at + 8..at + 12)) {
+        slot.copy_from_slice(&adjust.to_be_bytes());
+    }
+    out
+}
+
 /// Add `drawn`'s fonts to a `/Font` resource dictionary.
 pub fn add_fonts(fonts: &mut Dict, drawn: &Drawn) {
     for (name, font) in &drawn.fonts {
@@ -483,5 +600,56 @@ mod tests {
         assert_eq!(drawn.fonts.len(), 1);
         let ops = String::from_utf8_lossy(&drawn.ops);
         assert!(ops.contains("/PCTh0 15 Tf") && ops.contains("/Helv 12 Tf") && ops.contains("Test) Tj"), "{ops}");
+    }
+}
+
+#[cfg(test)]
+mod invisible_tests {
+    use super::*;
+
+    /// The program a viewer loads: table directory in order, table checksums and the file's
+    /// adjustment as the format defines them, one glyph.
+    #[test]
+    fn the_empty_font_is_a_well_formed_truetype_file() {
+        let ttf = empty_truetype();
+        assert_eq!(ttf.len() % 4, 0);
+        let words = |b: &[u8]| b.chunks(4).fold(0u32, |s, c| s.wrapping_add(u32::from_be_bytes(c.try_into().unwrap())));
+        assert_eq!(words(&ttf), 0xB1B0_AFBA, "the file's checksum");
+        let be32 = |at: usize| u32::from_be_bytes(ttf[at..at + 4].try_into().unwrap()) as usize;
+        let tags: Vec<&[u8]> = (0..6).map(|i| &ttf[12 + 16 * i..16 + 16 * i]).collect();
+        assert!(tags.windows(2).all(|t| t[0] < t[1]), "sorted");
+        for i in 0..6 {
+            let (offset, length) = (be32(12 + 16 * i + 8), be32(12 + 16 * i + 12));
+            assert!(offset + length <= ttf.len());
+            assert_eq!(offset % 4, 0);
+        }
+        let maxp = be32(12 + 16 * 5 + 8);
+        assert_eq!(&ttf[12 + 16 * 5..16 + 16 * 5], b"maxp");
+        assert_eq!(u16::from_be_bytes([ttf[maxp + 4], ttf[maxp + 5]]), 1, "one glyph");
+        skrifa::FontRef::new(&ttf).expect("a font reader takes it");
+    }
+
+    /// Character codes read back through `/ToUnicode`, including across a high byte.
+    #[test]
+    fn its_codes_map_to_themselves() {
+        let pdf = b"%PDF-1.7
+1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj
+2 0 obj << /Type /Pages /Kids [] /Count 0 >> endobj
+trailer << /Root 1 0 R >>
+%%EOF";
+        let mut doc = Document::open(std::sync::Arc::new(pdf.to_vec())).unwrap();
+        let font = invisible_font(&mut doc);
+        let dict = doc.get(font);
+        let dict = dict.as_dict().unwrap();
+        assert_eq!(dict.name(b"Subtype"), Some(&b"Type0"[..]));
+        assert_eq!(dict.name(b"Encoding"), Some(&b"Identity-H"[..]));
+        let to_unicode = dict.reference(b"ToUnicode").unwrap();
+        let cmap = doc.get(to_unicode);
+        let Object::Stream(stream) = &*cmap else { panic!("a stream") };
+        let text = String::from_utf8(stream.decoded().unwrap().to_vec()).unwrap();
+        assert!(text.contains("<0E00> <0EFF> <0E00>"), "Thai");
+        assert!(text.contains("<0000> <00FF> <0000>"), "Latin");
+        assert!(!text.contains("<D800>"), "no surrogates");
+        assert!(text.matches("beginbfrange").count() >= 3, "at most 100 to a block");
     }
 }

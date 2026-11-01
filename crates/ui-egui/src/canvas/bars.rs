@@ -470,9 +470,36 @@ pub(super) fn quick_bar(app: &mut PdfCraftApp, area: Rect, ui: &mut egui::Ui) {
                             });
                         }
                     }
+                    if matches!(current_fill, Some(crate::fill_sign::FillTool::Text | crate::fill_sign::FillTool::Date)) {
+                        ui.menu_button(tl!("Colour"), |ui| {
+                            if let Some(color) = comments::swatch_grid(ui, Some(app.fill_text_color)) {
+                                app.fill_text_color = color;
+                                ui.close();
+                            }
+                        });
+                    }
                     if let QuickTool::Comment(tool) = app.quick_tool {
                         let (r, _) = ui.allocate_exact_size(vec2(32.0, 9.0), Sense::hover());
                         ui.painter().hline(r.x_range().shrink(6.0), r.center().y, Stroke::new(1.0, t.divider));
+                        // The font of what a text tool adds, and of the one selected (Thai edition).
+                        if matches!(tool, comments::CommentTool::TextBox | comments::CommentTool::Callout) {
+                            let mut style = app.comment_prefs.style(tool);
+                            if crate::content_ui::text_font_rail(ui, &mut style.font) {
+                                let font = style.font.clone();
+                                app.comment_prefs.set_style(tool, style);
+                                if let Some((index, id)) = app.active_ids()
+                                    && let Some((page, annotation)) = app.views.get(index).and_then(|view| view.comments.selected)
+                                    && app.session.get(id).is_some_and(|doc| {
+                                        doc.allows_annotation()
+                                            && doc.info.annotations.iter().any(|a| {
+                                                a.page == page && a.index == annotation && !a.is_reply() && !a.locked && comments::made_by(a, tool)
+                                            })
+                                    })
+                                {
+                                    app.apply_edit(Edit::FontAnnotation { page, index: annotation, font });
+                                }
+                            }
+                        }
                         if let Some(color) = comments::quick_bar_controls(ui, tool, &mut app.comment_prefs)
                             && let Some((index, id)) = app.active_ids()
                             && let Some((page, annotation)) = app.views.get(index).and_then(|view| view.comments.selected)

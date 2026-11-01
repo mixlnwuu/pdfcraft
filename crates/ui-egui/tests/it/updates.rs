@@ -9,7 +9,9 @@ use pdfcraft_ui_egui::updates::{Release, UpdateSource, is_newer};
 
 fn source(answer: Result<&str, &str>) -> UpdateSource {
     let answer = answer.map(str::to_string).map_err(str::to_string);
-    Arc::new(move || answer.clone().map(|v| Release { url: format!("https://github.com/mixlnwuu/pdfcraft/releases/tag/{v}"), version: v }))
+    Arc::new(move || {
+        answer.clone().map(|v| Release { installer: None, url: format!("https://github.com/mixlnwuu/pdfcraft/releases/tag/{v}"), version: v })
+    })
 }
 
 fn harness(answer: Result<&str, &str>) -> Harness<'static, PdfCraftApp> {
@@ -126,7 +128,7 @@ fn nothing_is_asked_until_the_user_checks() {
         let counted = counted.clone();
         app.update_source = Some(Arc::new(move || {
             counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            Ok(Release { version: "v99.0.0".into(), url: "https://github.com/mixlnwuu/pdfcraft/releases/tag/v99.0.0".into() })
+            Ok(Release { version: "v99.0.0".into(), url: "https://github.com/mixlnwuu/pdfcraft/releases/tag/v99.0.0".into(), installer: None })
         }));
         app
     });
@@ -137,4 +139,132 @@ fn nothing_is_asked_until_the_user_checks() {
     settle(&mut h);
     assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
     h.get_by_label_contains("PdfCraft 99.0.0 is available");
+}
+
+/// A release newer than any build, with an installer.
+fn newer_release() -> Release {
+    Release {
+        version: "v99.0.0".into(),
+        url: "https://github.com/mixlnwuu/pdfcraft/releases/tag/v99.0.0".into(),
+        installer: Some(pdfcraft_ui_egui::updates::Installer {
+            url: "https://github.com/mixlnwuu/pdfcraft/releases/download/v99.0.0/pdfcraft-99.0.0-windows-x64.msi".into(),
+            size: 1,
+            sha256: "0".repeat(64),
+        }),
+    }
+}
+
+/// Thai edition: an app that checks at start, with `install` standing in for the desktop app's.
+fn starting(release: Release, install: bool, runs: Arc<std::sync::Mutex<Vec<std::path::PathBuf>>>) -> Harness<'static, PdfCraftApp> {
+    Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_eframe(move |_cc| {
+        let mut app = PdfCraftApp::new();
+        app.set_option("language", "en").unwrap();
+        app.update_source = Some(Arc::new(move || Ok(release.clone())));
+        app.set_startup_update_check(true);
+        if install {
+            let run = move |path: &std::path::Path| {
+                runs.lock().unwrap().push(path.to_path_buf());
+                Ok(())
+            };
+            app.update_install = Some(pdfcraft_ui_egui::updates::UpdateInstall {
+                download: Arc::new(|_, progress, _| {
+                    progress(1.0);
+                    Ok("update.msi".into())
+                }),
+                run: Arc::new(run),
+            });
+        }
+        app
+    })
+}
+
+fn wait_for(h: &mut Harness<'static, PdfCraftApp>, label: &str) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while h.query_by_label(label).is_none() {
+        assert!(std::time::Instant::now() < deadline, "{label} never showed");
+        h.run_steps(2);
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
+
+/// Thai edition: a newer release at start gets the prompt; Update and restart downloads it and
+/// closes, and the installer runs as the app closes.
+#[test]
+fn a_newer_release_at_start_is_offered_and_installed_on_closing() {
+    let runs = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let mut h = starting(newer_release(), true, runs.clone());
+    wait_for(&mut h, "Update and restart");
+    h.get_by_label("What's new");
+    h.get_by_label("Update and restart").click();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while runs.lock().unwrap().is_empty() {
+        assert!(std::time::Instant::now() < deadline, "the installer never ran");
+        h.run_steps(2);
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert_eq!(*runs.lock().unwrap(), [std::path::PathBuf::from("update.msi")]);
+}
+
+/// Thai edition: Later puts the prompt away and installs nothing.
+#[test]
+fn later_leaves_the_app_as_it_is() {
+    let runs = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let mut h = starting(newer_release(), true, runs.clone());
+    wait_for(&mut h, "Update and restart");
+    h.get_by_label("Later").click();
+    h.run_steps(3);
+    assert!(h.query_by_label("Update and restart").is_none());
+    assert!(runs.lock().unwrap().is_empty());
+}
+
+/// Thai edition: without a way to install (a portable copy), the prompt offers the page.
+#[test]
+fn a_portable_copy_is_offered_the_download_page() {
+    let mut h = starting(newer_release(), false, Default::default());
+    wait_for(&mut h, "Download");
+    assert!(h.query_by_label("Update and restart").is_none());
+}
+
+/// Thai edition: a check at start that finds nothing newer says nothing, and Preferences turn the
+/// check off.
+#[test]
+fn nothing_new_at_start_says_nothing() {
+    let current = Release { version: "v0.0.1".into(), url: "https://github.com/mixlnwuu/pdfcraft/releases".into(), installer: None };
+    let mut h = starting(current, true, Default::default());
+    for _ in 0..30 {
+        h.run_steps(2);
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    assert!(h.query_by_label("Check for updates").is_none() && h.query_by_label("Later").is_none());
+
+    let mut off = PdfCraftApp::new();
+    off.restore(r#"{"check_updates_at_start":false}"#);
+    assert!(!off.check_updates_at_start);
+    assert!(PdfCraftApp::new().check_updates_at_start, "on unless turned off");
+    let mut restored = PdfCraftApp::new();
+    restored.restore(&off.persist());
+    assert!(!restored.check_updates_at_start, "kept across launches");
+}
+
+/// Thai edition: an update that didn't take says so at the next start, once; one that did says
+/// nothing. An update that seems to work and leaves the old version is the failure to catch.
+#[test]
+fn an_update_that_did_not_take_is_said_at_the_next_start() {
+    let notified = |wanted: &str| {
+        let wanted = wanted.to_owned();
+        let mut h = Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_eframe(move |_cc| {
+            let mut app = PdfCraftApp::new();
+            app.set_option("language", "en").unwrap();
+            app.update_attempt = Some(wanted);
+            app.set_startup_update_check(true);
+            app.check_updates_at_start = false;
+            app
+        });
+        h.run_steps(3);
+        let said = h.query_by_label_contains("wasn't installed").is_some();
+        assert_eq!(h.state().update_attempt, None, "checked once");
+        said
+    };
+    assert!(notified("v99.0.0"), "the old version is still here");
+    assert!(!notified("v0.0.1"), "this build is newer than what was asked for");
 }

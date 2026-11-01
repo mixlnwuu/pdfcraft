@@ -148,6 +148,7 @@ impl PdfCraftApp {
     }
 
     fn quit(&mut self, ctx: &egui::Context) {
+        self.run_ready_update();
         self.allow_quit = true;
         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
     }

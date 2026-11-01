@@ -131,7 +131,7 @@ pub(crate) fn composer(ctx: &egui::Context, view: &mut DocView, info: &DocInfo, 
         ComposerKind::Callout { point } => {
             view.comments.tool_done = true;
             // A callout's leader and box stay in user-space axes (its appearance isn't turned).
-            let rect = text_box_rect(c.at, &text, 10.0, &Default::default(), 0);
+            let rect = text_box_rect(c.at, &text, 10.0, &prefs.style(CommentTool::Callout).font, 0);
             let side = if point[0] < rect[0] {
                 rect[0]
             } else if point[0] > rect[2] {

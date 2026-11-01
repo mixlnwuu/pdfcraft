@@ -2,11 +2,12 @@
 use super::check_refresh_panic;
 use super::{
     Arc, DocId, Document, Edit, EditCtx, EditError, Label, MAX_UNDO, ObjectKind, OnceLock, RenderPool, SaveOptions, Scope, Session,
-    XFA_REMOVED_PREFIX, XFA_SCRIPTS_OFF, check_permission, comment_list, display_bytes, guard, info_fields, inspect, js, keys_after, note_warnings,
-    render_threads, run_edit, scan_colours, scope_of, shown_under_redactions, signatures_of, sync_xfa_state, undrawn_notices, uses_scripts,
-    write_incremental, xfa, xfa_sync_datasets,
+    XFA_REMOVED_PREFIX, XFA_SCRIPTS_OFF, check_permission, comment_list, display_bytes, display_config, guard, info_fields, inspect, js, keys_after,
+    note_warnings, render_threads, run_edit, scan_colours, scope_of, shown_under_redactions, signatures_of, sync_xfa_state, undrawn_notices,
+    uses_scripts, write_incremental, xfa, xfa_sync_datasets,
 };
 use crate::history::Editor;
+use crate::{EditNotice, MarkKind};
 use pdfcraft_render::DocInfo;
 
 impl Session {
@@ -159,13 +160,7 @@ impl Session {
         if signed && ((rewrites(&next) && !rewrites(&editor.cos)) || (next.is_modified() && next.revisions().is_empty())) {
             return Err(EditError::SignedRewrite(edit.label().to_string()));
         }
-        // What this edit drew with `?` (a value or comment text its font can't draw, stored as
-        // typed): reported, never silent (AGENTS.md §4).
-        let notices = if matches!(scope_of(&edit), Scope::Form | Scope::Comments | Scope::Full) {
-            guard(|| undrawn_notices(&editor.cos, &next)).unwrap_or_default()
-        } else {
-            Vec::new()
-        };
+        let notices = edit_notices(&edit, &editor.cos, &next);
         let previous = std::mem::replace(&mut editor.cos, next);
         let keys = keys_after(&edit).unwrap_or_else(|| editor.keys.clone());
         let previous_keys = std::mem::replace(&mut editor.keys, keys);
@@ -376,7 +371,7 @@ impl Session {
         let signatures = if doc.signatures.is_empty() { Vec::new() } else { signatures_of(&editor.cos, &bytes, &doc.trust, &doc.sig_cache) };
         doc.display = display_bytes(Some(editor), &bytes);
         doc.signatures = Arc::new(signatures);
-        doc.renderer = RenderPool::new(doc.display.clone(), render_threads(), doc.config.clone());
+        doc.renderer = RenderPool::new(doc.display.clone(), render_threads(), display_config(&doc.config));
         doc.bytes = bytes;
         Ok(())
     }
@@ -436,7 +431,7 @@ impl Session {
         let signatures = if doc.signatures.is_empty() { Vec::new() } else { signatures_of(&editor.cos, &bytes, &doc.trust, &doc.sig_cache) };
         doc.display = display_bytes(Some(editor), &bytes);
         doc.signatures = Arc::new(signatures);
-        doc.renderer = RenderPool::new(doc.display.clone(), render_threads(), doc.config.clone());
+        doc.renderer = RenderPool::new(doc.display.clone(), render_threads(), display_config(&doc.config));
         doc.bytes = bytes;
         doc.fonts_stale = true;
         Ok(())
@@ -463,7 +458,7 @@ impl Session {
     /// After a refresh failed: draw the display bytes it left (the original, once released),
     /// so the page still shows a document.
     pub(super) fn show_released(doc: &mut Document) {
-        doc.renderer = RenderPool::new(doc.display.clone(), render_threads(), doc.config.clone());
+        doc.renderer = RenderPool::new(doc.display.clone(), render_threads(), display_config(&doc.config));
     }
 
     /// Rebuild working bytes, inspection and renderer from the current edit state.
@@ -520,7 +515,7 @@ impl Session {
         let signatures = signatures_of(&editor.cos, &bytes, &doc.trust, &doc.sig_cache);
         doc.display = display_bytes(Some(editor), &bytes);
         doc.signatures = Arc::new(signatures);
-        doc.renderer = RenderPool::new(doc.display.clone(), render_threads(), doc.config.clone());
+        doc.renderer = RenderPool::new(doc.display.clone(), render_threads(), display_config(&doc.config));
         doc.bytes = bytes;
         Ok(())
     }
@@ -544,4 +539,22 @@ fn cover_scanned_word(edit: Edit, info: &DocInfo, editor: &Editor) -> Edit {
         }
         other => other,
     }
+}
+
+/// What `edit`, taking `prev` to `next`, wants said: never silent (AGENTS.md §4).
+fn edit_notices(edit: &Edit, prev: &pdfcraft_cos::Document, next: &pdfcraft_cos::Document) -> Vec<EditNotice> {
+    // What it drew with `?` (a value or comment text its font can't draw, stored as typed).
+    let mut notices: Vec<EditNotice> = if matches!(scope_of(edit), Scope::Form | Scope::Comments | Scope::Full) {
+        guard(|| undrawn_notices(prev, next)).unwrap_or_default().into_iter().map(EditNotice::Undrawn).collect()
+    } else {
+        Vec::new()
+    };
+    // Pages whose own white backdrop Remove background couldn't turn back on.
+    if matches!(edit, Edit::RemoveMarks { kind: MarkKind::Background }) {
+        let pages = guard(|| pdfcraft_edit::backdrops_left_off(next)).unwrap_or_default();
+        if !pages.is_empty() {
+            notices.push(EditNotice::BackdropsLeftOff { pages });
+        }
+    }
+    notices
 }

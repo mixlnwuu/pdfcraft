@@ -7,10 +7,13 @@
 //! searchable image (Acrobat's "Searchable Image (Exact)": the image is left untouched).
 //!
 //! The models read the Latin alphabet (English and other languages written without accents).
+//! Thai edition: Thai goes to [`paddle`], PaddleOCR's models run by the same engine.
 
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 use std::path::{Path, PathBuf};
+
+pub mod paddle;
 
 pub use pdfcraft_fonts::helvetica_width;
 
@@ -23,8 +26,9 @@ pub const RECOGNITION_MODEL: &str = "text-recognition.onnx";
 /// `€`, which made a scanned "€250" read as "E250".
 pub const ALPHABET: &str = " 0123456789!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~€ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
 
-/// The languages the models read (ISO 639-1); all use the Latin alphabet without accents.
-pub const LANGUAGES: &[(&str, &str)] = &[("en", "English")];
+/// The languages the models read (ISO 639-1). English covers the Latin alphabet without accents;
+/// the Thai models read Thai and that alphabet (Thai edition).
+pub const LANGUAGES: &[(&str, &str)] = &[("en", "English"), ("th", "Thai")];
 
 #[derive(Debug, thiserror::Error)]
 pub enum OcrError {
@@ -109,6 +113,8 @@ impl Line {
 /// A loaded recogniser. Loading takes a moment; keep one and reuse it.
 pub struct Ocr {
     engine: ocrs::OcrEngine,
+    /// The Thai models, when they are installed beside the others.
+    thai: Option<paddle::ThaiOcr>,
 }
 
 impl Ocr {
@@ -121,12 +127,21 @@ impl Ocr {
             ..Default::default()
         };
         let engine = ocrs::OcrEngine::new(params).map_err(|e| OcrError::Load("ocr engine".into(), e.to_string()))?;
-        Ok(Ocr { engine })
+        let thai = models.detection.parent().and_then(paddle::ThaiModels::in_dir).map(|m| paddle::ThaiOcr::load(&m)).transpose()?;
+        Ok(Ocr { engine, thai })
     }
 
     /// Load the models found by [`Models::find`].
     pub fn find() -> Result<Ocr, OcrError> {
         Self::load(&Models::find().ok_or(OcrError::NoModels)?)
+    }
+
+    /// [`Ocr::recognize`] in a language of [`LANGUAGES`]; `th` reads with the Thai models.
+    pub fn recognize_in(&self, language: &str, pixels: &[u8], width: u32, height: u32) -> Result<Vec<Line>, OcrError> {
+        if language == "th" {
+            return self.thai.as_ref().ok_or(OcrError::NoModels)?.recognize(pixels, width, height);
+        }
+        self.recognize(pixels, width, height)
     }
 
     /// Recognise the text in an RGBA (or RGB, or grey) image, `width` × `height` pixels.
@@ -208,38 +223,83 @@ fn ink_extent(text: &str) -> (f64, f64) {
     (if tall { CAP_HEIGHT } else { X_HEIGHT }, if low { -DESCENT } else { 0.0 })
 }
 
+/// [`ink_extent`] for Thai, as TH Sarabun PSK draws it: letters a little under half the em, tall
+/// vowels above them, tone marks and upper vowels higher, lower vowels and tails below.
+fn thai_ink_extent(text: &str) -> (f64, f64) {
+    let has = |set: &[char]| text.chars().any(|c| set.contains(&c));
+    let marks = ['\u{0E31}', '\u{0E34}', '\u{0E35}', '\u{0E36}', '\u{0E37}', '\u{0E47}', '\u{0E48}', '\u{0E49}', '\u{0E4A}', '\u{0E4B}', '\u{0E4C}'];
+    let tall = ['\u{0E40}', '\u{0E41}', '\u{0E42}', '\u{0E43}', '\u{0E44}', '\u{0E1B}', '\u{0E1D}', '\u{0E1F}'];
+    let low = ['\u{0E38}', '\u{0E39}', '\u{0E3A}', '\u{0E0E}', '\u{0E0F}', '\u{0E24}', '\u{0E26}'];
+    let top = if has(&marks) {
+        0.76
+    } else if has(&tall) {
+        0.62
+    } else {
+        0.46
+    };
+    (top, if has(&low) { -0.16 } else { 0.0 })
+}
+
 fn num(v: f64) -> String {
     let s = format!("{:.4}", if v.abs() < 1e-9 { 0.0 } else { v });
     let s = s.trim_end_matches('0').trim_end_matches('.');
     if s == "-0" { "0".into() } else { s.into() }
 }
 
+/// The resource name of the invisible font a text layer with Thai uses
+/// ([`pdfcraft_fonts::invisible_font`]; Thai edition).
+pub const INVISIBLE_FONT: &[u8] = b"PCOcrUni";
+
+/// Whether [`text_layer`] needs [`INVISIBLE_FONT`] for `words`.
+pub fn needs_invisible_font(words: &[PlacedWord]) -> bool {
+    words.iter().any(|w| pdfcraft_fonts::first_undrawable(&w.text).is_some())
+}
+
 /// Page content that writes `words` as invisible text in `/PCHelv` (standard Helvetica,
 /// WinAnsiEncoding), each word stretched to its box so selection and search highlight the
-/// right place. Marked content `/OCR` so it can be told apart from the page's own text.
+/// right place. Marked content `/OCR` so it can be told apart from the page's own text. A word
+/// Helvetica can't write (Thai) goes in [`INVISIBLE_FONT`], whose characters are an em wide: its
+/// text is the size of its box with each character moved to fill the word (`TJ`), not stretched,
+/// so a word opened for editing keeps its proportions.
 pub fn text_layer(words: &[PlacedWord]) -> Vec<u8> {
     // `3 Tr` and the font are graphics state, which `ET` doesn't reset: without `q … Q` they
     // would stay set for every later content stream on the page, so text added after OCR (a
     // header or footer) drew invisibly (#3029).
     let mut out = b"/OCR BMC\nq\nBT\n3 Tr\n/PCHelv 1 Tf\n".to_vec();
+    let mut wide = false;
     for w in words {
-        let width = helvetica_width(&w.text, 1.0);
+        let unicode = pdfcraft_fonts::first_undrawable(&w.text).is_some();
         let height = w.up[0].hypot(w.up[1]);
-        if width <= 0.0 || height <= 0.0 {
-            continue;
-        }
         // The em square: the word's own ink (cap height or x-height, descenders or not) spans the
         // box, so the text is as tall as the scanned word; its width is stretched to fit the word.
-        let (top, bottom) = ink_extent(&w.text);
+        let (top, bottom) = if unicode { thai_ink_extent(&w.text) } else { ink_extent(&w.text) };
         let em = [w.up[0] / (top - bottom), w.up[1] / (top - bottom)];
+        // How wide the word is, in the size it is written at.
+        let width = if unicode { w.across[0].hypot(w.across[1]) / (height / (top - bottom)) } else { helvetica_width(&w.text, 1.0) };
+        if !(width > 0.0 && height > 0.0) {
+            continue;
+        }
+        if unicode != wide {
+            wide = unicode;
+            let name = if wide { String::from_utf8_lossy(INVISIBLE_FONT).into_owned() } else { "PCHelv".to_owned() };
+            out.extend(format!("/{name} 1 Tf\n").bytes());
+        }
         let ax = [w.across[0] / width, w.across[1] / width];
         let o = [w.origin[0] - em[0] * bottom, w.origin[1] - em[1] * bottom];
         let m = [ax[0], ax[1], em[0], em[1], o[0], o[1]];
         let nums: Vec<String> = m.iter().map(|v| num(*v)).collect();
         out.extend_from_slice(nums.join(" ").as_bytes());
         out.extend_from_slice(b" Tm ");
-        out.extend(pdfcraft_fonts::literal(&pdfcraft_fonts::win_ansi(&w.text)));
-        out.extend_from_slice(b" Tj\n");
+        if wide {
+            // UTF-16 code units are the font's character codes. Thousandths of an em come off
+            // after each, for the word to fill its box.
+            let shows: Vec<String> = w.text.encode_utf16().map(|u| format!("<{u:04X}>")).collect();
+            let pull = num((1.0 - width / shows.len().max(1) as f64) * 1000.0);
+            out.extend(format!("[{}] TJ\n", shows.join(&format!(" {pull} "))).bytes());
+        } else {
+            out.extend(pdfcraft_fonts::literal(&pdfcraft_fonts::win_ansi(&w.text)));
+            out.extend_from_slice(b" Tj\n");
+        }
     }
     out.extend_from_slice(b"ET\nQ\nEMC\n");
     out
@@ -257,6 +317,29 @@ mod tests {
         assert_eq!(w.origin, [50.0, 672.0]);
         assert_eq!(w.across, [100.0, 0.0]);
         assert_eq!(w.up, [0.0, 20.0]);
+    }
+
+    /// Thai edition: a Thai word is written at the size of its box, not stretched, and its
+    /// characters are moved to fill the box; text around it stays in Helvetica.
+    #[test]
+    fn a_thai_word_keeps_its_proportions() {
+        let word = |text: &str, x: f64| PlacedWord { text: text.into(), origin: [x, 100.0], across: [30.0, 0.0], up: [0.0, 9.2] };
+        let layer = String::from_utf8(text_layer(&[word("\u{0E01}\u{0E38}\u{0E48}", 10.0), word("Hi", 40.0)])).unwrap();
+        // 10 pt both ways (a lower vowel and a tone mark: ink of 0.92 em, from 0.16 below the
+        // baseline); three characters fill 30 pt, so nothing is pulled.
+        assert!(layer.contains("/PCOcrUni 1 Tf\n10 0 0 10 10 101.6 Tm [<0E01> 0 <0E38> 0 <0E48>] TJ\n"), "{layer}");
+        assert!(layer.contains("/PCHelv 1 Tf\n"), "{layer}");
+        assert!(needs_invisible_font(&[word("\u{0E01}", 0.0)]) && !needs_invisible_font(&[word("Hi", 0.0)]));
+    }
+
+    /// Thai ink is measured by what reaches how far: a word of plain letters is much less of the
+    /// em than one with tone marks and lower vowels.
+    #[test]
+    fn thai_ink_follows_the_marks() {
+        assert_eq!(thai_ink_extent("\u{0E01}\u{0E02}"), (0.46, 0.0));
+        assert_eq!(thai_ink_extent("\u{0E44}\u{0E01}"), (0.62, 0.0));
+        assert_eq!(thai_ink_extent("\u{0E01}\u{0E48}"), (0.76, 0.0));
+        assert_eq!(thai_ink_extent("\u{0E01}\u{0E38}"), (0.46, -0.16));
     }
 
     /// The text layer is Helvetica in WinAnsiEncoding: every character the model can recognise

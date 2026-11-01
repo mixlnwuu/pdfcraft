@@ -1,6 +1,6 @@
 //! Measure objects: page-space clicks, live readings and persistent drawing scales.
 use crate::widgets::Tip as _;
-use crate::{LeftPanel, PdfCraftApp, QuickTool, canvas::DocView, theme::Tokens, widgets};
+use crate::{LeftPanel, PdfCraftApp, QuickTool, canvas::DocView, page_cursor::Layer, theme::Tokens, widgets};
 use egui::{Color32, Pos2, Stroke};
 use pdfcraft_engine::{
     Document, Edit, Style,
@@ -237,7 +237,7 @@ pub(crate) fn page_input(
     let mut hover = None;
     let mut snap = None;
     if let Some(pos) = pos {
-        ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
+        view.cursor.claim(Layer::ToolArea, egui::CursorIcon::Crosshair);
         let (vx, vy) = xf.screen_to_view(pos);
         let [x, y] = info.view_to_user(vx, vy);
         let mut point = [f64::from(x), f64::from(y)];

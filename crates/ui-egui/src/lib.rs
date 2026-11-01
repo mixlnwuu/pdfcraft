@@ -9,6 +9,15 @@
 // The settings object in `persist` is one `json!` literal past the default limit of 128.
 #![recursion_limit = "256"]
 
+/// PdfCraft as craft-update knows it, with its 128 px icon and accent colour: the update
+/// prompt shows both, and an AppImage's menu entry gets the icon.
+#[cfg(not(target_arch = "wasm32"))]
+pub const UPDATE_APP: craft_update::app::App = craft_update::app::App {
+    icon_png: Some(include_bytes!("../../../assets/app-icon/hicolor/128x128/apps/ai.storyteller.pdfcraft.png")),
+    accent: Some([0xb7, 0x02, 0x28]),
+    ..craft_update::suite::PDFCRAFT
+};
+
 use crate::control::Host as _;
 
 /// Translate an English UI string into the current language (see [`i18n`]).
@@ -87,7 +96,8 @@ mod thai_edition_mark_tests {
         assert!(super::thai_edition_mark_pixels(&png[..png.len() / 2]).is_none(), "a cut-off file");
     }
 }
-pub(crate) const THAI_EDITION_URL: &str = "https://github.com/mixlnwuu/pdfcraft";
+/// The edition's website, shown on the home screen and in About.
+pub(crate) const THAI_EDITION_SITE: &str = "https://mixlnwuu.github.io/pdfcraft/";
 
 /// The settings key the Thai edition writes beside the others. The official app, which shares the
 /// settings file, drops it when it saves; its absence tells `restore` who wrote the file last.
@@ -143,13 +153,16 @@ use canvas::autoscroll;
 use canvas::crop;
 use canvas::fling;
 use canvas::image_pick;
+use canvas::page_cursor;
 use canvas::page_pointer;
+use canvas::page_router;
 pub use canvas::scroll_speed;
 use canvas::signature_drag;
 use canvas::wheel_boost;
 use canvas::wheel_pager;
 use canvas::zoom_snap;
 use dialogs::appearance;
+pub use dialogs::bookmark_styles_ui;
 use dialogs::comment_props;
 use dialogs::credits;
 use dialogs::marks_ui;
@@ -196,8 +209,8 @@ use state::CopyPage;
 use state::OpenRequest;
 pub(crate) use state::{CommentClip, ImageClip, PASTE_STEP, TextClip};
 pub use state::{
-    CustomDraft, Dialog, DuplicateDraft, LeftPanel, LinkOrigin, Mode, NumberDraft, OpenOutcome, PageClip, PasswordPrompt, PendingLink,
-    PendingRemoteLink, PropsTab, QuickTool, RecentFile, RightPanel, UnlockPrompt,
+    CustomDraft, Dialog, DuplicateDraft, LeftPanel, LinkOrigin, Mode, NumberDraft, OpenOutcome, PageClip, PagePropsDraft, PasswordPrompt,
+    PendingLink, PendingRemoteLink, PropsTab, QuickTool, RecentFile, RightPanel, UnlockPrompt,
 };
 use state::{DocumentCopyJob, GridFile};
 pub use tools::bulk_fields;
@@ -375,9 +388,17 @@ pub struct PdfCraftApp {
     pub fill_text_size: f64,
     /// Font for new Fill & Sign text and dates, kept across launches (Thai edition).
     pub fill_text_font: pdfcraft_engine::TextFont,
+    /// Colour for new Fill & Sign text and dates, kept across launches.
+    pub fill_text_color: [f64; 3],
     pub dialog: Option<Dialog>,
     /// How to ask for the latest release (the desktop app sets it; see `updates`).
     pub update_source: Option<updates::UpdateSource>,
+    /// How to install a release (the desktop app sets it where it can; Thai edition).
+    pub update_install: Option<updates::UpdateInstall>,
+    /// The release an update was started for, until the next launch has checked it took.
+    pub update_attempt: Option<String>,
+    /// Preferences: ask for a newer release at start, kept across launches (Thai edition).
+    pub check_updates_at_start: bool,
     pub(crate) updates: updates::Updates,
     /// Lists the Print dialog's printers in the background (the desktop app sets it; see
     /// [`PrinterSource`]).
@@ -432,6 +453,17 @@ pub struct PdfCraftApp {
     /// Folders pinned to Home, and what they held when last listed.
     pub pinned: folders_ui::PinnedFolders,
     pub toast: Option<(String, f64)>,
+    /// The form script message the toast shows now, if it shows one: drawn with its title and
+    /// icon (#4293).
+    pub toast_script: Option<pdfcraft_engine::js::Message>,
+    /// Form script messages waiting for the toast, in the order the scripts showed them: each
+    /// takes the toast when the one before it is gone, so every one is seen (#4294).
+    pub script_messages: std::collections::VecDeque<pdfcraft_engine::js::Message>,
+    /// Form script messages the waiting queue had no room for, since the toast last said how many.
+    pub script_messages_dropped: u64,
+    /// The left-out count the toast is saying now ([`Self::next_script_message`]): put back to be
+    /// said again if another notice replaces the toast before it has been shown its time.
+    pub toast_dropped: u64,
     /// Whether the macOS title bar is drawn by us (traffic lights over our tab strip).
     pub integrated_titlebar: bool,
     /// Set when the desktop leaves the window frame to the app (GNOME on Wayland): the tab strip
@@ -598,6 +630,8 @@ pub struct PdfCraftApp {
     pub attach_override: Option<(String, Vec<u8>)>,
     /// Duplicate Field: which field and onto which pages.
     pub duplicate_draft: Option<DuplicateDraft>,
+    /// Page Properties: which pages, and the tab order chosen for them.
+    pub page_props_draft: Option<PagePropsDraft>,
     /// Text field table: the table being set up, and the page it goes on.
     pub field_table_draft: Option<field_table_ui::FieldTableDraft>,
     /// Prepare a form ▸ Preview: fill the form instead of editing its fields.
@@ -631,6 +665,8 @@ pub struct PdfCraftApp {
     fonts_cjk: theme::CjkPreference,
     /// The window title last sent to the platform.
     pub window_title: String,
+    /// The web page's title last set: the window title, but always with the file's name.
+    pub page_title: String,
     /// The UI control channel, when enabled (`--control`; off by default).
     control: Option<control::Control>,
     /// A bookmark being renamed in the Bookmarks panel: (path, text so far).
@@ -640,10 +676,14 @@ pub struct PdfCraftApp {
     pub(crate) word_count_draft: word_count_ui::Draft,
     /// Protect Using Password dialog state.
     pub protect_draft: protect::ProtectDraft,
+    /// New bookmarks from text styles dialog state (#1693).
+    pub text_style_draft: bookmark_styles_ui::TextStyleDraft,
     /// Set Page Boxes dialog state.
     pub boxes_draft: pageboxes::BoxesDraft,
     /// Header & footer / watermark / background dialog state.
     pub marks_draft: marks_ui::MarksDraft,
+    /// The Update dialogs' preview page without the marks they replace.
+    pub(crate) unmarked_page: marks_ui::UnmarkedPage,
     /// Export dialog settings.
     pub export_draft: export_ui::ExportDraft,
     /// A running export's progress.

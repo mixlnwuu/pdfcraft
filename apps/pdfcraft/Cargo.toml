@@ -13,6 +13,8 @@ workspace = true
 # trusted roots. No bundled root list (webpki-roots and webpki-root-certs are CDLA-licensed).
 # Thai edition: the edition keeps this check (it asks mixlnwuu/pdfcraft) instead of craft-update.
 ureq = { version = "3.4", default-features = false, features = ["rustls-no-provider", "_ring"] }
+# Thai edition: checks a downloaded update against its release's SHA-256.
+sha2 = "0.10"
 rustls-native-certs = "0.8"
 pdfcraft-ui-egui = { workspace = true }
 # `build_info`: the version and compile-time build label for `--version` and the log.

@@ -28,6 +28,9 @@ pub const ALLOWED_LICENCES: &[&str] = &[
     "BSD-3-Clause",
     "Apache-2.0",
     "OFL-1.1",
+    // Thai edition: TH Sarabun PSK, under the GPL with an exception for embedding it in documents.
+    "GPL-2.0-or-later",
+    "Font-exception-2.0",
     "Ubuntu-font-1.0",
     "Bitstream-Vera",
     "CC0-1.0",

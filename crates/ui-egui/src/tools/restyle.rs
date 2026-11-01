@@ -156,7 +156,9 @@ pub(crate) fn paint_preview(ui: &egui::Ui, painter: &egui::Painter, xf: &crate::
 /// Whether this computer, or every PDF viewer, has the font a PDF names `base_font`: a standard
 /// font (or an alias of one, such as Arial), TH Sarabun PSK, or an installed font.
 pub(crate) fn font_available(base_font: &str) -> bool {
-    pdfcraft_engine::FontFamily::like_font(base_font).is_some() || pdfcraft_fonts::Std14::names_standard(base_font)
+    pdfcraft_engine::FontFamily::like_font(base_font).is_some()
+        || pdfcraft_fonts::Std14::names_standard(base_font)
+        || base_font == pdfcraft_fonts::thai_text::INVISIBLE_NAME
 }
 
 /// A PDF font name as people read it: without the `ABCDEF+` subset tag.

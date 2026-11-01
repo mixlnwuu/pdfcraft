@@ -1733,6 +1733,7 @@ fn control_quit_retains_inactive_fill_sign_typing_after_cancel() {
         text: "Unsaved signature note".into(),
         size: 10.0,
         font: Default::default(),
+        color: [0.0; 3],
         focus: false,
     });
     h.state_mut().active = None;

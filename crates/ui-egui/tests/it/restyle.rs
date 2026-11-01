@@ -7,7 +7,7 @@ use pdfcraft_ui_egui::PdfCraftApp;
 
 /// "Alpha" and "Bravo" in Helvetica 12 and "Charlie" in Helvetica-Bold 18, on a 200 × 300 page.
 fn paragraphs() -> Vec<u8> {
-    let body = "BT /F1 12 Tf 20 280 Td (Alpha) Tj ET BT /F1 12 Tf 20 220 Td (Bravo) Tj ET BT /F2 18 Tf 20 160 Td (Charlie) Tj ET";
+    let body = "BT /F1 12 Tf 20 280 Td (Alpha) Tj ET BT /F1 12 Tf 20 220 Td (Bravo) Tj ET BT /F2 18 Tf 20 130 Td (Charlie) Tj ET";
     let objs = [
         "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
         "<< /Type /Pages /Kids [4 0 R] /Count 1 /MediaBox [0 0 200 300] >>".to_string(),
@@ -104,7 +104,7 @@ fn bold_from_format_text_applies_to_every_selected_paragraph_in_one_step() {
 #[test]
 fn the_format_painter_gives_a_paragraph_the_look_of_another() {
     let mut h = harness();
-    let (alpha, bravo, charlie) = (at(&h, 280.0), at(&h, 220.0), at(&h, 160.0));
+    let (alpha, bravo, charlie) = (at(&h, 280.0), at(&h, 220.0), at(&h, 130.0));
     click(&mut h, charlie, Modifiers::NONE);
     h.get_by_label("Format painter").click();
     h.run_steps(2);
@@ -159,7 +159,7 @@ fn format_text_previews_on_every_selected_paragraph() {
     };
     let reds = |h: &mut Harness<'static, PdfCraftApp>| {
         let pixels = h.render().unwrap();
-        (red_in(&pixels, area(280.0, 12.0)), red_in(&pixels, area(220.0, 12.0)), red_in(&pixels, area(160.0, 18.0)))
+        (red_in(&pixels, area(280.0, 12.0)), red_in(&pixels, area(220.0, 12.0)), red_in(&pixels, area(130.0, 18.0)))
     };
     assert_eq!(reds(&mut h), (0, 0, 0), "black text to start with");
     h.get_by_label("Colour").click();
