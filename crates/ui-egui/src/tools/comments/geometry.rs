@@ -152,12 +152,12 @@ pub(crate) fn caret_snap(text: &PageText, vx: f32, vy: f32) -> Option<([f32; 2],
 /// A text box sized to its text (at most 300 pt wide), hanging from its top-left corner.
 /// The box for `text` at `size` with its displayed top-left corner at `at`, on a page turned by
 /// `rotation` (its `/Rotate`): on a quarter-turned page it is taller than wide in user space.
-pub fn text_box_rect(at: [f64; 2], text: &str, size: f64, rotation: i64) -> [f64; 4] {
-    use pdfcraft_engine::annot_text::{text_width, wrap};
+/// The text is measured in `font` (Thai edition).
+pub fn text_box_rect(at: [f64; 2], text: &str, size: f64, font: &pdfcraft_engine::TextFont, rotation: i64) -> [f64; 4] {
     let pad = 2.0;
-    let longest = text.lines().map(|l| text_width(l, size)).fold(0.0, f64::max);
+    let longest = text.lines().map(|l| font.line_width(l, size)).fold(0.0, f64::max);
     let w = (longest + 2.0 * pad + 4.0).clamp(40.0, 300.0);
-    let lines = wrap(text, size, w - 2.0 * pad).len().max(1);
+    let lines = font.wrap(text, size, w - 2.0 * pad).len().max(1);
     let h = lines as f64 * size * 1.2 + 2.0 * pad + 2.0;
     pdfcraft_engine::text_box_at(rotation, at, w, h).unwrap_or([at[0], at[1] - h, at[0] + w, at[1]])
 }
@@ -174,12 +174,20 @@ pub(super) fn drawn_box(page: &PageInfo, a: [f64; 2], b: [f64; 2]) -> ([f64; 2],
 /// A text box dragged out `size` (displayed width and height) from its displayed top-left corner
 /// `at`, with a border `border` wide: the text wraps to its width inside the border, as its
 /// appearance lays it out. When the text needs more lines the box grows down, and moves up to stay
-/// on the page; text that cannot fit even so keeps the drawn height and is clipped.
-pub fn drawn_text_box_rect(page: &PageInfo, at: [f64; 2], size: [f64; 2], text: &str, font_size: f64, border: f64) -> [f64; 4] {
-    use pdfcraft_engine::annot_text::wrap;
+/// on the page; text that cannot fit even so keeps the drawn height and is clipped. The text is
+/// measured in `font` (Thai edition).
+pub fn drawn_text_box_rect(
+    page: &PageInfo,
+    at: [f64; 2],
+    size: [f64; 2],
+    text: &str,
+    font_size: f64,
+    font: &pdfcraft_engine::TextFont,
+    border: f64,
+) -> [f64; 4] {
     let pad = 2.0 + border.max(0.0);
     let [w, drawn] = size;
-    let lines = wrap(text, font_size, (w - 2.0 * pad).max(1.0)).len().max(1);
+    let lines = font.wrap(text, font_size, (w - 2.0 * pad).max(1.0)).len().max(1);
     let needed = lines as f64 * font_size * 1.2 + 2.0 * pad + 2.0;
     let [vx, vy] = page.user_to_view(at[0] as f32, at[1] as f32).map(f64::from);
     let bottom = f64::from(page.height);

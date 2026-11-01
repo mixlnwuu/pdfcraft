@@ -48,7 +48,7 @@ pub fn show(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
                         ui.vertical(|ui| {
                             ui.label(egui::RichText::new(crate::THAI_EDITION_NOTE).font(theme::semibold(15.0)));
                             ui.label(egui::RichText::new(crate::THAI_EDITION_AUTHOR).color(t.text_muted));
-                            ui.hyperlink(crate::THAI_EDITION_URL);
+                            ui.hyperlink(crate::THAI_EDITION_SITE);
                         });
                     });
                 });

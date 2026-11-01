@@ -2783,94 +2783,6 @@ usage = "Showcase PDF (cargo xtask demo-pdf)"
 sha256 = "acd98e64795781b2058f07b18475e0ecee2a0fe2b42a49e2f9e37d0d6bf66ce6"
 
 [[asset]]
-path = "docs/brand/artcraft-logo-white.png"
-title = "ArtCraft brand: artcraft-logo-white"
-author = "ArtCraft Team"
-source = "ArtCraft Team brand assets (provided by the project owner, 2026-10-01; identical copies in storytold/photocraft)"
-licence = "LicenseRef-Storyteller-Trademark"
-licence_file = "docs/brand/LICENSE-brand.txt"
-kind = "logo"
-usage = "ArtCraft branding next to the community links (About dialog, Help menu, home screen) and in docs. ArtCraft Team trademark, not open source; may be used only unmodified within PdfCraft; forks and modified versions must remove it."
-sha256 = "8b86aeb06a12a90ba77a60e0d90329272310e244ee5c1f9b161b391280ca79d8"
-
-[[asset]]
-path = "docs/brand/artcraft-logo-white.svg"
-title = "ArtCraft brand: artcraft-logo-white"
-author = "ArtCraft Team"
-source = "ArtCraft Team brand assets (provided by the project owner, 2026-10-01; identical copies in storytold/photocraft)"
-licence = "LicenseRef-Storyteller-Trademark"
-licence_file = "docs/brand/LICENSE-brand.txt"
-kind = "logo"
-usage = "ArtCraft branding next to the community links (About dialog, Help menu, home screen) and in docs. ArtCraft Team trademark, not open source; may be used only unmodified within PdfCraft; forks and modified versions must remove it."
-sha256 = "a3e03dc49f9ad4225b8517d5424309c8d1c864d3996d862190d9cc797d5af427"
-
-[[asset]]
-path = "docs/brand/artcraft-logo.png"
-title = "ArtCraft brand: artcraft-logo"
-author = "ArtCraft Team"
-source = "ArtCraft Team brand assets (provided by the project owner, 2026-10-01; identical copies in storytold/photocraft)"
-licence = "LicenseRef-Storyteller-Trademark"
-licence_file = "docs/brand/LICENSE-brand.txt"
-kind = "logo"
-usage = "ArtCraft branding next to the community links (About dialog, Help menu, home screen) and in docs. ArtCraft Team trademark, not open source; may be used only unmodified within PdfCraft; forks and modified versions must remove it."
-sha256 = "08fc6d9d3717e8f13417bac6f9025b50e11d1e0b32e9e000883d2fe0c4a0c67b"
-
-[[asset]]
-path = "docs/brand/artcraft-logo.svg"
-title = "ArtCraft brand: artcraft-logo"
-author = "ArtCraft Team"
-source = "ArtCraft Team brand assets (provided by the project owner, 2026-10-01; identical copies in storytold/photocraft)"
-licence = "LicenseRef-Storyteller-Trademark"
-licence_file = "docs/brand/LICENSE-brand.txt"
-kind = "logo"
-usage = "ArtCraft branding next to the community links (About dialog, Help menu, home screen) and in docs. ArtCraft Team trademark, not open source; may be used only unmodified within PdfCraft; forks and modified versions must remove it."
-sha256 = "3188971e1affdf4f6be4fa65f715376a7a305e6aa741ec78b0296c8f934eff08"
-
-[[asset]]
-path = "docs/brand/artcraft-mark-black.png"
-title = "ArtCraft brand: artcraft-mark-black"
-author = "ArtCraft Team"
-source = "ArtCraft Team brand assets (provided by the project owner, 2026-10-01; identical copies in storytold/photocraft)"
-licence = "LicenseRef-Storyteller-Trademark"
-licence_file = "docs/brand/LICENSE-brand.txt"
-kind = "logo"
-usage = "ArtCraft branding next to the community links (About dialog, Help menu, home screen) and in docs. ArtCraft Team trademark, not open source; may be used only unmodified within PdfCraft; forks and modified versions must remove it."
-sha256 = "5954cc0306e1b9d7beb47097e2e842157113a39d9aba078b57304902687936a9"
-
-[[asset]]
-path = "docs/brand/artcraft-mark-black.svg"
-title = "ArtCraft brand: artcraft-mark-black"
-author = "ArtCraft Team"
-source = "ArtCraft Team brand assets (provided by the project owner, 2026-10-01; identical copies in storytold/photocraft)"
-licence = "LicenseRef-Storyteller-Trademark"
-licence_file = "docs/brand/LICENSE-brand.txt"
-kind = "logo"
-usage = "ArtCraft branding next to the community links (About dialog, Help menu, home screen) and in docs. ArtCraft Team trademark, not open source; may be used only unmodified within PdfCraft; forks and modified versions must remove it."
-sha256 = "570adcb4f7ba8ca0647f97074476bab81d3272988f1cdee52efa21bf026036a4"
-
-[[asset]]
-path = "docs/brand/artcraft-mark.png"
-title = "ArtCraft brand: artcraft-mark"
-author = "ArtCraft Team"
-source = "ArtCraft Team brand assets (provided by the project owner, 2026-10-01; identical copies in storytold/photocraft)"
-licence = "LicenseRef-Storyteller-Trademark"
-licence_file = "docs/brand/LICENSE-brand.txt"
-kind = "logo"
-usage = "ArtCraft branding next to the community links (About dialog, Help menu, home screen) and in docs. ArtCraft Team trademark, not open source; may be used only unmodified within PdfCraft; forks and modified versions must remove it."
-sha256 = "9d372157a949c147318561e629b11561c28b7cbc14c84b516a3fe6e84d8fbbad"
-
-[[asset]]
-path = "docs/brand/artcraft-mark.svg"
-title = "ArtCraft brand: artcraft-mark"
-author = "ArtCraft Team"
-source = "ArtCraft Team brand assets (provided by the project owner, 2026-10-01; identical copies in storytold/photocraft)"
-licence = "LicenseRef-Storyteller-Trademark"
-licence_file = "docs/brand/LICENSE-brand.txt"
-kind = "logo"
-usage = "ArtCraft branding next to the community links (About dialog, Help menu, home screen) and in docs. ArtCraft Team trademark, not open source; may be used only unmodified within PdfCraft; forks and modified versions must remove it."
-sha256 = "f87af81b6fa411da8820eed2bfdcc54c0ee9cd453b4e868c64f56c69db142d0e"
-
-[[asset]]
 path = "assets/app-icon/pdfcraft.svg"
 title = "PdfCraft app icon (master vector)"
 author = "PdfCraft contributors (drawn by the project owner in ArtCraft; vectorised with craftrules vectorize_tile.py)"
@@ -2879,7 +2791,7 @@ licence = "MIT OR Apache-2.0"
 licence_file = "assets/app-icon/LICENSE.txt"
 kind = "icon"
 usage = "Master artwork; every other app-icon file is rendered from it (packaging/icons.sh)"
-sha256 = "52b384a10a2a7fdd3145d9822972cfd568ef0cb7312549bd4399addd89d45a6d"
+sha256 = "27745c021830f82c033b0f15f2d8d9f8e099138743297887ff7e2c9e7ed069da"
 
 [[asset]]
 path = "assets/app-icon/pdfcraft-small.svg"
@@ -2890,7 +2802,7 @@ licence = "MIT OR Apache-2.0"
 licence_file = "assets/app-icon/LICENSE.txt"
 kind = "icon"
 usage = "README header and assets/app-icon/README.md"
-sha256 = "b036304c11ef5dcad36636d06ca0bf331b51e47650d25d3c916a0e1eabf544c7"
+sha256 = "b524df1a583f8034a5a23836955e4fb423e0149429d695e80d95e5056f408678"
 
 [[asset]]
 path = "assets/app-icon/pdfcraft-1024.png"
@@ -2901,7 +2813,7 @@ licence = "MIT OR Apache-2.0"
 licence_file = "assets/app-icon/LICENSE.txt"
 kind = "icon"
 usage = "Runtime window/Dock icon on macOS (apps/pdfcraft/src/main.rs)"
-sha256 = "da577d3f21fbcf5c739067787a9e683be2b064d76813b5d5fec9074a7a106538"
+sha256 = "68ac6730b8990d07503351d32eacea81e9ec171a7a6f09daf52d6555d8245c8a"
 
 [[asset]]
 path = "assets/app-icon/pdfcraft.icns"
@@ -2912,7 +2824,7 @@ licence = "MIT OR Apache-2.0"
 licence_file = "assets/app-icon/LICENSE.txt"
 kind = "icon"
 usage = "macOS app bundle icon"
-sha256 = "2425148222873de241d267aba667a8b234ecdd0149f2ca8bb6e79443b743b1e8"
+sha256 = "fca7e7a0e34cc5c5ecae5bca97ee896aac68c4a34b088bc3a0b3271484f23974"
 
 [[asset]]
 path = "assets/app-icon/pdfcraft.ico"
@@ -2923,7 +2835,7 @@ licence = "MIT OR Apache-2.0"
 licence_file = "assets/app-icon/LICENSE.txt"
 kind = "icon"
 usage = "Embedded in pdfcraft.exe by apps/pdfcraft/build.rs (Explorer, taskbar, Start menu, Alt-Tab)"
-sha256 = "56daaaae9ae5389794909570885809adf5e1d9183bef2d9669ed2f9bba3ed6f5"
+sha256 = "709271d66e07710a3f785ea21b0c85c5228eaf8bebe5058bc0f71f9ef20749eb"
 
 [[asset]]
 path = "assets/app-icon/pdfcraft-document.svg"
@@ -2934,7 +2846,7 @@ licence = "ISC AND (MIT OR Apache-2.0)"
 licence_file = "assets/app-icon/LICENSE-document.txt"
 kind = "icon"
 usage = "Master artwork for the Windows PDF file type icon; rendered by packaging/icons.sh, without fonts or external images"
-sha256 = "8da8278c2b89362be0a960879d453ff879d7544d6d58e47d5389574e8dfff77b"
+sha256 = "c129f1b538ce16e3c3fa0d89d3301038c51249ba5d61bfd98c46e69cfdf5c316"
 
 [[asset]]
 path = "assets/app-icon/pdfcraft-document.ico"
@@ -2945,7 +2857,7 @@ licence = "ISC AND (MIT OR Apache-2.0)"
 licence_file = "assets/app-icon/LICENSE-document.txt"
 kind = "icon"
 usage = "Embedded in pdfcraft.exe as resource 2; the Windows installer uses it for PdfCraft.Document and Applications/pdfcraft.exe PDF file associations"
-sha256 = "ba3f9128b368fc6d17d376cf62dbdbc22455451c5c8c4779210d7a2a7409b9e6"
+sha256 = "910be5e0ecdc94ce00368077ca1bef449bd5d62a75516feeb37884296c6fac4d"
 
 [[asset]]
 path = "assets/app-icon/hicolor/16x16/apps/ai.storyteller.pdfcraft.png"
@@ -2956,7 +2868,7 @@ licence = "MIT OR Apache-2.0"
 licence_file = "assets/app-icon/LICENSE.txt"
 kind = "icon"
 usage = "Linux hicolor theme icon (packaging/linux/ai.storyteller.pdfcraft.desktop)"
-sha256 = "9b77095cbe75dcba6b74a1fdcd4064812850efaf7a12edebefc9ded5eabb49da"
+sha256 = "660d2aace45ec1a28bc7e3708eab71ffee5cb1203f57a6256f7bd7c727193567"
 
 [[asset]]
 path = "assets/app-icon/hicolor/24x24/apps/ai.storyteller.pdfcraft.png"
@@ -2967,7 +2879,7 @@ licence = "MIT OR Apache-2.0"
 licence_file = "assets/app-icon/LICENSE.txt"
 kind = "icon"
 usage = "Linux hicolor theme icon (packaging/linux/ai.storyteller.pdfcraft.desktop)"
-sha256 = "a4cd466687f6c5cb59eef3fc564bdba1c8f0d9e324754eeebab82f18823efae7"
+sha256 = "1989441bdcc8d1df0d73cfe7eb836e9211abaa0fd7fd6ec7e4634bfcd472995d"
 
 [[asset]]
 path = "assets/app-icon/hicolor/32x32/apps/ai.storyteller.pdfcraft.png"
@@ -2978,7 +2890,7 @@ licence = "MIT OR Apache-2.0"
 licence_file = "assets/app-icon/LICENSE.txt"
 kind = "icon"
 usage = "Linux hicolor theme icon (packaging/linux/ai.storyteller.pdfcraft.desktop)"
-sha256 = "e22279013a5ed5c02571e1e4e9bc4cef9aa0847fcb733a285b2916fabd16bf78"
+sha256 = "7fd1ac555f7f6b13ef3fba2696dfb86900cfcb7f7b669aece38590bf2306cf2e"
 
 [[asset]]
 path = "assets/app-icon/hicolor/48x48/apps/ai.storyteller.pdfcraft.png"
@@ -2989,7 +2901,7 @@ licence = "MIT OR Apache-2.0"
 licence_file = "assets/app-icon/LICENSE.txt"
 kind = "icon"
 usage = "Linux hicolor theme icon (packaging/linux/ai.storyteller.pdfcraft.desktop)"
-sha256 = "55daf2d5575f6c4e4c4975c9f1c74231178f1801963a8b19f68dfa9bc50cb22f"
+sha256 = "784ef3bd9f9e479cb2df22a0aee259a441a9c358390e646639c3a0ed79d41288"
 
 [[asset]]
 path = "assets/app-icon/hicolor/64x64/apps/ai.storyteller.pdfcraft.png"
@@ -3000,7 +2912,7 @@ licence = "MIT OR Apache-2.0"
 licence_file = "assets/app-icon/LICENSE.txt"
 kind = "icon"
 usage = "Linux hicolor theme icon (packaging/linux/ai.storyteller.pdfcraft.desktop)"
-sha256 = "2975c200f341e247b5fa18f568fb27d390e3fa01e9b2ad37acb48d0e1cc8a124"
+sha256 = "deb1a9f849549d3f0652fb6d3c30b6eb6ea54498eaea8c1007d901bbafe7067c"
 
 [[asset]]
 path = "assets/app-icon/hicolor/128x128/apps/ai.storyteller.pdfcraft.png"
@@ -3011,7 +2923,7 @@ licence = "MIT OR Apache-2.0"
 licence_file = "assets/app-icon/LICENSE.txt"
 kind = "icon"
 usage = "Linux hicolor theme icon (packaging/linux/ai.storyteller.pdfcraft.desktop)"
-sha256 = "6ef927ca252b40bc9b5d8843d84137334362f8aa1acbb1bf8c15a02affd25b2b"
+sha256 = "1933bbeaea290497facd328e917dafcc433d0c0caa9f1e207aa45ac1e430898c"
 
 [[asset]]
 path = "assets/app-icon/hicolor/256x256/apps/ai.storyteller.pdfcraft.png"
@@ -3022,7 +2934,7 @@ licence = "MIT OR Apache-2.0"
 licence_file = "assets/app-icon/LICENSE.txt"
 kind = "icon"
 usage = "Linux hicolor theme icon (packaging/linux/ai.storyteller.pdfcraft.desktop); runtime window icon on Windows and Linux (apps/pdfcraft/src/main.rs)"
-sha256 = "cde7ee8c5ee38f9fc40a429fd9e6d99a035bcd321701fce331bb13bac126614d"
+sha256 = "47094c09fb77eb35d465eee46445626a4d78c7ef50629cc7d04a602de3e144e9"
 
 [[asset]]
 path = "assets/app-icon/hicolor/512x512/apps/ai.storyteller.pdfcraft.png"
@@ -3033,7 +2945,7 @@ licence = "MIT OR Apache-2.0"
 licence_file = "assets/app-icon/LICENSE.txt"
 kind = "icon"
 usage = "Linux hicolor theme icon (packaging/linux/ai.storyteller.pdfcraft.desktop)"
-sha256 = "5ede733e93b96f4eb8d94299232cf2f9605fa19b0d913f95fe9828c316a2d066"
+sha256 = "dea8010a8b41011aba054d3bfb8b790da57bc958c60869f508e1bbd288d3f280"
 
 [[asset]]
 path = "assets/app-icon/hicolor/scalable/apps/ai.storyteller.pdfcraft.svg"
@@ -3044,7 +2956,7 @@ licence = "MIT OR Apache-2.0"
 licence_file = "assets/app-icon/LICENSE.txt"
 kind = "icon"
 usage = "Linux hicolor theme icon (packaging/linux/ai.storyteller.pdfcraft.desktop)"
-sha256 = "52b384a10a2a7fdd3145d9822972cfd568ef0cb7312549bd4399addd89d45a6d"
+sha256 = "27745c021830f82c033b0f15f2d8d9f8e099138743297887ff7e2c9e7ed069da"
 
 [[asset]]
 path = "docs/images/pdfcraft-bookmarks.png"
@@ -3155,17 +3067,6 @@ licence_file = "LICENSE-MIT"
 kind = "image"
 usage = "README: split. Shows only PdfCraft UI, Lucide icons and the showcase PDF built from the [[fetched]] OFL fonts"
 sha256 = "bf31e13b563ead564af968c5fae8d1c07b91ee38867d0cf1aae9e0582efc2fe5"
-
-[[asset]]
-path = "docs/images/pdfcraft-tools.png"
-title = "PdfCraft screenshot: All tools"
-author = "PdfCraft contributors (generated by `cargo xtask screenshots`)"
-source = "this repository"
-licence = "MIT OR Apache-2.0"
-licence_file = "LICENSE-MIT"
-kind = "image"
-usage = "README: tool catalogue. Shows PdfCraft UI, Lucide icons, the showcase PDF built from the [[fetched]] OFL fonts, and the ArtCraft mark (Storyteller trademark from docs/brand/, not covered by this licence)"
-sha256 = "61731a921902e285d40826d401f1ef25624dabb8c8ac1f8f0c09c1292a17ee1a"
 
 [[asset]]
 path = "docs/images/pdfcraft-twoup.png"
@@ -3341,7 +3242,7 @@ licence = "MIT OR Apache-2.0"
 licence_file = "assets/app-icon/LICENSE.txt"
 kind = "image"
 usage = "Finder window of the macOS DMG; rendered to background.tiff by packaging/macos/dmg/generate.py"
-sha256 = "e8b9ea9d5e64b7b741c977543c1693825e77d5c4c579eeb674bf5dcd3764cd8a"
+sha256 = "182663e4d1c4fabbb7ab2e1f0d4e991a8e0859b4a8dee6934d3e25d77ea020af"
 
 
 [[asset]]
@@ -3353,7 +3254,7 @@ licence = "MIT OR Apache-2.0"
 licence_file = "assets/app-icon/LICENSE.txt"
 kind = "image"
 usage = "1x + 2x HiDPI 16-colour palette TIFF copied into the macOS DMG by packaging/macos/package.sh; includes the app icon and the free LittleCMS built-in sRGB profile"
-sha256 = "f46881724a6621f3686a612a79dbdce4f7dbe9e2025610e44c9a094341334c2c"
+sha256 = "bedf1b23707b9e34157440e83f65464ff314fa9f6b1d39c7a8930d1645c2f8be"
 
 [[fetched]]
 file = "text-detection.onnx"
@@ -3606,3 +3507,86 @@ licence_file = "thai/fonts/sarabun/OFL.txt"
 kind = "font"
 usage = "Thai edition: craft-fonts build input added by thai/build-windows.ps1; edited text set in Sarabun (as Chrome and TCPDF embed it) keeps its face"
 sha256 = "5ef1b930f9a3afed5ec83374b5617cad3a89d91a8fc5e372dc028c2aa2950f8d"
+
+[[asset]]
+path = "thai/fonts/th-sarabun-psk/THSarabunPSK-Regular.ttf"
+title = "TH Sarabun PSK Regular"
+author = "Suppakit Chalermlarp, Software Industry Promotion Agency (SIPA)"
+source = "https://github.com/SarabunConsortium/TH-Sarabun-PSK (unmodified)"
+licence = "GPL-2.0-or-later WITH Font-exception-2.0"
+licence_file = "thai/fonts/th-sarabun-psk/LICENSE.txt"
+kind = "font"
+usage = "Thai edition: the document Thai face, embedded in PDFs PdfCraft writes (the font's embedding exception keeps those PDFs outside the GPL)"
+sha256 = "0642bd7723fc8538ad3ce7f0bf206de3424cc95f9aee8b563218506cfb00ca4a"
+
+[[asset]]
+path = "thai/fonts/th-sarabun-psk/THSarabunPSK-Bold.ttf"
+title = "TH Sarabun PSK Bold"
+author = "Suppakit Chalermlarp, Software Industry Promotion Agency (SIPA)"
+source = "https://github.com/SarabunConsortium/TH-Sarabun-PSK (unmodified)"
+licence = "GPL-2.0-or-later WITH Font-exception-2.0"
+licence_file = "thai/fonts/th-sarabun-psk/LICENSE.txt"
+kind = "font"
+usage = "Thai edition: the document Thai face, embedded in PDFs PdfCraft writes (the font's embedding exception keeps those PDFs outside the GPL)"
+sha256 = "7f90121592df490af8ee98f1b34dafa4c3d2804134e6cecae5a51c696683e0cb"
+
+[[asset]]
+path = "thai/fonts/th-sarabun-psk/THSarabunPSK-Italic.ttf"
+title = "TH Sarabun PSK Italic"
+author = "Suppakit Chalermlarp, Software Industry Promotion Agency (SIPA)"
+source = "https://github.com/SarabunConsortium/TH-Sarabun-PSK (unmodified)"
+licence = "GPL-2.0-or-later WITH Font-exception-2.0"
+licence_file = "thai/fonts/th-sarabun-psk/LICENSE.txt"
+kind = "font"
+usage = "Thai edition: the document Thai face, embedded in PDFs PdfCraft writes (the font's embedding exception keeps those PDFs outside the GPL)"
+sha256 = "217f777dd36c57bbb1aa7ea77bed312cf12989b39629e98f3a85a704b82e45e5"
+
+[[asset]]
+path = "thai/fonts/th-sarabun-psk/THSarabunPSK-BoldItalic.ttf"
+title = "TH Sarabun PSK BoldItalic"
+author = "Suppakit Chalermlarp, Software Industry Promotion Agency (SIPA)"
+source = "https://github.com/SarabunConsortium/TH-Sarabun-PSK (unmodified)"
+licence = "GPL-2.0-or-later WITH Font-exception-2.0"
+licence_file = "thai/fonts/th-sarabun-psk/LICENSE.txt"
+kind = "font"
+usage = "Thai edition: the document Thai face, embedded in PDFs PdfCraft writes (the font's embedding exception keeps those PDFs outside the GPL)"
+sha256 = "99dc2adaf9df7b63686c9e63208bb7635397f1c0ad9c71d94783292e2ef10890"
+
+[[fetched]]
+file = "paddle-text-detection.onnx"
+url = "https://huggingface.co/monkt/paddleocr-onnx/resolve/7b02d0a30a07ba2b92ad1ff5a8941ae2c633de65/detection/v3/det.onnx"
+title = "PP-OCRv3 text detection model (ONNX)"
+author = "PaddlePaddle Authors (PaddleOCR); ONNX conversion by monkt/paddleocr-onnx"
+source = "https://github.com/PaddlePaddle/PaddleOCR (PP-OCRv3_mobile_det; ONNX: https://huggingface.co/monkt/paddleocr-onnx)"
+licence = "Apache-2.0"
+licence_url = "https://www.apache.org/licenses/LICENSE-2.0.txt"
+licence_sha256 = "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+kind = "model"
+usage = "Scan & OCR, Thai edition: finds the lines of a page (cargo xtask models)"
+sha256 = "ee40e80071ba3a320d4efda75f3e22047a7d049e9bf7bcaaf9daea23fc21b935"
+
+[[fetched]]
+file = "paddle-thai-recognition.onnx"
+url = "https://huggingface.co/monkt/paddleocr-onnx/resolve/7b02d0a30a07ba2b92ad1ff5a8941ae2c633de65/languages/thai/rec.onnx"
+title = "PP-OCRv5 Thai text recognition model (ONNX)"
+author = "PaddlePaddle Authors (PaddleOCR); ONNX conversion by monkt/paddleocr-onnx"
+source = "https://github.com/PaddlePaddle/PaddleOCR (th_PP-OCRv5_mobile_rec; ONNX: https://huggingface.co/monkt/paddleocr-onnx)"
+licence = "Apache-2.0"
+licence_url = "https://www.apache.org/licenses/LICENSE-2.0.txt"
+licence_sha256 = "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+kind = "model"
+usage = "Scan & OCR, Thai edition: reads Thai and Latin text (cargo xtask models)"
+sha256 = "2b6e56b1872200349e227574c25aeb0e0f9af9b8356e9ff5f75ac543a535669a"
+
+[[fetched]]
+file = "paddle-thai-dict.txt"
+url = "https://huggingface.co/monkt/paddleocr-onnx/resolve/7b02d0a30a07ba2b92ad1ff5a8941ae2c633de65/languages/thai/dict.txt"
+title = "PP-OCRv5 Thai recognition alphabet"
+author = "PaddlePaddle Authors (PaddleOCR); ONNX conversion by monkt/paddleocr-onnx"
+source = "https://github.com/PaddlePaddle/PaddleOCR (ppocrv5_th_dict.txt; ONNX: https://huggingface.co/monkt/paddleocr-onnx)"
+licence = "Apache-2.0"
+licence_url = "https://www.apache.org/licenses/LICENSE-2.0.txt"
+licence_sha256 = "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+kind = "model"
+usage = "Scan & OCR, Thai edition: the characters the Thai model reads (cargo xtask models)"
+sha256 = "57f5406f94bb6688fb7077f7be65f08bbd71cecf48c01ea26c522cb5c4836b7a"

@@ -118,6 +118,36 @@ fn recognize_text_can_read_pictures_on_pages_with_text() {
 /// Edit text & images on a scanned page: an OCR word (invisible text over the scan) opens for
 /// editing on a click, stays open when the pointer leaves it, and its editor hides the scanned
 /// word instead of showing it through.
+/// Thai edition: on a page with an OCR layer the scan is the paper. A click off the words doesn't
+/// select the whole page: it is a click on the empty page, which puts Edit text down.
+#[test]
+fn a_click_beside_the_words_of_a_scan_is_a_click_on_the_empty_page() {
+    use pdfcraft_engine::ocr::PlacedWord;
+    let mut h = Harness::builder().with_size(egui::vec2(1400.0, 900.0)).build_eframe(|_cc| {
+        let mut app = PdfCraftApp::new();
+        app.set_option("language", "en").unwrap();
+        app.open_bytes("scan.pdf", None, scan()).unwrap();
+        let id = app.views[0].id;
+        let ph = app.session.get(id).unwrap().info.pages[0].height as f64;
+        let words = vec![PlacedWord { text: "Recognize".into(), origin: [72.0, ph - 100.0], across: [80.0, 0.0], up: [0.0, 12.0] }];
+        app.session.apply(id, Edit::AddOcrText { page: 0, words }).unwrap();
+        app.set_option("zoom", "100").unwrap();
+        assert!(app.execute("edit.edit_text"));
+        app
+    });
+    crate::support::settle(&mut h);
+    let r = h.state().views[0].page_screen_rect(0).unwrap();
+    let empty = egui::pos2(r.center().x, r.min.y + 400.0);
+    h.hover_at(empty);
+    h.run_steps(2);
+    h.drag_at(empty);
+    h.run_steps(1);
+    h.drop_at(empty);
+    h.run_steps(4);
+    assert!(h.state().views[0].image_selection.is_none(), "the scan isn't selected");
+    assert_ne!(h.state().quick_tool, pdfcraft_ui_egui::QuickTool::EditText, "the tool is put down");
+}
+
 #[test]
 fn an_ocr_word_opens_for_editing_and_stays_open() {
     use pdfcraft_engine::ocr::PlacedWord;

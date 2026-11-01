@@ -39,6 +39,9 @@ pub(crate) fn n(v: f64) -> String {
 pub(crate) fn rich_text(d: &mut Dict) {
     let text = d.get(b"Contents").and_then(|c| c.as_string()).map(PdfString::to_text).unwrap_or_default();
     let (col, size) = appearance::parse_da(d);
+    let font = crate::TextFont::of(d);
+    let family = font.family_label().replace(['"', '\'', ';', '<', '>', '&'], "");
+    let (weight, slant) = (if font.bold { "bold" } else { "normal" }, if font.italic { "italic" } else { "normal" });
     let hex = format!(
         "#{:02X}{:02X}{:02X}",
         (col[0].clamp(0.0, 1.0) * 255.0).round() as u8,
@@ -53,13 +56,22 @@ pub(crate) fn rich_text(d: &mut Dict) {
     let esc = |s: &str| s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;");
     let body: String = text.split('\n').map(|line| format!("<p dir=\"ltr\">{}</p>", esc(line.trim_end_matches('\r')))).collect();
     let style = format!(
-        "font-size:{}pt;text-align:{align};color:{hex};font-weight:normal;font-style:normal;font-family:Helvetica;font-stretch:normal",
+        "font-size:{}pt;text-align:{align};color:{hex};font-weight:{weight};font-style:{slant};font-family:{family};font-stretch:normal",
         n(size)
     );
     let rc = format!(
         "<?xml version=\"1.0\"?><body xmlns=\"http://www.w3.org/1999/xhtml\" xmlns:xfa=\"http://www.xfa.org/schema/xfa-data/1.0/\" xfa:spec=\"2.0.2\" style=\"{style}\">{body}</body>"
     );
-    d.set(b"DS".to_vec(), PdfString::text(&format!("font: Helvetica {}pt; text-align:{align}; color:{hex}", n(size))));
+    // As Acrobat writes it, the family before the size; the style and weight only when they
+    // aren't normal, and a family with spaces quoted.
+    let shorthand = format!(
+        "{}{}{} {}pt",
+        if font.italic { "italic " } else { "" },
+        if font.bold { "bold " } else { "" },
+        if family.contains(' ') { format!("'{family}'") } else { family.clone() },
+        n(size)
+    );
+    d.set(b"DS".to_vec(), PdfString::text(&format!("font: {shorthand}; text-align:{align}; color:{hex}")));
     d.set(b"RC".to_vec(), PdfString::text(&rc));
 }
 
@@ -217,18 +229,51 @@ pub fn duplicate_annotation(
 }
 
 /// Delete a comment together with its pop-up and its replies (and theirs), as Acrobat does.
+/// Refused while it, or a reply that would go with it, is locked.
 pub fn delete_annotation(doc: &mut Document, page: usize, index: usize) -> Result<(), AnnotError> {
-    let p = page_ref(doc, page)?;
-    let list = annots(doc, p);
-    let target = list.get(index).cloned().ok_or(AnnotError::NoSuchAnnotation { page, index })?;
+    deletable(doc, page, index)?;
+    lift_annotation(doc, page, index)
+}
+
+/// Whether [`delete_annotation`] deletes the annotation at `(page, index)`, or why not, without
+/// changing anything: what a Delete command asks before it is offered. It is refused while the
+/// annotation is locked, or a reply that would go with it is.
+pub fn deletable(doc: &Document, page: usize, index: usize) -> Result<(), AnnotError> {
+    let list = annots(doc, page_ref(doc, page)?);
+    let target = list.get(index).ok_or(AnnotError::NoSuchAnnotation { page, index })?;
     if let Some(r) = target.as_ref() {
         unlocked(doc, r)?;
     }
-    // An inline comment has no reference to collect; the pop-up it names still goes.
-    let seed = target.as_ref().or_else(|| target.as_dict().and_then(|d| d.reference(b"Popup")));
-    let doomed = with_replies_and_popups(doc, &list, seed);
-    let kept: Vec<Object> = list.into_iter().enumerate().filter(|(i, e)| *i != index && !goes_with(e, &doomed)).map(|(_, e)| e).collect();
+    let doomed = with_replies_and_popups(doc, &list, seed(target));
+    // A locked reply can't be deleted on its own, so it doesn't go with the comment or reply it
+    // answers either. Pop-ups follow their comment.
+    for (_, e) in list.iter().enumerate().filter(|(i, e)| *i != index && goes_with(e, &doomed)) {
+        let obj = doc.resolve(e);
+        if let Some(d) = obj.as_dict().filter(|d| d.name(b"Subtype") != Some(b"Popup".as_slice()))
+            && annotation_flags(doc, d) & FLAG_LOCKED != 0
+        {
+            return Err(AnnotError::Invalid("a reply to it is locked".into()));
+        }
+    }
+    Ok(())
+}
+
+/// Take the annotation at `(page, index)` out of its page with its pop-up and replies, as
+/// [`delete_annotation`] does but whatever their locks: for drawing the page beneath it on a
+/// copy of the document (a stamp or signature being dragged), which changes nothing.
+pub fn lift_annotation(doc: &mut Document, page: usize, index: usize) -> Result<(), AnnotError> {
+    let p = page_ref(doc, page)?;
+    let list = annots(doc, p);
+    let target = list.get(index).ok_or(AnnotError::NoSuchAnnotation { page, index })?;
+    let doomed = with_replies_and_popups(doc, &list, seed(target));
+    let kept: Vec<Object> = list.iter().enumerate().filter(|(i, e)| *i != index && !goes_with(e, &doomed)).map(|(_, e)| e.clone()).collect();
     Ok(set_annots(doc, p, kept)?)
+}
+
+/// What deleting the `/Annots` entry `target` starts from: its reference, or for an inline
+/// comment (which has none to collect) the pop-up it names, which still goes.
+fn seed(target: &Object) -> Option<ObjRef> {
+    target.as_ref().or_else(|| target.as_dict().and_then(|d| d.reference(b"Popup")))
 }
 
 /// Whether the `/Annots` entry `entry` goes with `going` (from [`with_replies_and_popups`]): it is
@@ -307,6 +352,7 @@ fn fitted_box(doc: &Document, r: ObjRef, text: &str) -> Option<[f64; 4]> {
     let d = annot_dict(doc, r);
     let nums = |key: &[u8]| -> Option<Vec<f64>> { d.get(key)?.as_array()?.iter().map(|o| o.as_f64()).collect() };
     let (_, size) = appearance::parse_da(&d);
+    let font = crate::TextFont::of(&d).resolve();
     let pad = 2.0 + border_width_of(&d);
     let rect = nums(b"Rect").filter(|v| v.len() == 4 && v.iter().all(|x| x.is_finite()))?;
     let rect = [rect[0], rect[1], rect[2], rect[3]];
@@ -323,10 +369,10 @@ fn fitted_box(doc: &Document, r: ObjRef, text: &str) -> Option<[f64; 4]> {
         w
     } else {
         // No usable old width: fall back to the creation-time width (at most 300 pt).
-        let longest = text.lines().map(|l| appearance::text_width(l, size)).fold(0.0, f64::max);
+        let longest = text.lines().map(|l| font.width(l, size)).fold(0.0, f64::max);
         (longest + 2.0 * pad + 4.0).clamp(40.0, 300.0)
     };
-    let lines = appearance::wrap(text, size, (w - 2.0 * pad).max(1.0)).len().max(1) as f64;
+    let lines = font.wrap(text, size, (w - 2.0 * pad).max(1.0)).len().max(1) as f64;
     Some([x0, top - lines * size * 1.2 - 2.0 * pad - 2.0, x0 + w, top])
 }
 
@@ -674,8 +720,7 @@ pub fn set_style(doc: &mut Document, page: usize, index: usize, change: StyleCha
         if let Some(c) = color {
             if free_text {
                 let (_, size) = appearance::parse_da(d);
-                let [r, g, b] = c.map(|x| x.clamp(0.0, 1.0));
-                d.set(b"DA".to_vec(), PdfString::literal(format!("{} {} {} rg /Helv {} Tf", n(r), n(g), n(b), n(size)).into_bytes()));
+                d.set(b"DA".to_vec(), PdfString::literal(crate::TextFont::of(d).da(c.map(|x| x.clamp(0.0, 1.0)), size).into_bytes()));
                 rich_text(d);
             } else {
                 d.set(b"C".to_vec(), rgb(c));
@@ -727,10 +772,38 @@ pub fn set_font_size(doc: &mut Document, page: usize, index: usize, size: f64, m
     let before = d;
     doc.update_dict(r, |d| {
         let (col, _) = appearance::parse_da(d);
-        d.set(b"DA".to_vec(), PdfString::literal(format!("{} {} {} rg /Helv {} Tf", n(col[0]), n(col[1]), n(col[2]), n(size)).into_bytes()));
+        d.set(b"DA".to_vec(), PdfString::literal(crate::TextFont::of(d).da(col, size).into_bytes()));
         rich_text(d);
         touch(d, meta);
     })?;
+    refit_text(doc, r, before, meta)
+}
+
+/// Change the font of a text box, typewriter text or callout (Thai edition) and redraw it; the
+/// box grows to hold the text as [`set_font_size`] does. The family is a name the font menus
+/// list; one this build or machine doesn't have is drawn in Helvetica.
+pub fn set_text_font(doc: &mut Document, page: usize, index: usize, font: &crate::TextFont, meta: &Meta) -> Result<(), AnnotError> {
+    let (_, r) = annot_ref(doc, page, index)?;
+    unlocked(doc, r)?;
+    let d = annot_dict(doc, r);
+    if d.name(b"Subtype") != Some(b"FreeText") {
+        return Err(AnnotError::Invalid("only text boxes, typewriter text and callouts have a font".into()));
+    }
+    refuse_foreign_text(doc, &d)?;
+    let before = d;
+    doc.update_dict(r, |d| {
+        let (col, size) = appearance::parse_da(d);
+        font.write(d);
+        d.set(b"DA".to_vec(), PdfString::literal(font.da(col, size).into_bytes()));
+        rich_text(d);
+        touch(d, meta);
+    })?;
+    refit_text(doc, r, before, meta)
+}
+
+/// Redraw a text comment whose font changed, its box grown to hold the text (never shrunk, so
+/// a box the user drew large stays large); `before` is restored when that fails.
+fn refit_text(doc: &mut Document, r: ObjRef, before: Dict, meta: &Meta) -> Result<(), AnnotError> {
     let text = text_value(doc, &annot_dict(doc, r), b"Contents").unwrap_or_default();
     let result = match fitted_box(doc, r, &text) {
         Some(fit) => {

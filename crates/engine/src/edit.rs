@@ -5,8 +5,9 @@ use std::sync::Arc;
 use crate::{
     AddedContent, AddedText, Arrange, Background, BoxSpec, EditError, FieldProps, FieldValue, FillMark, HeaderFooter, Hidden, ImageEdit, InitialView,
     Label, LineEnding, LinkAction, LinkStyle, MarkFile, MarkKind, Markup, NewAnnotation, NewField, NoteIcon, ObjectTarget, PageBox, Protection,
-    ReviewState, Rgb, Shape, Standard, Style, TabOrder, TransitionSpec, Watermark, a11y, copy_image, decode_data_file, embed_image, field_table,
-    fit_picture, image_content_type, is_xfa_data_file, js, mark_source, measure, open_source, strip_xfa, unrestricted, xfa, xfa_after_data_change,
+    ReviewState, Rgb, Shape, Standard, Style, TabOrder, TextFont, TransitionSpec, Watermark, a11y, copy_image, decode_data_file, embed_image,
+    field_table, fit_picture, image_content_type, is_xfa_data_file, js, mark_source, measure, open_source, strip_xfa, unrestricted, xfa,
+    xfa_after_data_change,
 };
 
 mod labels;
@@ -122,6 +123,11 @@ pub enum Edit {
     /// Bookmarks for the tagged headings (H, H1–H6), nested by level under a new first
     /// "Untitled" bookmark (New Bookmarks from Structure).
     BookmarksFromStructure,
+    /// Bookmarks for the lines set in `levels`' styles (the first is level 1, the next nests
+    /// under it, …), under a new first "Untitled" bookmark (#1693; see [`crate::text_style_bookmarks`]).
+    BookmarksFromTextStyles {
+        levels: Vec<crate::text_style_bookmarks::TextStyle>,
+    },
     /// Label pages `from..=to` (0-based) as Acrobat's "Number pages" does; later pages keep their labels.
     NumberPages {
         from: usize,
@@ -244,6 +250,12 @@ pub enum Edit {
         index: usize,
         size: f64,
     },
+    /// Change the font of a text box, typewriter text or callout (Thai edition).
+    FontAnnotation {
+        page: usize,
+        index: usize,
+        font: TextFont,
+    },
     /// Comment properties ▸ General / note icon.
     SetAnnotationInfo {
         page: usize,
@@ -286,6 +298,12 @@ pub enum Edit {
     },
     DeleteField {
         name: String,
+    },
+    /// Delete one widget of a field (`widget`, 0-based in the field's widgets): one radio button
+    /// of a group, or one copy of a duplicated field. The last widget takes the field with it.
+    DeleteWidget {
+        name: String,
+        widget: usize,
     },
     /// Page properties ▸ Tab order, for pages (0-based).
     SetTabOrder {
@@ -578,7 +596,8 @@ pub enum Edit {
         links: Vec<(usize, Vec<[f64; 4]>, String)>,
         style: LinkStyle,
     },
-    /// Import comments and/or form data (XFDF, FDF, XML, CSV, tab-delimited text).
+    /// Import comments and/or form data (XFDF, FDF, XML, CSV, tab-delimited text), or the
+    /// comments of another PDF onto the pages with the same numbers.
     ImportData {
         name: String,
         bytes: Arc<Vec<u8>>,

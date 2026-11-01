@@ -33,6 +33,8 @@ pub enum EditError {
 
 pub type Rgb = [f64; 3];
 
+pub mod backdrop;
+pub use backdrop::{Backdrop, backdrops_left_off, page_backdrop, page_backdrops};
 mod background;
 pub use background::page_background;
 pub mod objects;
@@ -45,6 +47,7 @@ pub use images::{ImageChange, PageImage, change_image, page_images, reading_imag
 pub mod bidi;
 pub mod indic;
 mod linebreak;
+pub mod paragraph_align;
 pub mod text;
 pub use text::{
     BlockKey, BlockStyle, LineEdit, MAX_FORM_DEPTH, MAX_FORM_VISITS, RangeStyle, ReadingBlocks, TextBlock, TextLine, TextSession, block_overlapping,
@@ -68,7 +71,7 @@ use marks::{matrix_number, n};
 pub(crate) use place::undrawable;
 #[cfg(test)]
 use place::{ISOLATION_MAX_DEPTH, OLD_WRAP_CLOSE, WRAP_CLOSE, WRAP_OPEN, is_wrap_close, stream_bytes, stream_tag, tagged, wrapper_role};
-pub use place::{add_page_fonts, stamp, undrawable_message};
+pub use place::{add_page_fonts, stamp, stamp_with_fonts, undrawable_message};
 use place::{check, check_on_top, contents, page_list, place_tagged};
 
 #[cfg(test)]

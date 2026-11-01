@@ -369,12 +369,16 @@ pub fn shortcuts(view: &mut DocView, ctx: &egui::Context, speed: crate::scroll_s
         view.rotate_view(false);
     }
     zoom_shortcuts(view, &pressed);
+    // Alt+← / Alt+→ (⌥ on macOS) too, as in Acrobat and browsers, back to where a link was
+    // followed from (#3632). Consumed here, before ← / → turn the page. egui matches the pattern
+    // logically, so an extra Shift is ignored and Shift+Alt+← goes back as well (harmless).
+    let alt = |k| KeyboardShortcut::new(Modifiers::ALT, k);
     // With an added item selected, ⌘[ and ⌘] arrange it instead (Thai edition; content_ui::keys).
     let arranging = view.content.selected.is_some() && view.content.draft.is_none();
-    if !arranging && pressed(cmd(Key::OpenBracket)) {
+    if (!arranging && pressed(cmd(Key::OpenBracket))) || pressed(alt(Key::ArrowLeft)) {
         view.view_history(false);
     }
-    if !arranging && pressed(cmd(Key::CloseBracket)) {
+    if (!arranging && pressed(cmd(Key::CloseBracket))) || pressed(alt(Key::ArrowRight)) {
         view.view_history(true);
     }
     // With an added item selected the arrow keys move it, not the page (Thai edition).

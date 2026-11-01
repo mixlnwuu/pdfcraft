@@ -321,19 +321,26 @@ pub fn undrawable_text(d: &Dict) -> Option<(&'static str, char)> {
         b"Redact" => ("the redaction's overlay text", text(b"OverlayText")?),
         _ => return None,
     };
-    // Thai is drawn in TH Sarabun PSK when this build has it ([`build_with`]; Thai edition).
+    // Thai is drawn in TH Sarabun PSK when this build has it, and a text box in the font chosen
+    // for it ([`build_with`]; Thai edition).
+    if d.name(b"Subtype") == Some(b"FreeText") {
+        return Some((what, crate::TextFont::of(d).resolve().first_undrawable(&text)?));
+    }
     Some((what, pdfcraft_fonts::thai_text::first_undrawable(&text)?))
 }
 
-/// Whether [`build_with`] needs the document to draw `d`: its text has Thai (Thai edition).
+/// Whether [`build_with`] needs the document to draw `d`: its text has Thai, or a text box is in
+/// a font drawn from its own outlines (Thai edition).
 pub fn draws_thai(d: &Dict) -> bool {
+    let text = |key: &[u8]| d.get(key).and_then(Object::as_string).map(PdfString::to_text).unwrap_or_default();
+    if d.name(b"Subtype") == Some(b"FreeText") {
+        return crate::TextFont::of(d).resolve().shapes(&text(b"Contents"));
+    }
     if !pdfcraft_fonts::thai_text::available() {
         return false;
     }
-    let text = |key: &[u8]| d.get(key).and_then(Object::as_string).map(PdfString::to_text).unwrap_or_default();
     let thai = pdfcraft_fonts::thai_text::has_thai;
     match d.name(b"Subtype") {
-        Some(b"FreeText") => thai(&text(b"Contents")),
         Some(b"Line" | b"PolyLine" | b"Polygon") => thai(&text(b"PCMeasureValue")),
         Some(b"Stamp") => thai(&text(b"PCByLine")),
         _ => false,
@@ -1015,21 +1022,23 @@ fn draw_free_text(context: &AppearanceContext<'_>, mut drawing: AppearanceDrawin
     let pad = 2.0 + bw;
     let width = (rect[2] - rect[0] - 2.0 * pad).max(1.0);
     let q = d.int(b"Q").unwrap_or(0);
+    // The chosen font (Thai edition): a standard font, with Thai wrapped between clusters and
+    // drawn in TH Sarabun PSK, or a face drawing everything it has from its own outlines.
+    let font = crate::TextFont::of(d).resolve();
     c.push_str(&format!(
-        "{} {} {} {} re W n\nBT\n/Helv {} Tf\n{}",
+        "{} {} {} {} re W n\nBT\n/{} {} Tf\n{}",
         n(rect[0]),
         n(rect[1]),
         n(rect[2] - rect[0]),
         n(rect[3] - rect[1]),
+        font.resource(),
         n(size),
         rg(text_color)
     ));
     let mut out = c.into_bytes();
-    // Thai is wrapped between clusters and drawn in TH Sarabun PSK (Thai edition).
-    let shaped = thai.is_some() && draws_thai(d);
-    let lines = if shaped { pdfcraft_fonts::thai_text::wrap(&text, size, width, false, false, &text_width) } else { wrap(&text, size, width) };
-    let measure =
-        |line: &str| if shaped { pdfcraft_fonts::thai_text::line_width(line, size, false, false, &text_width) } else { text_width(line, size) };
+    let shaped = thai.is_some() && font.shapes(&text);
+    let lines = font.wrap(&text, size, width);
+    let measure = |line: &str| if shaped { font.width(line, size) } else { font.std_width(line, size) };
     let mut placed = Vec::new();
     let mut y = rect[3] - pad - size * 0.9;
     for line in lines {
@@ -1046,10 +1055,11 @@ fn draw_free_text(context: &AppearanceContext<'_>, mut drawing: AppearanceDrawin
         y -= size * 1.2;
     }
     let mut fonts = Dict::new();
-    fonts.set(b"Helv".to_vec(), helvetica());
+    fonts.set(font.resource().as_bytes().to_vec(), font.std_font());
     match thai.as_deref_mut().filter(|_| shaped) {
         Some(doc) => {
-            let drawn = pdfcraft_fonts::thai_text::draw(doc, &placed, size, false, false, "Helv", &text_width, "PCTh").ok()?;
+            let std_width = |s: &str, z: f64| font.std_width(s, z);
+            let drawn = pdfcraft_fonts::thai_text::draw_in(doc, &placed, size, font.faces(), font.resource(), &std_width, "PCTh").ok()?;
             out.extend(&drawn.ops);
             pdfcraft_fonts::thai_text::add_fonts(&mut fonts, &drawn);
         }

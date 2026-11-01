@@ -29,6 +29,9 @@ list (author, source, license) is in ATTRIBUTION.md.
   pinned in .github/workflows/ also include Noto Sans Thai (in the web build too), Copyright 2022
   The Noto Project Authors (https://github.com/notofonts/thai), under SIL OFL 1.1; its licence is
   fonts/noto-sans-thai/OFL.txt in the craft-fonts build input.
+- PaddleOCR models, Thai edition (paddle-text-detection.onnx, paddle-thai-recognition.onnx,
+  paddle-thai-dict.txt, shipped in models/), Copyright (c) PaddlePaddle Authors, Apache License 2.0;
+  ONNX conversion by monkt/paddleocr-onnx. Unmodified. See models/ATTRIBUTION.txt.
 - TH Sarabun PSK typeface (thai/fonts/th-sarabun-psk/*.ttf; Thai edition), Copyright (c) 2010-2011
   Software Industry Promotion Agency (Public Organization) (SIPA), created by Suppakit Chalermlarp.
   Distributed unmodified under the licence its font files declare: the GNU General Public License,

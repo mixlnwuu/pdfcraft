@@ -1,5 +1,10 @@
 use super::{Arc, BTreeMap, Color32, DocInfo, FontFamily, FontId, LineEditor, PageXform, Rect};
 
+/// The Thai fonts that come with Windows and Office (lower case, as PDFs name them), which a
+/// computer without them shows in TH Sarabun PSK (Thai edition).
+const THAI_SYSTEM_FONTS: [&str; 10] =
+    ["angsana", "browallia", "cordia", "dilleniaupc", "eucrosiaupc", "freesiaupc", "irisupc", "jasmineupc", "kodchiang", "lilyupc"];
+
 /// The look shown for a paragraph: the family and weight guessed from its PDF font name.
 fn source_look(base_font: &str, size: f64, color: [f64; 3], detected_bold: bool, detected_italic: bool) -> pdfcraft_engine::AddedText {
     use pdfcraft_engine::FontFamily as F;
@@ -10,6 +15,14 @@ fn source_look(base_font: &str, size: f64, color: [f64; 3], detected_bold: bool,
         F::Times
     } else {
         F::Helvetica
+    };
+    // Thai edition: a Thai font of Windows and Office that this machine lacks stands in as TH
+    // Sarabun PSK, which draws Thai, rather than the Latin guess.
+    let ocr_layer = base_font == pdfcraft_fonts::thai_text::INVISIBLE_NAME;
+    let family = if (ocr_layer || THAI_SYSTEM_FONTS.iter().any(|f| name.contains(f))) && F::Sarabun.craft(false, false).is_some() {
+        F::Sarabun
+    } else {
+        family
     };
     // The font itself, when this build or this machine has it: the menu then names it, and text
     // typed in it previews in its own face.
@@ -24,7 +37,7 @@ fn source_look(base_font: &str, size: f64, color: [f64; 3], detected_bold: bool,
     }
 }
 
-pub(super) fn look_of(b: &pdfcraft_engine::TextBlock) -> pdfcraft_engine::AddedText {
+pub(crate) fn look_of(b: &pdfcraft_engine::TextBlock) -> pdfcraft_engine::AddedText {
     source_look(&b.base_font, b.size, b.color, b.bold, b.italic)
 }
 
@@ -280,7 +293,14 @@ pub(super) fn editor_galley(ui: &egui::Ui, ed: &LineEditor, text: &str, scale: f
     let g = Arc::make_mut(&mut galley);
     let mut bounds = Rect::NOTHING;
     let mut meshes = Rect::NOTHING;
+    // Which line of the text (between `\n`s) each row is on: rows aligned on their own go where
+    // the rewrite will put them, in the paragraph's width.
+    let mut line = 0usize;
     for (index, placed) in g.rows.iter_mut().enumerate() {
+        let own = ed.look.aligns.get(line).copied().flatten();
+        if placed.ends_with_newline {
+            line = line.saturating_add(1);
+        }
         let (last_baseline, last_rect) = sources.last().copied().unwrap_or((first_baseline, first_rect));
         let (baseline, source_rect) = sources
             .get(index)
@@ -293,7 +313,14 @@ pub(super) fn editor_galley(ui: &egui::Ui, ed: &LineEditor, text: &str, scale: f
         let base_y = (block.rect[3] - baseline) as f32 * scale;
         let row = Arc::make_mut(&mut placed.row);
         placed.pos.y = base_y - ascent;
-        placed.pos.x = if centered { (width - row.size.x) / 2.0 } else { (source_rect[0] - block.rect[0]) as f32 * scale };
+        let free = (width - row.size.x).max(0.0);
+        placed.pos.x = match own {
+            Some(pdfcraft_engine::TextAlign::Center) => free / 2.0,
+            Some(pdfcraft_engine::TextAlign::Right) => free,
+            Some(pdfcraft_engine::TextAlign::Left | pdfcraft_engine::TextAlign::Justify) => 0.0,
+            None if centered => (width - row.size.x) / 2.0,
+            None => (source_rect[0] - block.rect[0]) as f32 * scale,
+        };
         for glyph in &mut row.glyphs {
             let dy = ascent - glyph.pos.y;
             glyph.pos.y = ascent;

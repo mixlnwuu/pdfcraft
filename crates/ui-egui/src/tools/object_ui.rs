@@ -8,6 +8,8 @@ use pdfcraft_engine::{Document, Edit, EditableObject, MAX_MOVE_OBJECTS, ObjectKi
 use pdfcraft_render::DocInfo;
 
 use crate::canvas::{DocView, PageToolContext, PageXform};
+use crate::page_cursor::Layer;
+use crate::page_router::{Hit, ObjectsPart, Owner, ParagraphPart};
 
 const BLUE: Color32 = Color32::from_rgb(0x14, 0x73, 0xE6);
 
@@ -20,12 +22,18 @@ pub(crate) struct ObjectSelection {
     gesture: Option<Gesture>,
     /// Expected geometry after our own edit, for remapping indexes that grouping can change.
     pending: Option<Vec<EditableObject>>,
+    /// The pending edit restyles the selection (Thai edition): its boxes keep their text but not
+    /// their size, so they are found again by their text, nearest to where they were.
+    restyled: bool,
     pub notice: Option<String>,
     pub hold_editor: bool,
     /// A plain click on empty page space: back to the Select tool (Thai edition).
     pub leave_tool: bool,
     blocked_page: Option<usize>,
     input_blocked: bool,
+    /// A paragraph (page, block) to select once the document is at hand: Esc in the inline
+    /// editor asks for it, and the next `prepare` selects it.
+    select_paragraph: Option<(usize, usize)>,
 }
 
 #[derive(Clone, Copy)]
@@ -53,6 +61,17 @@ impl ObjectSelection {
         self.selected.len()
     }
 
+    /// The page and the selected objects (Thai edition: Format text for all of them).
+    pub(crate) fn selection(&self) -> Option<(usize, &[EditableObject])> {
+        self.page.filter(|_| !self.selected.is_empty()).map(|p| (p, self.selected.as_slice()))
+    }
+
+    /// The next edit restyles the selection: keep it selected afterwards (Thai edition).
+    pub(crate) fn keep_after_restyle(&mut self) {
+        self.pending = Some(self.selected.clone());
+        self.restyled = true;
+    }
+
     /// The one selected object and its page, when exactly one is selected (Copy).
     pub fn single_selected(&self) -> Option<(usize, ObjectTarget)> {
         match self.selected.as_slice() {
@@ -77,6 +96,14 @@ impl ObjectSelection {
         self.gesture = None;
         self.pending = None;
         self.blocked_page = None;
+        self.select_paragraph = None;
+    }
+
+    /// Select paragraph `block` of `page` as an object at the next `prepare`, as Acrobat does
+    /// when Esc leaves a text box: the box is then selected, so Delete removes it, the arrow keys
+    /// move it and its frame drags it, without aiming for the frame.
+    pub(crate) fn select_paragraph_next(&mut self, page: usize, block: usize) {
+        self.select_paragraph = Some((page, block));
     }
 
     pub fn prepare(&mut self, doc: &Document, enabled: bool, ctx: &egui::Context) {
@@ -90,8 +117,12 @@ impl ObjectSelection {
             self.cache.clear();
             self.gesture = None;
             let expected = self.pending.take();
+            let restyled = std::mem::take(&mut self.restyled);
             let remapped = self.page.zip(expected).and_then(|(page, expected)| {
                 let inventory = doc.editable_objects(page).ok()?;
+                if restyled {
+                    return refind_restyled(&inventory, &expected);
+                }
                 let mut out = Vec::new();
                 for old in expected {
                     let mut matches = inventory.iter().filter(|o| {
@@ -117,9 +148,19 @@ impl ObjectSelection {
         } else {
             // A refused edit keeps the generation and the original selection.
             self.pending = None;
+            self.restyled = false;
         }
         if self.page.is_some() && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
             self.clear();
+        }
+        // After the Escape check: the Esc that closed the editor must not clear what it selected.
+        if let Some((page, block)) = self.select_paragraph.take()
+            && let Ok(objects) = self.inventory(doc, page)
+            && let Some(object) = objects.into_iter().find(|o| o.target == ObjectTarget { kind: ObjectKind::Text, index: block })
+        {
+            self.clear();
+            self.page = Some(page);
+            self.selected.push(object);
         }
     }
 
@@ -139,6 +180,60 @@ impl ObjectSelection {
         }
         self.cache.entry(page).or_insert_with(|| doc.editable_objects(page)).clone()
     }
+}
+
+/// The selected boxes again after they were restyled (Thai edition): each by its kind and text,
+/// the nearest to where it was of those not already taken. `None` when one can't be found.
+fn refind_restyled(inventory: &[EditableObject], expected: &[EditableObject]) -> Option<Vec<EditableObject>> {
+    let mut out: Vec<EditableObject> = Vec::new();
+    for old in expected {
+        let distance = |o: &EditableObject| (o.rect[0] - old.rect[0]).hypot(o.rect[3] - old.rect[3]);
+        let object = inventory
+            .iter()
+            .filter(|o| o.target.kind == old.target.kind && o.text == old.text && !out.iter().any(|t| t.target == o.target))
+            .min_by(|a, b| distance(a).total_cmp(&distance(b)))?;
+        out.push(object.clone());
+    }
+    Some(out)
+}
+
+/// The format painter over `page` (Thai edition): a click on a text box gives it the painter's
+/// look (one box, or every box clicked while it is kept); Esc puts it down. `true` when it took
+/// the pointer.
+fn painter_input(cx: PageToolContext<'_>, view: &mut DocView) -> bool {
+    let PageToolContext { ui, resp, xf, ptr, page, doc, .. } = cx;
+    if ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
+        view.format_painter = None;
+        return true;
+    }
+    let Some(p) = ptr.pos.filter(|p| xf.rect.contains(*p) && ui.clip_rect().contains(*p) && resp.rect.contains(*p)) else { return false };
+    let Ok(objects) = view.objects.inventory(doc, page) else { return false };
+    let info = &doc.info;
+    let added: Vec<&pdfcraft_engine::Added> = doc.added().iter().filter(|a| a.page == page).collect();
+    let is_text = |o: &&EditableObject| match o.target.kind {
+        ObjectKind::Text => true,
+        ObjectKind::Added => added.get(o.target.index).is_some_and(|a| matches!(a.content, pdfcraft_engine::AddedContent::Text(_))),
+        ObjectKind::Image => false,
+    };
+    // Added text over the page's own, as for selecting.
+    let hit = [ObjectKind::Added, ObjectKind::Text]
+        .into_iter()
+        .find_map(|kind| objects.iter().rev().filter(is_text).find(|o| o.target.kind == kind && screen(xf, info, page, o).expand(2.0).contains(p)));
+    let Some(target) = hit.map(|o| o.target) else { return false };
+    view.cursor.claim(Layer::Drag, egui::CursorIcon::Copy);
+    if ptr.pressed().is_some()
+        && let Some(painter) = view.format_painter.clone()
+    {
+        if view.pending_edit.is_none()
+            && let Some(edit) = crate::restyle::restyle_edit(doc, page, &[target], &crate::restyle::all_of(&painter.look, None))
+        {
+            view.pending_edit = Some(edit);
+        }
+        if !painter.keep {
+            view.format_painter = None;
+        }
+    }
+    true
 }
 
 /// The text box a Ctrl+drag of `target` (its user-space `rect`) drops `delta` (screen) away: a
@@ -264,6 +359,10 @@ fn gesture_input(s: &mut ObjectSelection, cx: PageToolContext<'_>, view: &mut Do
             return true;
         }
         if !gesture.marquee && gesture.start.distance(gesture.now) <= DRAG_SLOP && resp.double_clicked() {
+            // A double click on the paragraph selected opens it for typing: the press belongs to
+            // the selection, so the paragraphs' own input won't take it (Thai edition).
+            let block = s.selected.first().filter(|o| s.selected.len() == 1 && o.target.kind == ObjectKind::Text).map(|o| o.target.index);
+            view.pending_text_open = block.and_then(|b| doc.text_blocks(page).get(b).map(|l| (page, pdfcraft_engine::BlockKey::of(l))));
             s.clear();
             return false;
         }
@@ -308,14 +407,39 @@ fn gesture_input(s: &mut ObjectSelection, cx: PageToolContext<'_>, view: &mut Do
     } else {
         s.gesture = Some(gesture);
     }
-    ui.ctx().set_cursor_icon(if gesture.marquee {
+    let icon = if gesture.marquee {
         egui::CursorIcon::Crosshair
     } else if gesture.copy.is_some() {
         egui::CursorIcon::Copy
     } else {
         egui::CursorIcon::Move
-    });
+    };
+    view.cursor.claim(Layer::Drag, icon);
     true
+}
+
+/// What of the objects lies under `p` on `page`: the objects selected together (a drag moves
+/// them), or the frame around the paragraph open for typing (`open`: its box on screen), which
+/// takes hold of the box as in Acrobat: a click selects it, a drag moves it, its text keeps the
+/// caret.
+pub(crate) fn hit(view: &DocView, xf: &PageXform, info: &DocInfo, page: usize, open: Option<Rect>, p: Pos2) -> Option<Hit> {
+    let s = &view.objects;
+    // The edge of one selected paragraph stays its rewrap handle.
+    let edge = s.selected.len() == 1 && s.selected.first().is_some_and(|o| on_text_edge(xf, info, page, o, p));
+    if s.page == Some(page)
+        && !edge
+        && !s.selected.is_empty()
+        && s.selected.iter().fold(Rect::NOTHING, |r, o| r.union(screen(xf, info, page, o))).contains(p)
+    {
+        return Some(Hit::new(Owner::Objects { part: ObjectsPart::Selection }, Layer::Placed, egui::CursorIcon::Move));
+    }
+    open.filter(|r| on_frame(r.shrink(2.0), p)).map(|_| Hit::new(Owner::Objects { part: ObjectsPart::Frame }, Layer::Handle, egui::CursorIcon::Move))
+}
+
+/// Whether added item `index` is among the objects selected together. One that isn't takes a
+/// press from the selection under it (Thai edition).
+pub(crate) fn holds_added(view: &DocView, index: usize) -> bool {
+    view.objects.selected.iter().any(|o| o.target == ObjectTarget { kind: ObjectKind::Added, index })
 }
 
 /// Returns true while group selection owns the interaction. Ordinary clicks still reach the
@@ -337,6 +461,10 @@ pub(crate) fn page_input(cx: PageToolContext<'_>, view: &mut DocView) -> bool {
             return true;
         }
         return false;
+    }
+    // The format painter takes a click on a text box (Thai edition).
+    if view.format_painter.is_some() && painter_input(cx, view) {
+        return true;
     }
     // A click in the open paragraph editor places its caret (edit_text_ui::overlay); it must not
     // select the paragraph under it, which would close the editor.
@@ -365,16 +493,12 @@ fn input(s: &mut ObjectSelection, cx: PageToolContext<'_>, view: &mut DocView) -
         return s.page == Some(page) && !s.selected.is_empty();
     };
     if !pressed {
+        // Elsewhere the other paragraphs keep their outlines and hover highlight; a press
+        // still comes here first.
         if s.page == Some(page) && !s.selected.is_empty() {
             let union = s.selected.iter().fold(Rect::NOTHING, |r, o| r.union(screen(xf, info, page, o)));
-            let edge = s.selected.len() == 1 && on_text_edge(xf, info, page, &s.selected[0], p);
-            if union.contains(p) && !edge {
-                ui.ctx().set_cursor_icon(egui::CursorIcon::Move);
-                return true;
-            }
-            // Elsewhere the other paragraphs keep their outlines and hover highlight; a press
-            // still comes here first.
-            return s.selected.len() > 1;
+            let edge = s.selected.len() == 1 && s.selected.first().is_some_and(|o| on_text_edge(xf, info, page, o, p));
+            return (union.contains(p) && !edge) || s.selected.len() > 1;
         }
         return false;
     }
@@ -391,9 +515,16 @@ fn input(s: &mut ObjectSelection, cx: PageToolContext<'_>, view: &mut DocView) -
     let additive = modified(ui);
     // A page-sized background image must not hide editable labels or added notes.
     // Within each kind, prefer the last object as the ordinary single-item tools do.
-    let hit = [ObjectKind::Added, ObjectKind::Text, ObjectKind::Image]
-        .into_iter()
-        .find_map(|kind| objects.iter().rev().find(|o| o.target.kind == kind && screen(xf, info, page, o).expand(2.0).contains(p)));
+    // Nor is a scan under an OCR layer anything but the paper: a click on it is a click on the
+    // empty page (Thai edition).
+    let paper = |o: &&EditableObject| {
+        o.target.kind == ObjectKind::Image
+            && crate::edit_text_ui::fills_page(xf, screen(xf, info, page, o))
+            && doc.text_blocks(page).iter().any(|b| b.invisible)
+    };
+    let hit = [ObjectKind::Added, ObjectKind::Text, ObjectKind::Image].into_iter().find_map(|kind| {
+        objects.iter().rev().find(|o| o.target.kind == kind && screen(xf, info, page, o).expand(2.0).contains(p)).filter(|o| !paper(o))
+    });
     if additive {
         if s.page != Some(page) {
             s.clear();
@@ -425,21 +556,16 @@ fn input(s: &mut ObjectSelection, cx: PageToolContext<'_>, view: &mut DocView) -
         view.current = page;
         return true;
     }
-    if s.page == Some(page) && !s.selected.is_empty() {
-        let union = s.selected.iter().fold(Rect::NOTHING, |r, o| r.union(screen(xf, info, page, o)));
-        let edge = s.selected.len() == 1 && on_text_edge(xf, info, page, &s.selected[0], p);
-        // An added picture or text box over the selection takes the press (Thai edition).
-        let over_added = hit.is_some_and(|o| o.target.kind == ObjectKind::Added && !s.selected.iter().any(|x| x.target == o.target));
-        if union.contains(p) && !edge && !over_added && !resp.double_clicked() {
-            s.gesture = Some(Gesture { start: p, now: p, marquee: false, additive: false, copy: None });
-            return true;
-        }
+    // What the press was on ([`hit`]): the selection moves; the frame of the paragraph open for
+    // typing selects its box (for the arrow keys) and moves it.
+    let owner = view.router.owner(page);
+    if owner == Some(Owner::Objects { part: ObjectsPart::Selection }) && !resp.double_clicked() {
+        s.gesture = Some(Gesture { start: p, now: p, marquee: false, additive: false, copy: None });
+        return true;
     }
-    // The frame of the paragraph open for typing takes hold of the box, as in Acrobat: a click
-    // selects it (for the arrow keys), a drag moves it. Its text keeps the caret.
-    if let Some(block) = view.line_editor.as_ref().filter(|e| e.page == page && !e.has_changes()).map(|e| e.block)
+    if owner == Some(Owner::Objects { part: ObjectsPart::Frame })
+        && let Some(block) = view.line_editor.as_ref().filter(|e| e.page == page && !e.has_changes()).map(|e| e.block)
         && let Some(object) = objects.iter().find(|o| o.target == ObjectTarget { kind: ObjectKind::Text, index: block })
-        && on_frame(screen(xf, info, page, object), p)
     {
         s.clear();
         s.page = Some(page);
@@ -450,24 +576,24 @@ fn input(s: &mut ObjectSelection, cx: PageToolContext<'_>, view: &mut DocView) -
         return true;
     }
     s.clear();
-    if let Some(object) = hit {
-        // One click selects a paragraph, which a drag or the arrow keys then move; a double click
-        // (released over the selection, above) opens it for typing. Its edges stay the rewrap
-        // handles.
-        if object.target.kind == ObjectKind::Text && !resp.double_clicked() && !on_text_edge(xf, info, page, object, p) {
-            leave_single(view);
-            s.page = Some(page);
-            s.selected.push(object.clone());
-            s.gesture = Some(Gesture { start: p, now: p, marquee: false, additive: false, copy: None });
-            view.current = page;
-            return true;
-        }
+    // One click selects a paragraph, which a drag or the arrow keys then move; a double click
+    // (released over the selection, above) opens it for typing. Its edges stay the rewrap handles
+    // (Thai edition).
+    if let Some(object) = hit
+        && object.target.kind == ObjectKind::Text
+        && !resp.double_clicked()
+        && matches!(view.router.owner(page), Some(Owner::Paragraph { part: ParagraphPart::Body, .. }))
+    {
+        leave_single(view);
+        s.page = Some(page);
+        s.selected.push(object.clone());
+        s.gesture = Some(Gesture { start: p, now: p, marquee: false, additive: false, copy: None });
+        view.current = page;
+        return true;
     }
-    // A closed paragraph's width handle reaches past its box, and a press there rewraps the
-    // paragraph (as in `edit_text_ui`) instead of starting an area selection (#2276).
-    let on_edge = view.line_editor.as_ref().is_none_or(|e| e.page != page)
-        && crate::edit_text_ui::grabs_edge(xf, info, page, objects.iter().filter(|o| o.target.kind == ObjectKind::Text).map(|o| o.rect), p);
-    if hit.is_some() || on_edge {
+    // A press on something (a paragraph, its edge reaching past its box #2276, a picture, added
+    // content) is its own; only one on the empty page starts an area selection.
+    if hit.is_some() || view.router.owner(page).is_some() {
         return false;
     }
     leave_single(view);
@@ -480,11 +606,8 @@ fn input(s: &mut ObjectSelection, cx: PageToolContext<'_>, view: &mut DocView) -
 /// Whether `p` is on the frame drawn around a paragraph open for typing (`r`, screen): just
 /// outside the text, where a press would otherwise close the paragraph.
 fn on_frame(r: Rect, p: Pos2) -> bool {
-    r.expand(2.0 + FRAME_REACH).contains(p) && !r.expand(2.0).contains(p)
+    r.expand(2.0 + crate::edit_text_ui::FRAME_REACH).contains(p) && !r.expand(2.0).contains(p)
 }
-
-/// How far outside a paragraph's frame a press still grabs it (screen pixels).
-const FRAME_REACH: f32 = 6.0;
 
 /// The arrow keys move the selected image or objects a point, Shift and an arrow ten points,
 /// as in Acrobat. They are taken before the view turns the page with them.
@@ -496,22 +619,28 @@ pub(crate) fn nudge_keys(ctx: &egui::Context, view: &mut DocView, doc: &Document
     let objects = view.objects.page.filter(|_| !view.objects.selected.is_empty() && view.objects.gesture.is_none());
     let Some(page) = objects.or(image.map(|(page, _)| page)) else { return };
     let Some(xf) = view.page_xform(page) else { return };
-    use egui::{Key, Modifiers};
+    use egui::Key;
     let mut step = egui::Vec2::ZERO;
     ctx.input_mut(|i| {
-        for (key, direction) in [
-            (Key::ArrowLeft, egui::vec2(-1.0, 0.0)),
-            (Key::ArrowRight, egui::vec2(1.0, 0.0)),
-            (Key::ArrowUp, egui::vec2(0.0, -1.0)),
-            (Key::ArrowDown, egui::vec2(0.0, 1.0)),
-        ] {
-            // Shift first: a plain key pattern also matches a Shift press.
-            if i.consume_key(Modifiers::SHIFT, key) {
-                step += direction * 10.0;
-            } else if i.consume_key(Modifiers::NONE, key) {
-                step += direction;
+        // Only an arrow pressed alone or with Shift, judged by each press's own modifiers (the
+        // frame's can differ when a key is let go in the same frame). Alt+← / Alt+→ go back and
+        // forward through the view history (#3632) and Ctrl/⌘+← / → turn the page, both in
+        // `canvas::shortcuts`.
+        i.events.retain(|e| {
+            let egui::Event::Key { key, pressed: true, modifiers, .. } = e else { return true };
+            if modifiers.alt || modifiers.ctrl || modifiers.command || modifiers.mac_cmd {
+                return true;
             }
-        }
+            let direction = match key {
+                Key::ArrowLeft => egui::vec2(-1.0, 0.0),
+                Key::ArrowRight => egui::vec2(1.0, 0.0),
+                Key::ArrowUp => egui::vec2(0.0, -1.0),
+                Key::ArrowDown => egui::vec2(0.0, 1.0),
+                _ => return true,
+            };
+            step += direction * if modifiers.shift { 10.0 } else { 1.0 };
+            false
+        });
     });
     if step == egui::Vec2::ZERO {
         return;

@@ -18,18 +18,21 @@ fn harness(setup: impl FnOnce(&mut PdfCraftApp) + 'static) -> Harness<'static, P
     h
 }
 
+/// The ArtCraft brand terms ask a modified version not to use their name or suggest they support
+/// it (docs/brand/LICENSE-brand.txt): no way to their community from this edition, and every link
+/// is the edition's own.
 #[test]
-fn discord_button_in_the_top_bar_opens_discord() {
-    let mut h = harness(|_| {});
-    h.get_by_label("Discord").click();
-    h.run_steps(2);
-    assert_eq!(h.state().last_opened_url.as_deref(), Some(links::DISCORD));
-    assert_eq!(links::DISCORD, "https://discord.gg/artcraft");
+fn no_link_leads_to_the_official_community() {
+    let h = harness(|_| {});
+    assert!(h.query_by_label("Discord").is_none());
+    assert!(pdfcraft_engine::commands::command("help.discord").is_none());
+    assert!(pdfcraft_engine::commands::command("help.website").is_none());
+    assert!(links::LINKS.iter().all(|l| l.url.contains("mixlnwuu") && !l.label.contains("ArtCraft")), "{:?}", links::LINKS);
 }
 
 /// Where this unofficial edition's own questions go (its repository), shown in place of the
 /// ArtCraft community card and marks, which docs/brand/LICENSE-brand.txt keeps off modified builds.
-const THAI_EDITION_URL: &str = "https://github.com/mixlnwuu/pdfcraft";
+const THAI_EDITION_SITE: &str = "https://mixlnwuu.github.io/pdfcraft/";
 
 #[test]
 fn home_screen_names_the_thai_edition_and_its_repository() {
@@ -38,7 +41,7 @@ fn home_screen_names_the_thai_edition_and_its_repository() {
     assert!(h.query_all_by_label("ArtCraft").count() == 0, "no ArtCraft mark");
     assert!(h.query_by_label("Join our Discord").is_none(), "no community links on the edition's card");
     assert!(h.query_by_label_contains("PdfCraft ภาษาไทย (ฉบับไม่เป็นทางการ)").is_some(), "the edition is named");
-    h.get_by_label(THAI_EDITION_URL);
+    h.get_by_label(THAI_EDITION_SITE);
 }
 
 #[test]
@@ -51,7 +54,7 @@ fn about_dialog_names_the_thai_edition_without_the_brand() {
     });
     assert_eq!(h.query_all_by_label("ArtCraft").count(), 0, "no ArtCraft mark or wordmark");
     assert!(h.query_by_label_contains("PdfCraft ภาษาไทย (ฉบับไม่เป็นทางการ)").is_some(), "the edition is named");
-    h.get_by_label(THAI_EDITION_URL);
+    h.get_by_label(THAI_EDITION_SITE);
 }
 
 #[test]

@@ -39,6 +39,7 @@ pub const EDIT_LABELS: &[&str] = &[
     "Colour",
     "Style",
     "New bookmarks from structure",
+    "New bookmarks from text styles",
     "Number pages",
     "Measure distance",
     "Measure perimeter",
@@ -186,6 +187,7 @@ impl Edit {
             Edit::SetBookmarkColor { .. } => Label::of("Colour"),
             Edit::SetBookmarkStyle { .. } => Label::of("Style"),
             Edit::BookmarksFromStructure => Label::of("New bookmarks from structure"),
+            Edit::BookmarksFromTextStyles { .. } => Label::of("New bookmarks from text styles"),
             Edit::NumberPages { .. } => Label::of("Number pages"),
             // What was measured is part of the wording too, for the same reason.
             Edit::AddMeasurement(m) => Label::of(match m.kind {
@@ -220,15 +222,17 @@ impl Edit {
             Edit::MoveAnnotation { .. } => Label::of("Move comment"),
             Edit::ReshapeAnnotation { .. } => Label::of("Reshape comment"),
             Edit::ResizeAnnotation { .. } => Label::of("Resize comment"),
-            Edit::StyleAnnotation { .. } | Edit::FillAnnotation { .. } | Edit::FontSizeAnnotation { .. } | Edit::SetAnnotationInfo { .. } => {
-                Label::of("Change comment properties")
-            }
+            Edit::StyleAnnotation { .. }
+            | Edit::FillAnnotation { .. }
+            | Edit::FontSizeAnnotation { .. }
+            | Edit::FontAnnotation { .. }
+            | Edit::SetAnnotationInfo { .. } => Label::of("Change comment properties"),
             Edit::SetFieldValue { name, .. } => Label::with("Fill in {name}", name.as_str()),
             Edit::SetFieldImage { name, .. } => Label::with("Set the image of {name}", name.as_str()),
             Edit::ResetForm { .. } => Label::of("Clear form"),
             Edit::AddField { .. } => Label::of("Add field"),
             Edit::SetFieldProps { .. } => Label::of("Change field properties"),
-            Edit::DeleteField { .. } => Label::of("Delete field"),
+            Edit::DeleteField { .. } | Edit::DeleteWidget { .. } => Label::of("Delete field"),
             Edit::DuplicateField { .. } => Label::of("Duplicate field"),
             Edit::SetTabOrder { .. } | Edit::MoveInTabOrder { .. } => Label::of("Set tab order"),
             Edit::SetCalculationOrder { .. } => Label::of("Set calculation order"),

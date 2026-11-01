@@ -361,10 +361,18 @@ pub(crate) fn place_inside_wrapper(doc: &mut Document, page: &pdfcraft_model::Pa
 /// it away); the original content is wrapped in q/Q first. Used for applied redaction boxes.
 /// Returns the new content stream.
 pub fn stamp(doc: &mut Document, page: usize, tag: &str, content: Vec<u8>) -> Result<ObjRef, EditError> {
+    stamp_with_fonts(doc, page, tag, content, Vec::new())
+}
+
+/// [`stamp`], with `fonts` (resource name, font) added to the page's resources (Thai edition).
+pub fn stamp_with_fonts(doc: &mut Document, page: usize, tag: &str, content: Vec<u8>, fonts: Vec<(Vec<u8>, Object)>) -> Result<ObjRef, EditError> {
     let all = page_list(doc);
     check(&[page], all.len())?;
     check_on_top(doc, &all[page])?;
     add_resources(doc, &all[page], None, Some(&content))?;
+    if !fonts.is_empty() {
+        add_page_font_objects(doc, page, fonts)?;
+    }
     let p = page_list(doc).swap_remove(page);
     place_tagged(doc, &p, tag, content, false)
 }

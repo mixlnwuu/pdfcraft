@@ -183,6 +183,48 @@ fn fill_text_size_controls_new_text_and_survives_settings_restore() {
     assert_eq!(restored.fill_text_size, 24.0, "invalid settings do not change the size");
 }
 
+/// Thai edition: Fill & Sign text is typed in the font picked beside the size (kept across
+/// launches), and Bold restyles the text that is selected.
+#[test]
+fn fill_text_font_styles_new_and_selected_text() {
+    let mut h = harness();
+    h.state_mut().execute("sign.fill.text");
+    h.run_steps(2);
+    h.state_mut().fill_text_font = pdfcraft_engine::TextFont::new("Times", false, true);
+    click(&mut h, 50.0, 250.0);
+    h.event(egui::Event::Text("In Times".into()));
+    h.run_steps(1);
+    h.key_press(egui::Key::Enter);
+    h.run_steps(3);
+    let font = |h: &Harness<'static, PdfCraftApp>| {
+        let s = h.state();
+        let doc = s.session.get(s.views[0].id).unwrap();
+        let a = doc.info.annotations.iter().find(|a| a.contents.as_deref() == Some("In Times")).unwrap();
+        ((a.page, a.index), doc.comment_props(a.page, a.index).and_then(|p| p.font))
+    };
+    let (at, typed) = font(&h);
+    assert_eq!(typed, Some(pdfcraft_engine::TextFont::new("Times", false, true)));
+    let mut restored = PdfCraftApp::new();
+    restored.restore(&h.state().persist());
+    assert_eq!(restored.fill_text_font, pdfcraft_engine::TextFont::new("Times", false, true));
+    // Selected, it turns bold with Bold under the rail's font button.
+    h.state_mut().views[0].comments.selected = Some(at);
+    h.run_steps(2);
+    h.get_by_label("Font: Times").click();
+    h.run_steps(2);
+    h.query_all_by_label("Bold").next().expect("the Bold button").click();
+    h.run_steps(4);
+    assert_eq!(font(&h).1, Some(pdfcraft_engine::TextFont::new("Times", true, true)));
+    // And takes another family from the list.
+    if h.query_by_label("Courier").is_none() {
+        h.get_by_label("Font: Times").click();
+        h.run_steps(2);
+    }
+    h.get_by_label("Courier").click();
+    h.run_steps(4);
+    assert_eq!(font(&h).1, Some(pdfcraft_engine::TextFont::new("Courier", true, true)));
+}
+
 /// #1274: with a placed Fill & Sign text selected, the Font size control resizes that text,
 /// not only text typed afterwards; with nothing selected it changes nothing on the page.
 #[test]
@@ -280,6 +322,53 @@ fn the_type_box_text_matches_the_page_zoom_in_a_turned_view() {
             assert!((d - size * zoom).abs() < 0.5, "{rotate}°: drawn at {d}, the page shows it at {}", size * zoom);
         }
     }
+}
+
+#[test]
+fn fill_text_colour_survives_preview_commit_settings_and_save() {
+    let mut h = harness();
+    h.state_mut().execute("sign.fill.text");
+    h.run_steps(2);
+    h.get_by_label("Colour").click();
+    h.run_steps(2);
+    h.get_by_label("Blue").click();
+    h.run_steps(2);
+    let color = h.state().fill_text_color;
+    assert!(color[2] > color[0], "blue was selected: {color:?}");
+    click(&mut h, 50.0, 250.0);
+    assert_eq!(h.state().views[0].fill_text.as_ref().unwrap().color, color, "the editor uses the selected colour");
+    h.event(egui::Event::Text("Blue form text".into()));
+    h.run_steps(2);
+    h.key_press(egui::Key::Enter);
+    h.run_steps(3);
+    let id = h.state().views[0].id;
+    let expected = color.map(|v| v as f32);
+    let annotation = h.state().session.get(id).unwrap().info.annotations.iter().find(|a| a.contents.as_deref() == Some("Blue form text")).unwrap();
+    assert_eq!(annotation.color, Some(expected));
+    let bytes = h.state().session.save_bytes(id).unwrap();
+    let reopened = harness_bytes(&bytes);
+    let saved = reopened
+        .state()
+        .session
+        .get(reopened.state().views[0].id)
+        .unwrap()
+        .info
+        .annotations
+        .iter()
+        .find(|a| a.contents.as_deref() == Some("Blue form text"))
+        .unwrap();
+    assert_eq!(saved.color, Some(expected));
+    let mut restored = PdfCraftApp::new();
+    restored.restore(&h.state().persist());
+    assert_eq!(restored.fill_text_color, color);
+    restored.restore(r#"{"fill_text_color":[2,0,0]}"#);
+    assert_eq!(restored.fill_text_color, color, "invalid saved colours are ignored");
+    h.state_mut().execute("edit.undo");
+    h.run_steps(2);
+    assert!(!items(&h).iter().any(|(_, text)| text.as_deref() == Some("Blue form text")));
+    h.state_mut().execute("edit.redo");
+    h.run_steps(2);
+    assert!(items(&h).iter().any(|(_, text)| text.as_deref() == Some("Blue form text")));
 }
 
 #[test]
@@ -1109,7 +1198,8 @@ fn saving_flattens_fill_and_sign_only_when_the_preference_is_on() {
     app.open_bytes("form.pdf", None, FIXTURE.to_vec()).unwrap();
     let id = app.views[0].id;
     app.session.apply(id, mark).unwrap();
-    app.views[0].fill_text = Some(TypeBox { page: 0, at: [40.0, 200.0], text: "Typed".into(), size: 10.0, focus: false });
+    app.views[0].fill_text =
+        Some(TypeBox { page: 0, at: [40.0, 200.0], text: "Typed".into(), size: 10.0, font: Default::default(), color: [0.0; 3], focus: false });
     let kept = dir.join("kept.pdf");
     app.save_override = Some(kept.to_string_lossy().into_owned());
     assert!(app.save_active(SaveTarget::InPlace));
@@ -1120,7 +1210,8 @@ fn saving_flattens_fill_and_sign_only_when_the_preference_is_on() {
     assert!(texts.iter().any(|t| t == "Typed"), "an open type box is saved: {texts:?}");
     assert_eq!(reopened.session.get(reopened.views[0].id).unwrap().info.annotations.len(), 2, "the check mark stays too");
 
-    app.views[0].fill_text = Some(TypeBox { page: 0, at: [40.0, 160.0], text: "More".into(), size: 10.0, focus: false });
+    app.views[0].fill_text =
+        Some(TypeBox { page: 0, at: [40.0, 160.0], text: "More".into(), size: 10.0, font: Default::default(), color: [0.0; 3], focus: false });
     app.flatten_fill_sign_on_save = true;
     let flat = dir.join("flat.pdf");
     app.save_override = Some(flat.to_string_lossy().into_owned());

@@ -180,6 +180,29 @@ fn paint_draw(painter: &egui::Painter, cx: &PageCx<'_>, tool: &CommentTool, poin
 }
 
 /// The shape a finished drawing gesture makes (`None` if it is too small to mean anything).
+/// Shift held while drawing, as in Word (Thai edition): a rectangle or oval from `from` to `to`
+/// becomes a square or circle on its longer side, and a line or arrow (or a side of a polygon,
+/// a cloud or connected lines, from its last corner) turns to the nearest 45 degrees, its length
+/// kept. Other tools draw where the pointer is.
+pub(super) fn constrained(tool: CommentTool, from: [f64; 2], to: [f64; 2]) -> [f64; 2] {
+    let (dx, dy) = (to[0] - from[0], to[1] - from[1]);
+    match tool {
+        CommentTool::Rectangle | CommentTool::Oval => {
+            let side = dx.abs().max(dy.abs());
+            [from[0] + side.copysign(dx), from[1] + side.copysign(dy)]
+        }
+        CommentTool::Line | CommentTool::Arrow | CommentTool::Polygon | CommentTool::PolyLine | CommentTool::Cloud => {
+            let step = std::f64::consts::FRAC_PI_4;
+            let angle = (dy.atan2(dx) / step).round() * step;
+            let length = dx.hypot(dy);
+            // cos and sin of a multiple of 45 degrees, with the zeros exact.
+            let exact = |v: f64| if v.abs() < 1e-12 { 0.0 } else { v };
+            [from[0] + length * exact(angle.cos()), from[1] + length * exact(angle.sin())]
+        }
+        _ => to,
+    }
+}
+
 pub(super) fn drawn_shape(tool: CommentTool, points: &[[f64; 2]]) -> Option<Shape> {
     let (first, last) = (*points.first()?, *points.last()?);
     let far = (first[0] - last[0]).hypot(first[1] - last[1]) >= 2.0;

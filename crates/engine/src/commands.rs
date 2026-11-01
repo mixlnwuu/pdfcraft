@@ -295,7 +295,8 @@ pub const COMMANDS: &[CommandSpec] = &[
     c("form.tab_order.column", "Tab order: by columns", None, None, HasFields, "columns-3"),
     c("form.tab_order.structure", "Tab order: by document structure", None, None, HasFields, "list"),
     c("form.calculation_order", "Calculation order", None, None, Document, "list-ordered"),
-    c("edit.text", "Add text", None, None, Modification, "type"),
+    // Thai edition: Ctrl+T (T for Text), free in the registry.
+    c("edit.text", "Add text", None, Some(Shortcut::cmd("T")), Modification, "type"),
     // Thai edition: Ctrl+E (E for Edit), free in the registry.
     c("edit.edit_text", "Edit text & images", None, Some(Shortcut::cmd("E")), Modification, "text-cursor-input"),
     c("edit.link", "Add or edit links", None, None, Modification, "link-2"),
@@ -379,6 +380,8 @@ pub const COMMANDS: &[CommandSpec] = &[
     c("page.organize", "Organize pages", PAGES, None, Document, "layout-grid"),
     c("bookmark.add", "New bookmark", PAGES, Some(Shortcut::cmd("B")), Assembly, "bookmark-plus"),
     c("bookmark.from_structure", "New bookmarks from structure", PAGES, None, Assembly, "list"),
+    // Bookmarks from the lines set in chosen text styles, for headings that aren't tagged (#1693).
+    c("bookmark.from_text_styles", "New bookmarks from text styles…", PAGES, None, Assembly, "list"),
     c("page.rotate", "Rotate pages clockwise", PAGES, None, Assembly, "rotate-cw"),
     c("page.rotate_ccw", "Rotate pages counterclockwise", PAGES, None, Assembly, "rotate-ccw"),
     c("page.delete", "Delete pages", PAGES, None, Assembly, "trash-2"),
@@ -393,11 +396,10 @@ pub const COMMANDS: &[CommandSpec] = &[
     c("page.extract", "Extract pages…", PAGES, None, Assembly, "file-output"),
     c("page.split", "Split document…", PAGES, None, Assembly, "scissors"),
     c("page.number", "Number pages…", PAGES, None, Assembly, "hash"),
+    c("page.properties", "Page properties…", PAGES, None, Modification, "info"),
     c("help.shortcuts", "Keyboard shortcuts", HELP, None, Nothing, "circle-help"),
-    c("help.discord", "Join the ArtCraft Discord", HELP, None, Nothing, "messages-square"),
     c("help.app_page", "PdfCraft web page", HELP, None, Nothing, "globe"),
     c("help.github", "PdfCraft on GitHub", HELP, None, Nothing, "code-xml"),
-    c("help.website", "ArtCraft website", HELP, None, Nothing, "external-link"),
     c("help.check_updates", "Check for updates…", HELP, None, Nothing, "cloud"),
     c("help.about", "About PdfCraft", HELP, None, Nothing, "info"),
 ];

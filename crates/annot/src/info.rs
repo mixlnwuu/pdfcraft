@@ -213,6 +213,8 @@ pub struct Props {
     pub fill: Option<Rgb>,
     /// Text boxes, typewriter text and callouts: the `/DA` font size in points.
     pub font_size: Option<f64>,
+    /// The font of a text box, typewriter text or callout (Thai edition).
+    pub font: Option<crate::TextFont>,
 }
 
 /// The current properties of the comment at `(page, index)`.
@@ -244,6 +246,7 @@ pub fn props(doc: &Document, page: usize, index: usize) -> Option<Props> {
         fillable: fillable(&subtype),
         fill: fill_of(d),
         font_size: (subtype == "FreeText").then(|| appearance::parse_da(d).1),
+        font: (subtype == "FreeText").then(|| crate::TextFont::of(d)),
         subtype,
         endings: line_endings_of(d),
     })

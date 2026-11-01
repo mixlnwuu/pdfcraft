@@ -18,7 +18,8 @@ use crate::{DocId, Edit, EditError, Session};
 pub struct OcrSettings {
     /// Resolution pages are rendered at for recognition (Acrobat's "Downsample to" choices).
     pub dpi: f32,
-    /// Language code from [`LANGUAGES`] (the models read the Latin alphabet, whatever this says).
+    /// Language code from [`LANGUAGES`]: `th` reads with the Thai models (Thai edition), anything
+    /// else with the Latin ones.
     pub language: String,
     /// Leave pages that already have text alone (Acrobat reports "page contains renderable
     /// text" and skips them). When `false`, such pages are read too (a picture on a page that
@@ -136,7 +137,7 @@ impl OcrJob {
                 out.push(skip(&e));
                 continue;
             }
-            let lines = match ocr.recognize(&shot.rgba, shot.width, shot.height) {
+            let lines = match ocr.recognize_in(&self.settings.language, &shot.rgba, shot.width, shot.height) {
                 Ok(l) => l,
                 Err(e) => {
                     out.push(skip(&e.to_string()));

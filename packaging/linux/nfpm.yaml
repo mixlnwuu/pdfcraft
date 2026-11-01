@@ -16,7 +16,7 @@ section: graphics
 priority: optional
 maintainer: ${PDFCRAFT_MAINTAINER}
 vendor: Learning Machines LLC
-homepage: https://getartcraft.com/apps/pdfcraft
+homepage: https://mixlnwuu.github.io/pdfcraft/
 license: MIT OR Apache-2.0
 description: |-
   Open-source, native PDF workbench: read, comment, fill and sign forms,

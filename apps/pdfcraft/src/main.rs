@@ -197,7 +197,7 @@ fn rejoin_split_paths(args: Vec<String>, exists: impl Fn(&str) -> bool) -> Vec<S
 fn main() -> eframe::Result {
     // Windows: the update helper is a copy of this program started with `--finish-update`.
     #[cfg(windows)]
-    if let Some(result) = craft_update::self_update::finish(&craft_update::suite::PDFCRAFT, &std::env::args_os().skip(1).collect::<Vec<_>>()) {
+    if let Some(result) = craft_update::self_update::finish(&pdfcraft_ui_egui::UPDATE_APP, &std::env::args_os().skip(1).collect::<Vec<_>>()) {
         std::process::exit(i32::from(result.is_err()));
     }
     // First, so the panic hook and every start-up warning are recorded (`logging`).
@@ -426,6 +426,15 @@ fn app_creator<'a>(
         }
         // Help ▸ Check for updates asks the Thai edition's releases (Thai edition).
         app.update_source = Some(std::sync::Arc::new(updates::latest_release));
+        app.set_startup_update_check(true);
+        // A portable copy is replaced by hand: its prompt opens the release's page.
+        #[cfg(windows)]
+        if pdfcraft_ui_egui::portable::data_dir().is_none() {
+            app.update_install = Some(pdfcraft_ui_egui::updates::UpdateInstall {
+                download: std::sync::Arc::new(updates::download),
+                run: std::sync::Arc::new(updates::run),
+            });
+        }
         app.printer_source = Some(pdfcraft_ui_egui::system_printers());
         app.os_key_store_ids = cfg!(any(target_os = "macos", target_os = "windows"));
         #[cfg(target_os = "macos")]

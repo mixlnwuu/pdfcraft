@@ -638,8 +638,8 @@ fn tabs_shrink_to_fit_then_arrows_step_through_them_and_open_stays_in_sight() {
         }
     });
     let open = h.get_by_label("Open").rect();
-    let discord = h.get_by_label("Discord").rect();
-    assert!(open.right() <= discord.left(), "Open {open:?} must not run under Discord {discord:?}");
+    let help = h.get_by_label("Keyboard shortcuts").rect();
+    assert!(open.right() <= help.left(), "Open {open:?} must not run under the buttons {help:?}");
     let mut previous_right = f32::MIN;
     for i in 0..5 {
         let tab = h.get_by_label(&name(i)).rect();
@@ -663,15 +663,15 @@ fn tabs_shrink_to_fit_then_arrows_step_through_them_and_open_stays_in_sight() {
     assert_eq!(enabled(&h, "Scroll tabs right"), Some(true), "and then there is more to the right");
     let open = h.get_by_label("Open").rect();
     let right = h.get_by_label("Scroll tabs right").rect();
-    assert!(right.right() <= open.left() + 0.5 && open.right() <= h.get_by_label("Discord").rect().left());
-    // Twenty: Open stays in sight left of Discord.
+    assert!(right.right() <= open.left() + 0.5 && open.right() <= h.get_by_label("Keyboard shortcuts").rect().left());
+    // Twenty: Open stays in sight left of the buttons.
     for i in 0..13 {
         h.state_mut().open_bytes(&format!("more-{i:02}.pdf"), None, FIXTURE.to_vec()).unwrap();
     }
     h.run_steps(4);
     let open = h.get_by_label("Open").rect();
-    let discord = h.get_by_label("Discord").rect();
-    assert!(open.left() > 0.0 && open.right() <= discord.left(), "Open {open:?} stays in sight left of Discord {discord:?}");
+    let help = h.get_by_label("Keyboard shortcuts").rect();
+    assert!(open.left() > 0.0 && open.right() <= help.left(), "Open {open:?} stays in sight left of the buttons {help:?}");
 }
 
 /// macOS (#789): with the integrated title bar, the strip is the 28 pt band AppKit centres the
@@ -684,7 +684,7 @@ fn the_integrated_title_bar_is_the_traffic_light_band() {
         app.open_bytes("band.pdf", None, FIXTURE.to_vec()).unwrap();
     });
     let band = 28.0;
-    for label in ["Home", "band.pdf", "Open", "Discord", "Keyboard shortcuts"] {
+    for label in ["Home", "band.pdf", "Open", "Keyboard shortcuts"] {
         let r = h.get_by_label(label).rect();
         assert!(r.top() >= 0.0 && r.bottom() <= band, "{label}: {r:?} inside the {band} pt title bar");
         assert!(r.height() >= 24.0, "{label}: {r:?} stays clickable");
@@ -706,11 +706,11 @@ fn narrow_tab_strips_accept_vertical_wheel_scrolling() {
             app
         });
         h.run_steps(4);
-        let last = h.get_by_label("narrow-11.pdf").rect();
+        let last = h.get_by(|n| n.role() == egui::accesskit::Role::Tab && n.label().as_deref() == Some("narrow-11.pdf")).rect();
         assert!(last.center().x > 28.0 && last.right() < width - 100.0, "active tab: {last:?}");
         h.state_mut().active = Some(0);
         h.run_steps(4);
-        let first = h.get_by_label("narrow-00.pdf").rect();
+        let first = h.get_by(|n| n.role() == egui::accesskit::Role::Tab && n.label().as_deref() == Some("narrow-00.pdf")).rect();
         assert!(first.center().x > 28.0 && first.right() < width - 100.0);
         h.event(egui::Event::PointerMoved(first.center()));
         for _ in 0..8 {
@@ -723,9 +723,9 @@ fn narrow_tab_strips_accept_vertical_wheel_scrolling() {
             });
             h.run_steps(8);
         }
-        let last = h.get_by_label("narrow-11.pdf").rect();
+        let last = h.get_by(|n| n.role() == egui::accesskit::Role::Tab && n.label().as_deref() == Some("narrow-11.pdf")).rect();
         assert!(last.center().x > 28.0 && last.right() < width - 100.0, "scrolled tab: {last:?}");
-        h.get_by_label("narrow-11.pdf").click();
+        h.get_by(|n| n.role() == egui::accesskit::Role::Tab && n.label().as_deref() == Some("narrow-11.pdf")).click();
         h.run_steps(4);
         assert_eq!(h.state().active, Some(11));
         assert!(h.get_by_label_contains("Display theme:").rect().right() <= width);
