@@ -154,12 +154,25 @@ table.compare td:first-child { font-weight: 600; }
 table.compare td.no { color: var(--muted); }
 table.compare td.yes { color: var(--text); }
 .compare-note { color: var(--muted); font-size: 15px; margin: 14px 0 0; }
+.older { list-style: none; padding: 0; margin: 0 0 14px; }
+.older-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 12px;
+  padding: 14px 18px; margin-bottom: 12px;
+}
+.older-date { color: var(--muted); font-size: 14px; margin-left: 6px; }
+.older-what { color: var(--muted); font-size: 15px; }
+.older-links { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.btn.small { padding: 7px 14px; font-size: 15px; background: transparent; color: var(--accent); }
+.btn.small:hover { background: var(--accent-soft); }
+.older-notes { font-size: 15px; }
 code { font-family: Consolas, "Cascadia Mono", monospace; font-size: 0.92em; overflow-wrap: anywhere; }
 footer { border-top: 1px solid var(--line); padding: 28px 0 40px; color: var(--muted); font-size: 14px; }
 footer p { margin: 6px 0; }
 @media (max-width: 560px) {
   nav { display: none; }
   .btn { width: 100%; text-align: center; }
+  .older-links { width: 100%; }
   section h2 { font-size: 24px; }
 }
 </style>
@@ -187,7 +200,7 @@ footer p { margin: 6px 0; }
       <a class="btn primary" href="https://github.com/mixlnwuu/pdfcraft/releases/latest">ดาวน์โหลดฟรี (Windows)</a>
       <a class="btn secondary" href="#install">วิธีติดตั้ง</a>
     </div>
-    <small>รุ่นล่าสุด 0.17.0-th.1 · Windows 10/11 แบบ 64 บิต · มีทั้งตัวติดตั้ง (.msi) และแบบไม่ต้องติดตั้ง (portable)</small>
+    <small>รุ่นล่าสุด 0.17.0-th.1 · Windows 10/11 แบบ 64 บิต · มีทั้งตัวติดตั้ง (.msi) และแบบไม่ต้องติดตั้ง (portable) · <a href="#older">ดาวน์โหลดรุ่นก่อนหน้า</a></small>
     <div class="shot">
       <img src="screenshot.png" width="1440" height="920" alt="หน้าจอโปรแกรม PdfCraft ภาษาไทย แสดงเมนูเครื่องมือภาษาไทย เช่น แก้ไข PDF กรอกและเซ็น รวมไฟล์ และบีบอัด PDF">
     </div>
@@ -256,6 +269,40 @@ footer p { margin: 6px 0; }
         <li>เปิดโปรแกรม จะเป็นภาษาไทยทันที ลากไฟล์ PDF มาวางในโปรแกรมเพื่อเริ่มแก้ไขได้เลย</li>
       </ol>
       <p class="note"><strong>Windows อาจเตือนตอนเปิดครั้งแรก</strong> เพราะไฟล์โปรแกรมในฉบับนี้ยังไม่มีลายเซ็นดิจิทัล ถ้าขึ้นหน้าต่าง "Windows protected your PC" ให้กด <strong>More info</strong> แล้วกด <strong>Run anyway</strong> ตรวจสอบได้ว่าไฟล์ไม่ถูกแก้ไขระหว่างทางโดยเทียบค่า SHA-256 ที่ระบุในหน้าดาวน์โหลด</p>
+    </div>
+  </section>
+
+  <section id="older">
+    <div class="wrap">
+      <h2>ดาวน์โหลดรุ่นก่อนหน้า</h2>
+      <p>ถ้ารุ่นล่าสุดมีปัญหากับงานของคุณ เลือกรุ่นก่อนหน้าได้ที่นี่ กดปุ่มแล้วไฟล์จะดาวน์โหลดทันที</p>
+      <ul class="older">
+        <li class="older-row">
+          <div class="older-info"><strong>0.16.1-th.1</strong> <span class="older-date">1 พ.ย. 2569</span><br><span class="older-what">OCR ภาษาไทย และแจ้งเตือนอัปเดตในโปรแกรม</span></div>
+          <div class="older-links">
+            <a class="btn small" href="https://github.com/mixlnwuu/pdfcraft/releases/download/v0.16.1-th.1/pdfcraft-0.16.1-th.1-windows-x64.msi">ตัวติดตั้ง (.msi)</a>
+            <a class="btn small" href="https://github.com/mixlnwuu/pdfcraft/releases/download/v0.16.1-th.1/pdfcraft-0.16.1-th.1-windows-x64-portable.zip">แบบไม่ต้องติดตั้ง (.zip)</a>
+            <a class="older-notes" href="https://github.com/mixlnwuu/pdfcraft/releases/tag/v0.16.1-th.1">รายละเอียด</a>
+          </div>
+        </li>
+        <li class="older-row">
+          <div class="older-info"><strong>0.15.0-th.2</strong> <span class="older-date">30 ต.ค. 2569</span><br><span class="older-what">จัดรูปแบบหลายกล่อง ตัวคัดวางรูปแบบ และเลือกฟอนต์ในกรอกและเซ็น</span></div>
+          <div class="older-links">
+            <a class="btn small" href="https://github.com/mixlnwuu/pdfcraft/releases/download/v0.15.0-th.2/pdfcraft-0.15.0-th.2-windows-x64.msi">ตัวติดตั้ง (.msi)</a>
+            <a class="btn small" href="https://github.com/mixlnwuu/pdfcraft/releases/download/v0.15.0-th.2/pdfcraft-0.15.0-th.2-windows-x64-portable.zip">แบบไม่ต้องติดตั้ง (.zip)</a>
+            <a class="older-notes" href="https://github.com/mixlnwuu/pdfcraft/releases/tag/v0.15.0-th.2">รายละเอียด</a>
+          </div>
+        </li>
+        <li class="older-row">
+          <div class="older-info"><strong>0.15.0-th.1</strong> <span class="older-date">29 ต.ค. 2569</span><br><span class="older-what">ตามทางการ v0.15.0 พร้อมตัวติดตั้งแบบใหม่</span></div>
+          <div class="older-links">
+            <a class="btn small" href="https://github.com/mixlnwuu/pdfcraft/releases/download/v0.15.0-th.1/pdfcraft-0.15.0-th.1-windows-x64.msi">ตัวติดตั้ง (.msi)</a>
+            <a class="btn small" href="https://github.com/mixlnwuu/pdfcraft/releases/download/v0.15.0-th.1/pdfcraft-0.15.0-th.1-windows-x64-portable.zip">แบบไม่ต้องติดตั้ง (.zip)</a>
+            <a class="older-notes" href="https://github.com/mixlnwuu/pdfcraft/releases/tag/v0.15.0-th.1">รายละเอียด</a>
+          </div>
+        </li>
+      </ul>
+      <p class="note"><strong>ถ้าติดตั้งรุ่นใหม่กว่าไว้แล้ว</strong> ตัวติดตั้งของรุ่นเก่าจะไม่ยอมติดตั้งทับ ให้ถอนการติดตั้งรุ่นใหม่ก่อน (การตั้งค่า › แอป) หรือใช้แบบไม่ต้องติดตั้ง (.zip) ซึ่งใช้คู่กับรุ่นที่ติดตั้งไว้ได้ รุ่นเก่ากว่านี้ดูได้ที่ <a href="https://github.com/mixlnwuu/pdfcraft/releases">หน้า Releases บน GitHub</a></p>
     </div>
   </section>
 
