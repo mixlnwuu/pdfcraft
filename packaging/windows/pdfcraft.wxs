@@ -6,14 +6,14 @@
   <!-- Thai edition: its own name and publisher (it is not the ArtCraft team's build), with the
        upstream UpgradeCode so it replaces an installed PdfCraft in place rather than sitting
        beside it and fighting over the same folder, PDF handler and shortcuts. -->
-  <Package Name="PdfCraft Thai Edition" Manufacturer="PdfCraft Thai Edition (unofficial)" Version="$(var.Version)" UpgradeCode="EA00C367-7270-4C50-9D8B-A7A5C88AD27F" Scope="perUserOrMachine" Compressed="yes" Language="1033">
+  <Package Codepage="874" Name="PdfCraft Thai Edition" Manufacturer="PdfCraft Thai Edition (unofficial)" Version="$(var.Version)" UpgradeCode="EA00C367-7270-4C50-9D8B-A7A5C88AD27F" Scope="perUserOrMachine" Compressed="yes" Language="1033">
     <SummaryInformation Description="PdfCraft Thai Edition, an unofficial edition of the PdfCraft PDF workbench" Manufacturer="PdfCraft Thai Edition (unofficial)" />
     <?include $(sys.SOURCEFILEDIR)install-policy.wxi?>
     <!-- HKLM registrations must never point into a per-user installation (#305). Allow removal
          of an existing installation even if an older MSI let it install per-user. -->
     <!-- Same-version upgrades let successive pre-releases of one X.Y.Z replace each other
          (MSI versions are numeric, so 1.2.3-rc.1 and 1.2.3-rc.2 are both 1.2.3). -->
-    <MajorUpgrade AllowSameVersionUpgrades="yes" DowngradeErrorMessage="A newer version of PdfCraft is already installed." />
+    <MajorUpgrade AllowSameVersionUpgrades="yes" DowngradeErrorMessage="ติดตั้ง PdfCraft รุ่นใหม่กว่านี้ไว้แล้ว" />
     <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
 
     <!-- Windows Installer requires an Icon id ending in .ico or .exe, or advertised shortcuts and
@@ -69,7 +69,7 @@
     <UIRef Id="PdfcraftInstallerUI" />
 
     <StandardDirectory Id="ProgramFiles6432Folder">
-      <Directory Id="CraftSuiteFolder" Name="ArtCraft">
+      <Directory Id="CraftSuiteFolder" Name="PdfCraft Thai">
         <Directory Id="INSTALLFOLDER" Name="PdfCraft">
         <Directory Id="ModelsFolder" Name="models" />
       </Directory>

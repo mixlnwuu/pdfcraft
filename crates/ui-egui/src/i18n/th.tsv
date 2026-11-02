@@ -6,6 +6,10 @@
 # was consulted or copied. Product and technology names stay in Latin letters; the trailing
 # ellipsis of dialog commands is kept. Thai has one plural form.
 
+# Untranslated: English text until a translator fills these in.
+	Lowering this forgets the oldest files. At 0 there is no list.	Lowering this forgets the oldest files. At 0 there is no list.
+	Recent files to keep	Recent files to keep
+
 	Menu	เมนู
 	Edit	แก้ไข
 	Pages	หน้า
@@ -2825,6 +2829,10 @@ theme	Appearance	ลักษณะที่ปรากฏ
 	No tools match your search.	ไม่มีเครื่องมือที่ตรงกับการค้นหาของคุณ
 	Expand all tools	ขยายเครื่องมือทั้งหมด
 	Collapse all tools	ยุบเครื่องมือทั้งหมด
+	Arrange image	จัดเรียงรูปภาพ
+	Crop	ครอบตัด
+	Remove crop	เอาการครอบตัดออก
+# Date picker: Today button (#4274) (AI-assisted, not separately native-reviewed)
 	Today	วันนี้
 	Restore the last view (page, zoom and page display) when a document is opened again	คืนค่ามุมมองล่าสุด (หน้า การซูม และการแสดงหน้า) เมื่อเปิดเอกสารอีกครั้ง
 @plural	{n} reply|{n} replies	การตอบกลับ {n} รายการ
@@ -2865,3 +2873,31 @@ theme	Appearance	ลักษณะที่ปรากฏ
 	Check for updates when PdfCraft starts	ตรวจหาอัปเดตเมื่อเปิด PdfCraft
 	Thai	ไทย
 	The update to PdfCraft {v} wasn't installed: you still have {c}. It can be downloaded from its release page.	อัปเดตเป็น PdfCraft {v} ไม่สำเร็จ ตอนนี้ยังเป็นรุ่น {c} ดาวน์โหลดได้จากหน้ารุ่นนั้น
+# Image paste and Home notifications (AI-assisted; not separately native-reviewed)
+	Search…	ค้นหา…
+	Image pasted	วางรูปภาพแล้ว
+	No image on clipboard to paste	ไม่มีรูปภาพในคลิปบอร์ดให้วาง
+	Pinned {tool} to Home	ปักหมุด {tool} ไว้ที่หน้าแรกแล้ว
+	Unpinned {tool} from Home	เลิกปักหมุด {tool} จากหน้าแรกแล้ว
+# Home tools (AI-assisted; not separately native-reviewed)
+	Clear search	ล้างการค้นหา
+	Pin	ปักหมุด
+	Pin a tool…	ปักหมุดเครื่องมือ…
+	Pin to Home	ปักหมุดไว้ที่หน้าแรก
+	Pin tools to Home	ปักหมุดเครื่องมือไว้ที่หน้าแรก
+	Pin your favorite tools here for quick access.	ปักหมุดเครื่องมือโปรดที่นี่เพื่อเข้าถึงอย่างรวดเร็ว
+	Pinned	ปักหมุดแล้ว
+	Pinned Tools	เครื่องมือที่ปักหมุด
+	Search tools…	ค้นหาเครื่องมือ…
+	Select tools to display on your Home page for quick access.	เลือกเครื่องมือที่จะแสดงบนหน้าแรกเพื่อเข้าถึงอย่างรวดเร็ว
+	Unpin from Home	เลิกปักหมุดจากหน้าแรก
+	Unpin tool	เลิกปักหมุดเครื่องมือ
+	Transform image	แปลงรูปภาพ
+	Select Tool	เครื่องมือเลือก
+	Hand Tool	เครื่องมือมือ
+	Marquee Zoom	ซูมพื้นที่ที่เลือก
+	Edit this PDF	แก้ไข PDF นี้
+	Export this PDF	ส่งออก PDF นี้
+	Find text or tools	ค้นหาข้อความหรือเครื่องมือ
+	Crop image	ครอบตัดรูปภาพ
+	Don't remind me about this version	ไม่ต้องเตือนรุ่นนี้อีก

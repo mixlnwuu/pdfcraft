@@ -1,38 +1,12 @@
 use super::*;
 
-/// Whether ⌘V was pressed this frame while the clipboard holds no text: egui then sends no
-/// Paste (and no key event), so Windows' own record of the V key tells (its toggle bit flips on
-/// each press). Elsewhere a picture is pasted from Create ▸ Clipboard.
-#[cfg(windows)]
-fn image_paste_key(ctx: &egui::Context) -> bool {
-    use winsafe::co::VK;
-    if ctx.egui_wants_keyboard_input() {
-        return false;
-    }
-    let (_, toggled) = winsafe::GetKeyState(VK::CHAR_V);
-    let (ctrl, _) = winsafe::GetKeyState(VK::CONTROL);
-    let id = egui::Id::unique("image-paste-v-toggle");
-    let before = ctx.data(|d| d.get_temp::<bool>(id));
-    ctx.data_mut(|d| d.insert_temp(id, toggled));
-    before.is_some_and(|b| b != toggled) && (ctrl || ctx.input(|i| i.modifiers.command))
-}
-
-#[cfg(not(windows))]
-fn image_paste_key(_ctx: &egui::Context) -> bool {
-    false
-}
-
-/// The picture on the system clipboard, as a file to add: pixels (as PNG), or the first image
-/// file copied in a file manager. `None` when there is none.
+/// The first image file copied in a file manager, read to add (Thai edition). `None` when the
+/// clipboard holds none.
 #[cfg(not(target_arch = "wasm32"))]
-fn clipboard_picture() -> Option<Result<(String, Vec<u8>), String>> {
+fn clipboard_image_file() -> Option<Result<(String, Vec<u8>), String>> {
     /// A pasted file larger than this is refused rather than read.
     const MAX_FILE: u64 = 64 << 20;
-    let mut cb = arboard::Clipboard::new().ok()?;
-    if let Ok(img) = cb.get_image() {
-        return Some(crate::create_ui::png_from_rgba(img.width, img.height, &img.bytes).map(|png| (tl!("Pasted image").to_string() + ".png", png)));
-    }
-    let files = cb.get().file_list().ok()?;
+    let files = crate::os_clipboard::with(|c| c.get().file_list()).ok()?;
     let path = files.into_iter().find(|p| {
         p.extension()
             .and_then(|e| e.to_str())
@@ -46,11 +20,6 @@ fn clipboard_picture() -> Option<Result<(String, Vec<u8>), String>> {
     })
 }
 
-#[cfg(target_arch = "wasm32")]
-fn clipboard_picture() -> Option<Result<(String, Vec<u8>), String>> {
-    None
-}
-
 /// Why nothing can be copied out of the document: its security doesn't allow it (Table 22,
 /// bit 5; #568).
 pub(crate) fn copy_refused() -> &'static str {
@@ -59,6 +28,11 @@ pub(crate) fn copy_refused() -> &'static str {
 
 pub(crate) fn print_refused() -> &'static str {
     tl!("The document's security settings don't allow printing")
+}
+
+enum ClipboardPaste {
+    Text(String),
+    Image(std::sync::Arc<egui::ColorImage>),
 }
 
 impl PdfCraftApp {
@@ -73,40 +47,114 @@ impl PdfCraftApp {
         false
     }
 
-    /// ⌘C copies the selected text, unless a text field has the keyboard (it copies its own). In
-    /// Edit a PDF it copies the selected text box or paragraph, which ⌘V then adds again as a new
-    /// text box (Thai edition).
-    pub(super) fn copy_key(&mut self, i: usize, ctx: &egui::Context) {
-        // ⌘C and ⌘V arrive as Copy and Paste events on most platforms.
-        let (copy, paste) = ctx.input(|input| {
-            let copy = input.events.iter().any(|e| matches!(e, egui::Event::Copy));
-            let paste = input.events.iter().find_map(|e| match e {
-                egui::Event::Paste(text) => Some(text.clone()),
-                _ => None,
-            });
-            (copy, paste)
+    /// ⌘C / ⌘X / ⌘V copy, cut and paste text or images on canvas (unless a text field has focus).
+    pub(super) fn clipboard_keys(&mut self, i: usize, ctx: &egui::Context) {
+        use egui::{Key, KeyboardShortcut, Modifiers};
+        let pastes: Vec<_> = ctx.input(|input| {
+            input
+                .events
+                .iter()
+                .filter_map(|event| match event {
+                    egui::Event::Paste(text) => Some(ClipboardPaste::Text(text.clone())),
+                    egui::Event::PasteImage(image) => Some(ClipboardPaste::Image(image.clone())),
+                    _ => None,
+                })
+                .collect()
         });
-        if ctx.egui_wants_keyboard_input() {
+        let free = self.dialog.is_none() && !self.palette_open && !ctx.egui_wants_keyboard_input() && !self.is_preparing();
+        if !free || self.views.get(i).is_some_and(|v| v.forms.focus.is_some() || v.organize) {
+            self.receive_pastes(i, pastes, false);
             return;
         }
-        if let Some(text) = paste {
-            if self.comment_clip.as_ref().is_some_and(|c| c.marker == text) {
-                self.paste_comment(i);
-                return;
-            }
-            if self.image_clip.as_ref().is_some_and(|c| c.marker == text) {
-                self.paste_added_image(i);
-                return;
-            }
-            self.paste_text_box(i, &text);
-        } else if self.dialog.is_none() && !self.palette_open && image_paste_key(ctx) {
-            // ⌘V with a picture on the clipboard (Thai edition): egui sends no Paste for one.
-            self.paste_image(i);
+        let copy = ctx.input(|input| input.events.iter().any(|e| matches!(e, egui::Event::Copy)))
+            || ctx.input_mut(|input| input.consume_shortcut(&KeyboardShortcut::new(Modifiers::COMMAND, Key::C)));
+        let cut = ctx.input(|input| input.events.iter().any(|e| matches!(e, egui::Event::Cut)))
+            || ctx.input_mut(|input| input.consume_shortcut(&KeyboardShortcut::new(Modifiers::COMMAND, Key::X)));
+        let paste = ctx.input_mut(|input| input.consume_shortcut(&KeyboardShortcut::new(Modifiers::COMMAND, Key::V)));
+
+        if copy
+            && !self.copy_on_canvas(i, ctx)
+            && let Some(sel) = self.views.get(i).and_then(|v| v.image_selection.clone())
+            && let Some(id) = self.views.get(i).map(|v| v.id)
+            && self.may_copy(id)
+        {
+            self.copy_page_image(sel.page, sel.index);
         }
-        if !copy {
+        if cut
+            && let Some(sel) = self.views.get(i).and_then(|v| v.image_selection.clone())
+            && let Some(id) = self.views.get(i).map(|v| v.id)
+            && self.may_copy(id)
+        {
+            self.cut_page_image(sel.page, sel.index);
+        }
+        if !pastes.is_empty() {
+            self.paste_edition_text(i, &pastes);
+            self.receive_pastes(i, pastes, true);
             return;
         }
-        let Some(id) = self.views.get(i).map(|v| v.id) else { return };
+        if paste {
+            let has_override_image = matches!(self.clipboard_override, Some(crate::create_ui::Clip::Image { .. }));
+            #[cfg(not(target_arch = "wasm32"))]
+            let system_has_text = if !has_override_image && self.system_clipboard { crate::os_clipboard::has_text() } else { false };
+            #[cfg(target_arch = "wasm32")]
+            let system_has_text = false;
+
+            if !has_override_image && system_has_text {
+                self.last_copied_image = None;
+                self.last_copied_file = None;
+                return;
+            }
+
+            // An image file copied in File Explorer (Thai edition).
+            #[cfg(not(target_arch = "wasm32"))]
+            if self.system_clipboard {
+                match clipboard_image_file() {
+                    Some(Ok((name, bytes))) => return self.add_image(name, bytes),
+                    Some(Err(e)) => return self.notify_fmt("Couldn't paste the image: {e}", &[("e", &e)]),
+                    None => {}
+                }
+            }
+            let page = self.views.get(i).map_or(0, |v| v.current);
+            self.paste_image(page, None);
+        }
+    }
+
+    fn receive_pastes(&mut self, view: usize, pastes: Vec<ClipboardPaste>, images_allowed: bool) {
+        let page = self.views.get(view).map_or(0, |view| view.current);
+        for paste in pastes {
+            match paste {
+                ClipboardPaste::Text(_) => {
+                    // Text fields may own the paste; the canvas cache still observes its contents.
+                    self.last_copied_image = None;
+                    self.last_copied_file = None;
+                }
+                ClipboardPaste::Image(image) if images_allowed => {
+                    self.paste_received_image(page, &image);
+                }
+                ClipboardPaste::Image(_) => {}
+            }
+        }
+    }
+
+    /// Text pasted on the page, when no picture came with it (Thai edition): a copied comment or
+    /// added picture by its marker, otherwise a new text box.
+    fn paste_edition_text(&mut self, i: usize, pastes: &[ClipboardPaste]) {
+        if pastes.iter().any(|p| matches!(p, ClipboardPaste::Image(_))) {
+            return;
+        }
+        let Some(text) = pastes.iter().find_map(|p| if let ClipboardPaste::Text(text) = p { Some(text.as_str()) } else { None }) else { return };
+        if self.comment_clip.as_ref().is_some_and(|c| c.marker == text) {
+            self.paste_comment(i);
+        } else if self.image_clip.as_ref().is_some_and(|c| c.marker == text) {
+            self.paste_added_image(i);
+        } else {
+            self.paste_text_box(i, text);
+        }
+    }
+
+    /// ⌘C on the page: what the tools have selected, then the selected text (Thai edition).
+    fn copy_on_canvas(&mut self, i: usize, ctx: &egui::Context) -> bool {
+        let Some(id) = self.views.get(i).map(|v| v.id) else { return false };
         // With Add text or Edit text & images, what those tools selected is copied: a comment
         // selected before switching to them stays selected, and must not be copied instead
         // (Thai edition).
@@ -115,28 +163,28 @@ impl PdfCraftApp {
             && let Some((page, index)) = self.views.get(i).and_then(|v| v.comments.selected)
             && self.copy_comment(i, page, index, ctx)
         {
-            return;
+            return true;
         }
         // A picture of the page itself (Edit text & images): its pixels to the clipboard, which
         // ⌘V pastes as an added picture.
         if editing_tool && let Some((page, index)) = self.page_image_to_copy(i) {
             self.copy_page_image(page, index);
-            return;
+            return true;
         }
         if let Some(clip) = self.image_to_copy(i) {
             ctx.copy_text(clip.marker.clone());
             self.image_clip = Some(clip);
-            return;
+            return true;
         }
         if let Some(clip) = self.text_box_to_copy(i) {
             if self.may_copy(id) {
                 ctx.copy_text(clip.text.text.clone());
                 self.text_clipboard = Some(clip);
             }
-            return;
+            return true;
         }
         let _ = id;
-        self.copy_selected_text(i, ctx);
+        self.copy_selected_text(i, ctx)
     }
 
     /// Shared permission gate for copying selected page text from menus and keyboard events.
@@ -200,21 +248,6 @@ impl PdfCraftApp {
                 Some(TextClip { text, page, pastes: 0 })
             }
             _ => None,
-        }
-    }
-
-    /// ⌘V with a picture on the clipboard (Copy Image here or in another program, or an image file
-    /// copied in File Explorer): it is added to the current page as an image, selected, with the
-    /// Edit a PDF panel open (Thai edition).
-    fn paste_image(&mut self, i: usize) {
-        let Some(view) = self.views.get(i) else { return };
-        if view.content.draft.is_some() || view.line_editor.is_some() {
-            return;
-        }
-        match clipboard_picture() {
-            Some(Ok((name, bytes))) => self.add_image(name, bytes),
-            Some(Err(e)) => self.notify_fmt("Couldn't paste the image: {e}", &[("e", &e)]),
-            None => {}
         }
     }
 
@@ -368,5 +401,224 @@ impl PdfCraftApp {
             Err(std::sync::mpsc::TryRecvError::Empty) => ctx.request_repaint_after(std::time::Duration::from_millis(50)),
             Err(std::sync::mpsc::TryRecvError::Disconnected) => self.document_copy = None,
         }
+    }
+}
+
+#[cfg(test)]
+mod review_tests {
+    use super::*;
+    fn delivered() -> egui::Event {
+        egui::Event::PasteImage(std::sync::Arc::new(egui::ColorImage::filled([1, 1], egui::Color32::GREEN)))
+    }
+
+    fn key(pressed: bool, modifiers: egui::Modifiers) -> egui::Event {
+        egui::Event::Key { key: egui::Key::V, physical_key: None, pressed, repeat: false, modifiers }
+    }
+
+    fn image_app() -> PdfCraftApp {
+        let mut app = PdfCraftApp::new();
+        app.system_clipboard = false;
+        app.create_blank();
+        app.clipboard_override = Some(crate::create_ui::Clip::Image { width: 1, height: 1, rgba: vec![255, 0, 0, 255] });
+        app
+    }
+
+    fn frame(app: &mut PdfCraftApp, ctx: &egui::Context, time: f64, events: Vec<egui::Event>) -> usize {
+        ctx.run_ui(egui::RawInput { time: Some(time), events, ..Default::default() }, |ui| app.clipboard_keys(0, ui.ctx()))
+            .drop_without_applying_deltas();
+        app.session.get(app.views[0].id).unwrap().page_images(0).len()
+    }
+
+    #[test]
+    fn delivered_image_pastes_for_either_modifier_release_order() {
+        for command_first in [true, false] {
+            let mut app = image_app();
+            let ctx = egui::Context::default();
+            frame(&mut app, &ctx, 1.0, vec![egui::Event::ModifiersChanged(egui::Modifiers::COMMAND)]);
+            let releases = if command_first {
+                vec![egui::Event::ModifiersChanged(egui::Modifiers::NONE), key(false, egui::Modifiers::NONE)]
+            } else {
+                vec![key(false, egui::Modifiers::COMMAND), egui::Event::ModifiersChanged(egui::Modifiers::NONE)]
+            };
+            assert_eq!(frame(&mut app, &ctx, 1.1, releases), 0, "key release is not a delivered paste");
+            assert_eq!(frame(&mut app, &ctx, 1.2, vec![delivered()]), 1, "asynchronous pixels identify the actual paste");
+            assert_eq!(frame(&mut app, &ctx, 1.25, vec![key(false, egui::Modifiers::NONE)]), 1);
+        }
+    }
+
+    #[test]
+    fn clipboard_history_after_a_completed_paste_does_not_paste_on_open() {
+        for explicit_press in [false, true] {
+            let mut app = image_app();
+            let ctx = egui::Context::default();
+            let mut first = vec![egui::Event::ModifiersChanged(egui::Modifiers::COMMAND), delivered()];
+            if explicit_press {
+                first.push(key(true, egui::Modifiers::COMMAND));
+            }
+            first.push(key(false, egui::Modifiers::COMMAND));
+            assert_eq!(frame(&mut app, &ctx, 1.0, first), 1);
+            // The integration drops Windows-key identity; Win+V can leave only this release.
+            assert_eq!(
+                frame(&mut app, &ctx, 1.1, vec![egui::Event::ModifiersChanged(egui::Modifiers::NONE), key(false, egui::Modifiers::NONE)]),
+                1,
+                "opening history must not paste"
+            );
+            assert_eq!(
+                frame(&mut app, &ctx, 1.2, vec![delivered(), key(true, egui::Modifiers::COMMAND), key(false, egui::Modifiers::COMMAND)]),
+                2,
+                "choosing an item produces exactly one intentional paste"
+            );
+        }
+    }
+
+    #[test]
+    fn clipboard_history_and_plain_v_after_an_unrelated_shortcut_do_nothing() {
+        let mut app = image_app();
+        let ctx = egui::Context::default();
+        let copy = egui::Event::Key { key: egui::Key::C, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::COMMAND };
+        frame(&mut app, &ctx, 1.0, vec![egui::Event::ModifiersChanged(egui::Modifiers::COMMAND), copy]);
+        assert_eq!(frame(&mut app, &ctx, 1.1, vec![egui::Event::ModifiersChanged(egui::Modifiers::NONE), key(false, egui::Modifiers::NONE)]), 0);
+        assert_eq!(frame(&mut app, &ctx, 1.2, vec![key(true, egui::Modifiers::NONE), key(false, egui::Modifiers::NONE)]), 0);
+        assert_eq!(frame(&mut app, &ctx, 10.0, vec![key(false, egui::Modifiers::NONE)]), 0);
+    }
+
+    #[test]
+    fn delivered_image_is_authoritative_and_not_duplicated_by_keys() {
+        let mut app = image_app();
+        app.system_clipboard = true;
+        app.clipboard_override = Some(crate::create_ui::Clip::Text("newer OS contents".into()));
+        let ctx = egui::Context::default();
+        assert_eq!(frame(&mut app, &ctx, 1.0, vec![delivered(), key(true, egui::Modifiers::COMMAND), key(false, egui::Modifiers::COMMAND)]), 1);
+        assert_eq!(app.last_copied_image.as_ref().unwrap().2, vec![0, 255, 0, 255]);
+    }
+
+    #[test]
+    fn text_then_image_batch_pastes_image_and_keeps_its_cache() {
+        let mut app = image_app();
+        let ctx = egui::Context::default();
+        assert_eq!(frame(&mut app, &ctx, 1.0, vec![egui::Event::Paste("text".into()), delivered()]), 1);
+        assert_eq!(app.last_copied_image.unwrap().2, vec![0, 255, 0, 255]);
+    }
+
+    #[test]
+    fn image_then_text_batch_pastes_image_and_leaves_text_authoritative() {
+        let mut app = image_app();
+        let ctx = egui::Context::default();
+        assert_eq!(frame(&mut app, &ctx, 1.0, vec![delivered(), egui::Event::Paste("text".into())]), 1);
+        assert!(app.last_copied_image.is_none());
+        assert!(app.last_copied_file.is_none());
+    }
+
+    #[test]
+    fn separate_delivered_images_in_one_batch_each_paste_once() {
+        let mut app = image_app();
+        let ctx = egui::Context::default();
+        assert_eq!(
+            frame(&mut app, &ctx, 1.0, vec![delivered(), delivered(), key(true, egui::Modifiers::COMMAND), key(false, egui::Modifiers::COMMAND)]),
+            2
+        );
+    }
+
+    #[test]
+    fn explicit_control_shortcut_still_pastes_once_without_an_image_event() {
+        let mut app = image_app();
+        let ctx = egui::Context::default();
+        assert_eq!(frame(&mut app, &ctx, 1.0, vec![key(true, egui::Modifiers::COMMAND)]), 1);
+        assert_eq!(frame(&mut app, &ctx, 1.1, vec![key(false, egui::Modifiers::COMMAND)]), 1);
+    }
+
+    #[test]
+    fn delivered_image_obeys_focus_modal_and_permission_guards() {
+        let ctx = egui::Context::default();
+        let mut app = image_app();
+        app.palette_open = true;
+        assert_eq!(frame(&mut app, &ctx, 1.0, vec![delivered()]), 0);
+        app.palette_open = false;
+        app.views[0].organize = true;
+        assert_eq!(frame(&mut app, &ctx, 2.0, vec![delivered()]), 0);
+        app.views[0].organize = false;
+        app.apply_edit(pdfcraft_engine::Edit::Protect(pdfcraft_engine::Protection {
+            permissions_password: Some("owner".into()),
+            ..Default::default()
+        }));
+        let bytes = app.session.save_bytes(app.views[0].id).unwrap();
+        let mut restricted = PdfCraftApp::new();
+        restricted.open_bytes("restricted.pdf", None, bytes.as_ref().clone()).unwrap();
+        assert!(!restricted.session.get(restricted.views[0].id).unwrap().allows_modification());
+        assert_eq!(frame(&mut restricted, &ctx, 3.0, vec![delivered()]), 0);
+    }
+
+    #[test]
+    fn review_an_image_less_release_is_silent_but_explicit_paste_explains() {
+        let mut app = PdfCraftApp::new();
+        app.system_clipboard = false;
+        app.create_blank();
+        app.toast = None;
+        let ctx = egui::Context::default();
+        ctx.run_ui(
+            egui::RawInput {
+                events: vec![egui::Event::Key {
+                    key: egui::Key::V,
+                    physical_key: None,
+                    pressed: false,
+                    repeat: false,
+                    modifiers: egui::Modifiers::NONE,
+                }],
+                ..Default::default()
+            },
+            |ui| app.clipboard_keys(0, ui.ctx()),
+        )
+        .drop_without_applying_deltas();
+        assert!(app.toast.is_none());
+        assert!(!app.paste_image(0, None));
+        assert!(app.toast.is_some(), "an explicit menu action still explains why there is no image");
+    }
+
+    #[test]
+    fn review_text_paste_release_is_silent_and_later_image_paste_still_works() {
+        let mut app = PdfCraftApp::new();
+        app.system_clipboard = false;
+        app.create_blank();
+        app.last_copied_image = Some((1, 1, vec![255, 0, 0, 255]));
+        app.palette_open = true; // A text field owns the first event.
+        let ctx = egui::Context::default();
+        ctx.run_ui(egui::RawInput { events: vec![egui::Event::Paste("text".into())], ..Default::default() }, |ui| app.clipboard_keys(0, ui.ctx()))
+            .drop_without_applying_deltas();
+        assert!(app.last_copied_image.is_none());
+        app.palette_open = false;
+        app.toast = None;
+        ctx.run_ui(
+            egui::RawInput {
+                events: vec![egui::Event::Key {
+                    key: egui::Key::V,
+                    physical_key: None,
+                    pressed: false,
+                    repeat: false,
+                    modifiers: egui::Modifiers::NONE,
+                }],
+                ..Default::default()
+            },
+            |ui| app.clipboard_keys(0, ui.ctx()),
+        )
+        .drop_without_applying_deltas();
+        assert!(app.toast.is_none(), "the text gesture's key release must be silent");
+        app.clipboard_override = None;
+        let delivered = egui::Event::PasteImage(std::sync::Arc::new(egui::ColorImage::filled([1, 1], egui::Color32::GREEN)));
+        ctx.run_ui(egui::RawInput { events: vec![delivered], ..Default::default() }, |ui| app.clipboard_keys(0, ui.ctx()))
+            .drop_without_applying_deltas();
+        let id = app.active_ids().unwrap().1;
+        assert_eq!(app.session.get(id).unwrap().page_images(0).len(), 1, "a later real image shortcut still works");
+    }
+
+    #[test]
+    fn review_failed_keyboard_cut_keeps_the_image_selection() {
+        let mut app = PdfCraftApp::new();
+        app.system_clipboard = false;
+        app.create_blank();
+        app.views[0].image_selection = Some(crate::edit_text_ui::ImageSelection::at(0, 0));
+        let ctx = egui::Context::default();
+        ctx.run_ui(egui::RawInput { events: vec![egui::Event::Cut], ..Default::default() }, |ui| app.clipboard_keys(0, ui.ctx()))
+            .drop_without_applying_deltas();
+        assert!(app.views[0].image_selection.is_some());
     }
 }
