@@ -3,13 +3,14 @@
 //! horizontal scale and character spacing. One panel serves a paragraph being edited (with the
 //! fonts already on its page and the spacing controls) and added text (the standard families,
 //! size, colour, style, alignment and character spacing). What PdfCraft can't apply yet (lists,
-//! superscript and subscript, paragraph spacing, or line spacing and scale for added text) is shown
+//! paragraph spacing, or line spacing and scale for added text) is shown
 //! disabled and says so.
 //!
 //! The icons are Lucide's (AGENTS.md §1); only the arrangement follows Acrobat.
 
 use crate::widgets::Tip as _;
 use egui::{Align, Color32, CornerRadius, Layout, Rect, Sense, Stroke, vec2};
+use pdfcraft_engine::text_script::Script;
 use pdfcraft_engine::{AddedText, FontFamily, TextAlign};
 
 use crate::edit_text_ui::Extras;
@@ -39,6 +40,7 @@ pub(crate) struct Fonts<'a> {
     pub sources: Option<&'a [(String, String)]>,
     /// The name the list shows for the current choice.
     pub shown: String,
+    pub mixed_size: bool,
 }
 
 /// Text being typed in, for the alignment buttons: with some of it selected, they show and set the
@@ -86,7 +88,10 @@ impl Paragraphs<'_> {
 #[derive(Default)]
 pub(crate) struct Outcome {
     pub changed: bool,
+    pub size_committed: bool,
     pub font: Option<FontChoice>,
+    /// Superscript or Subscript was clicked, for the selected paragraphs' text.
+    pub script: Option<Script>,
 }
 
 const LINE_SPACINGS: [f64; 7] = [1.0, 1.15, 1.2, 1.5, 2.0, 2.5, 3.0];
@@ -127,8 +132,9 @@ pub(crate) fn panel(
     widgets::section_title(ui, tl!("Format text"));
 
     // The font, across the panel.
+    ui.spacing_mut().combo_height = 360.0;
     let width = ui.available_width();
-    craft_ui::ComboBox::from_id_salt("format-font")
+    let font_resp = craft_ui::ComboBox::from_id_salt("format-font")
         .selected_text(fonts.shown.as_str())
         .width(width)
         .height(360.0)
@@ -158,32 +164,88 @@ pub(crate) fn panel(
                     out.font = Some(FontChoice::Load);
                 }
                 #[cfg(not(target_arch = "wasm32"))]
-                ui.menu_button(tl!("Installed fonts…"), |ui| match crate::files::installed_font_files(ui.ctx()) {
-                    Some(list) if list.is_empty() => {
-                        ui.label(tl!("No openly licensed document fonts found. Load a font file."));
-                    }
-                    Some(list) => {
-                        for font in list {
-                            if ui.button(&font.face).clicked() {
-                                out.font = Some(FontChoice::Installed(font.path));
-                                ui.close();
+                ui.menu_button(tl!("Installed fonts…"), |ui| {
+                    ui.set_min_width(260.0);
+                    let reload = ui.button(tl!("Reload")).clicked();
+                    match crate::files::installed_font_files(ui.ctx(), reload) {
+                        Some(list) if list.is_empty() => {
+                            ui.label(tl!("No openly licensed document fonts found. Load a font file."));
+                        }
+                        Some(list) => {
+                            let search_id = ui.scope_id().with("installed-font-search");
+                            let mut query = ui.data(|d| d.get_temp::<String>(search_id)).unwrap_or_default();
+                            ui.horizontal(|ui| {
+                                let (icon_rect, _) = ui.allocate_exact_size(egui::vec2(16.0, 16.0), egui::Sense::hover());
+                                crate::icons::paint(ui, icon_rect, "search", 13.0, ui.visuals().text_color().gamma_multiply(0.6));
+                                let resp = ui
+                                    .add(egui::TextEdit::singleline(&mut query).hint_text(tl!("Search…")).desired_width(ui.available_width() - 8.0));
+                                if resp.changed() {
+                                    ui.data_mut(|d| d.insert_temp(search_id, query.clone()));
+                                }
+                            });
+                            ui.separator();
+
+                            let query_lower = query.trim().to_lowercase();
+                            let mut families: std::collections::BTreeMap<&str, Vec<&pdfcraft_engine::text_fonts::FontFile>> =
+                                std::collections::BTreeMap::new();
+                            for font in &list {
+                                if query_lower.is_empty()
+                                    || font.family.to_lowercase().contains(&query_lower)
+                                    || font.face.to_lowercase().contains(&query_lower)
+                                {
+                                    families.entry(&font.family).or_default().push(font);
+                                }
+                            }
+
+                            if families.is_empty() {
+                                ui.label(tl!("No openly licensed document fonts found. Load a font file."));
+                            } else {
+                                egui::ScrollArea::vertical().max_height(350.0).show(ui, |ui| {
+                                    for (family, faces) in families {
+                                        if faces.len() == 1 {
+                                            if let Some(&font) = faces.first() {
+                                                let label =
+                                                    if font.face != font.family && !font.face.is_empty() { font.face.as_str() } else { family };
+                                                if ui.button(label).clicked() {
+                                                    out.font = Some(FontChoice::Installed(font.path.clone()));
+                                                    ui.close();
+                                                }
+                                            }
+                                        } else {
+                                            ui.menu_button(family, |ui| {
+                                                ui.set_min_width(180.0);
+                                                for font in faces {
+                                                    let label =
+                                                        font.face.strip_prefix(family).map(str::trim).filter(|s| !s.is_empty()).unwrap_or(&font.face);
+                                                    if ui.button(label).clicked() {
+                                                        out.font = Some(FontChoice::Installed(font.path.clone()));
+                                                        ui.close();
+                                                    }
+                                                }
+                                            });
+                                        }
+                                    }
+                                });
                             }
                         }
-                    }
-                    None => {
-                        ui.label(tl!("Finding document fonts…"));
+                        None => {
+                            ui.label(tl!("Finding document fonts…"));
+                        }
                     }
                 });
+                ui.add_space(4.0);
             }
         })
-        .response
-        .tip(format!("{}\n{}", tl!("Font"), tl!("Thai and Arabic use regular fallback fonts when available.")));
+        .response;
+    font_resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, ui.is_enabled(), tl!("Font")));
+    font_resp.tip(format!("{}\n{}", tl!("Font"), tl!("Thai and Arabic use regular fallback fonts when available.")));
     ui.add_space(4.0);
 
     // Size and colour | bullets, numbering and alignment.
+    let mut size_committed = false;
     row(ui, |ui| {
         // Any size from 1 to 500 pt can be typed, with the usual ones in a list (Thai edition).
-        crate::content_ui::size_control(ui, &mut look.size, &mut hover.size);
+        size_committed = crate::content_ui::size_control(ui, &mut look.size, &mut hover.size, fonts.mixed_size);
         let swatch = colour_button(ui, t, look.color);
         egui::Popup::menu(&swatch).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| {
             if let Some(picked) = crate::comments::swatch_grid_hover(ui, Some(look.color), &mut hover.color) {
@@ -254,8 +316,17 @@ pub(crate) fn panel(
             }
             None => planned(ui, "underline", tl!("Underline")),
         }
-        planned(ui, "superscript", tl!("Superscript"));
-        planned(ui, "subscript", tl!("Subscript"));
+        if let Some(p) = &paragraphs {
+            for (script, icon, tip) in [(Script::Super, "superscript", tl!("Superscript")), (Script::Sub, "subscript", tl!("Subscript"))] {
+                let on = pdfcraft_engine::text_script::is_in(p.text, p.selection.as_ref(), script);
+                if icons::button(ui, icon, 30.0, on, tip).clicked() {
+                    out.script = Some(script);
+                }
+            }
+        } else {
+            planned(ui, "superscript", tl!("Superscript"));
+            planned(ui, "subscript", tl!("Subscript"));
+        }
     });
 
     // Line and paragraph spacing; horizontal scale and character spacing: two columns, each an
@@ -269,12 +340,17 @@ pub(crate) fn panel(
             labelled_icon(ui, t, "arrow-up-down", tl!("Line spacing"));
             let own = tl!("Auto").to_string();
             let shown = if e.line_spacing == 0.0 { own.clone() } else { number(e.line_spacing) };
-            craft_ui::ComboBox::from_id_salt("format-line-spacing").selected_text(shown).width(half).show_ui(ui, |ui| {
-                ui.selectable_value(&mut e.line_spacing, 0.0, own.as_str());
-                for v in LINE_SPACINGS {
-                    ui.selectable_value(&mut e.line_spacing, v, number(v));
-                }
-            });
+            let spacing_resp = craft_ui::ComboBox::from_id_salt("format-line-spacing")
+                .selected_text(shown)
+                .width(half)
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut e.line_spacing, 0.0, own.as_str());
+                    for v in LINE_SPACINGS {
+                        ui.selectable_value(&mut e.line_spacing, v, number(v));
+                    }
+                })
+                .response;
+            spacing_resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, ui.is_enabled(), tl!("Line spacing")));
             ui.add_space(8.0);
             ui.add_enabled_ui(false, |ui| {
                 labelled_icon(ui, t, "pilcrow", tl!("Paragraph spacing"));
@@ -303,7 +379,8 @@ pub(crate) fn panel(
         number_with_presets(ui, spacing, &CHAR_SPACINGS, half, (label.id, tl!("Character spacing")));
     });
 
-    out.changed = (look.clone(), extras.as_deref().copied()) != before;
+    out.size_committed = size_committed;
+    out.changed = out.changed || size_committed || (look.clone(), extras.as_deref().copied()) != before;
     crate::content_ui::note_hover(ui.ctx(), Some(hover));
     ui.add_space(6.0);
     ui.separator();
@@ -375,7 +452,8 @@ fn number_with_presets(ui: &mut egui::Ui, n: Number<'_>, presets: &[f64], width:
         ui.spacing_mut().item_spacing.x = 2.0;
         let field = egui::DragValue::new(&mut *n.value).range(n.range).speed(n.speed).max_decimals(2).suffix(n.suffix);
         let height = ui.spacing().interact_size.y;
-        ui.add_sized([(width - PRESET_LIST - 2.0).max(30.0), height], field).labelled_by(label.0);
+        let drag_resp = ui.add_sized([(width - PRESET_LIST - 2.0).max(30.0), height], field).labelled_by(label.0);
+        drag_resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::SpinButton, ui.is_enabled(), label.1));
         let list = icons::button(ui, "chevron-down", PRESET_LIST, false, label.1);
         egui::Popup::menu(&list).show(|ui| {
             for &v in presets {

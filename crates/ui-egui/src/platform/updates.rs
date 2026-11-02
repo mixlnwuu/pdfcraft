@@ -2,7 +2,8 @@
 //!
 //! The desktop app supplies how to ask ([`PdfCraftApp::update_source`]), so this crate has no
 //! network code; without a source (the web build, tests) the command opens the releases page.
-//! Thai edition: the desktop app also asks once at start (Preferences can turn that off), and a
+//! Thai edition: the desktop app also asks at the first start of a day (Preferences can turn that
+//! off, and the prompt can put a version aside), and a
 //! newer release gets a prompt. Where the app can install it ([`UpdateInstall`]: Windows, not a
 //! portable copy), Update and restart downloads the release's MSI, checks its SHA-256 against
 //! GitHub's, and runs it once PdfCraft has closed; elsewhere the prompt opens the release's page.
@@ -118,6 +119,8 @@ pub(crate) struct Updates {
     quiet: bool,
     /// A newer release offered.
     prompt: Option<Prompt>,
+    /// The prompt's "Don't remind me about this version" box.
+    skip_ticked: bool,
     /// The installer downloaded and checked, to run as PdfCraft closes.
     ready: Option<PathBuf>,
 }
@@ -186,7 +189,9 @@ impl PdfCraftApp {
         {
             if std::mem::take(&mut self.updates.start_check) {
                 self.check_update_took();
-                if self.check_updates_at_start {
+                let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+                if self.check_updates_at_start && self.update_asked_on != today {
+                    self.update_asked_on = today;
                     self.updates.quiet = true;
                     self.start_check();
                 }
@@ -200,7 +205,9 @@ impl PdfCraftApp {
                 let current = current_version();
                 let newer = result.as_ref().ok().filter(|r| is_newer(&r.version, &current));
                 let quiet = std::mem::take(&mut self.updates.quiet);
-                match newer {
+                // A version put aside is said no more at start; asked for by hand, it still is.
+                let skipped = quiet && newer.is_some_and(|r| self.update_skipped.as_deref() == Some(r.version.as_str()));
+                match newer.filter(|_| !skipped) {
                     Some(r) if quiet || (r.installer.is_some() && self.update_install.is_some()) => {
                         self.updates.prompt = Some(Prompt { release: r.clone(), state: PromptState::Offered });
                         self.updates.open = false;
@@ -294,6 +301,8 @@ fn prompt(app: &mut PdfCraftApp, ctx: &egui::Context) {
     let page = p.release.url.clone();
     let installable = can_install && p.release.installer.is_some();
     let (mut close, mut update, mut download, mut cancel) = (false, false, false, false);
+    let mut skip_ticked = app.updates.skip_ticked;
+    let tag = p.release.version.clone();
     let modal = crate::widgets::show_modal(ctx, "update-prompt", |ui| {
         ui.set_width(440.0);
         ui.horizontal(|ui| {
@@ -306,7 +315,9 @@ fn prompt(app: &mut PdfCraftApp, ctx: &egui::Context) {
         });
         ui.add_space(10.0);
         ui.label(crate::i18n::fmt(tl!("PdfCraft {v} is available with the latest features and bug fixes."), &[("v", &version)]));
-        ui.add_space(10.0);
+        ui.add_space(8.0);
+        ui.add(widgets::checkbox(&mut skip_ticked, tl!("Don't remind me about this version")));
+        ui.add_space(6.0);
         ui.separator();
         ui.add_space(6.0);
         match &p.state {
@@ -338,6 +349,7 @@ fn prompt(app: &mut PdfCraftApp, ctx: &egui::Context) {
             }
         }
     });
+    app.updates.skip_ticked = skip_ticked;
     let downloading = matches!(p.state, PromptState::Downloading { .. });
     if cancel || (downloading && modal.should_close()) {
         if let Some(Prompt { state: PromptState::Downloading { stop, .. }, .. }) = app.updates.prompt.as_ref() {
@@ -346,6 +358,9 @@ fn prompt(app: &mut PdfCraftApp, ctx: &egui::Context) {
         app.updates.prompt = None;
     } else if close || modal.should_close() {
         app.updates.prompt = None;
+        if std::mem::take(&mut app.updates.skip_ticked) {
+            app.update_skipped = Some(tag);
+        }
     } else if update {
         app.start_download(ctx);
     } else if download {

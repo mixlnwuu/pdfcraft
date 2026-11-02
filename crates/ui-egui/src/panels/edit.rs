@@ -270,7 +270,10 @@ fn format_section(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens) {
             .into_iter()
             .map(|f| (f.resource, f.face))
             .collect();
-        let mut shown = ed.font_shown(&sources);
+        let fmt = ed.selection_formatting(&sources);
+        ed.sync_selection_look(&fmt);
+        let mut shown = fmt.font_shown;
+        let mixed_size = fmt.size.is_none();
         // Thai edition: the paragraph's own font, when this computer doesn't have it.
         if ed.own_font_missing() {
             shown = format!("{shown} ({})", tl!("not on this computer"));
@@ -279,8 +282,21 @@ fn format_section(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens) {
         painter_button(app, ui, i, &ed.look, source_font.as_deref());
         // A selection aligns the rows it touches; the caret alone, the whole paragraph.
         let paragraphs = crate::format_text_ui::Paragraphs { text: &ed.text, selection: ed.selection.clone(), tidy: false };
-        let out = crate::format_text_ui::panel(ui, t, &mut ed.look, Some(&mut ed.extras), Fonts { sources: Some(&sources), shown }, Some(paragraphs));
+        let out = crate::format_text_ui::panel(
+            ui,
+            t,
+            &mut ed.look,
+            Some(&mut ed.extras),
+            Fonts { sources: Some(&sources), shown, mixed_size },
+            Some(paragraphs),
+        );
+        if out.size_committed {
+            ed.choose_size(ed.look.size);
+        }
         let mut changed = out.changed;
+        if let Some(script) = out.script {
+            changed |= crate::edit_text_ui::toggle_script(&mut ed.text, &mut ed.selection, script);
+        }
         match out.font {
             Some(FontChoice::KeepSource) => {
                 ed.keep_source_font();
@@ -315,7 +331,13 @@ fn format_section(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens) {
         }
         let mut style = draft.style.clone();
         let paragraphs = crate::format_text_ui::Paragraphs { text: &draft.text, selection: draft.selection.clone(), tidy: true };
-        added_text_format(ui, t, &mut style, Some(paragraphs));
+        let out = added_text_format(ui, t, &mut style, Some(paragraphs));
+        if let Some(script) = out.script {
+            let mut toggled = draft.clone();
+            if crate::edit_text_ui::toggle_script(&mut toggled.text, &mut toggled.selection, script) {
+                app.views[i].content.draft = Some(toggled);
+            }
+        }
         if style != draft.style {
             app.restyle_draft(i, style);
         }
@@ -405,7 +427,14 @@ fn selected_boxes_format(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens) -
     if first.source_font.as_deref().is_some_and(|f| !crate::restyle::font_available(f)) {
         shown = format!("{shown} ({})", tl!("not on this computer"));
     }
-    let out = crate::format_text_ui::panel(ui, t, &mut look, Some(&mut extras), crate::format_text_ui::Fonts { sources: None, shown }, None);
+    let out = crate::format_text_ui::panel(
+        ui,
+        t,
+        &mut look,
+        Some(&mut extras),
+        crate::format_text_ui::Fonts { sources: None, shown, mixed_size: false },
+        None,
+    );
     if let Some(crate::format_text_ui::FontChoice::Family(family)) = out.font {
         look.family = family;
     }
@@ -448,12 +477,18 @@ fn painter_button(app: &mut PdfCraftApp, ui: &mut egui::Ui, i: usize, look: &pdf
 
 /// Format text for added text: the standard families, size, colour, style and alignment
 /// (of the lines `paragraphs` selects, while the text is being typed).
-fn added_text_format(ui: &mut egui::Ui, t: &Tokens, style: &mut pdfcraft_engine::AddedText, paragraphs: Option<crate::format_text_ui::Paragraphs>) {
+fn added_text_format(
+    ui: &mut egui::Ui,
+    t: &Tokens,
+    style: &mut pdfcraft_engine::AddedText,
+    paragraphs: Option<crate::format_text_ui::Paragraphs>,
+) -> crate::format_text_ui::Outcome {
     let shown = style.family.label().to_string();
-    let out = crate::format_text_ui::panel(ui, t, style, None, crate::format_text_ui::Fonts { sources: None, shown }, paragraphs);
+    let out = crate::format_text_ui::panel(ui, t, style, None, crate::format_text_ui::Fonts { sources: None, shown, mixed_size: false }, paragraphs);
     if let Some(crate::format_text_ui::FontChoice::Family(family)) = out.font {
         style.family = family;
     }
+    out
 }
 
 impl PdfCraftApp {

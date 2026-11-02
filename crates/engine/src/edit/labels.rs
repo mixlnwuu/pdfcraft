@@ -111,10 +111,17 @@ pub const EDIT_LABELS: &[&str] = &[
     "Move object",
     "Move objects",
     "Move image",
+    "Transform image",
     "Rotate image",
+    "Crop image",
     "Flip image",
     "Replace image",
     "Delete image",
+    "Bring to front",
+    "Bring forward",
+    "Send backward",
+    "Send to back",
+    "Remove crop",
     "Add header & footer",
     "Update header & footer",
     "Add watermark",
@@ -200,9 +207,13 @@ impl Edit {
             Edit::AddCustomStamp { .. } => Label::of("Add stamp"),
             Edit::DeleteAnnotation { .. } => Label::of("Delete comment"),
             Edit::DuplicateAnnotation { .. } => Label::of("Paste comment"),
-            Edit::MoveAnnotationToPage { copy: false, .. } | Edit::MoveContentToPage { copy: false, .. } => Label::of("Move to another page"),
+            Edit::MoveAnnotationToPage { copy: false, .. }
+            | Edit::MoveContentToPage { copy: false, .. }
+            | Edit::MovePageImageToPage { copy: false, .. } => Label::of("Move to another page"),
             Edit::MoveContentToPage { copy: true, page, to_page, .. } if page == to_page => Label::of("Copy object"),
-            Edit::MoveAnnotationToPage { copy: true, .. } | Edit::MoveContentToPage { copy: true, .. } => Label::of("Copy to another page"),
+            Edit::MoveAnnotationToPage { copy: true, .. }
+            | Edit::MoveContentToPage { copy: true, .. }
+            | Edit::MovePageImageToPage { copy: true, .. } => Label::of("Copy to another page"),
             Edit::SetAnnotationContents { .. } => Label::of("Edit comment"),
             Edit::ReplyToAnnotation { .. } => Label::of("Reply"),
             // The state's name is part of the wording: a language may need to agree it with the rest.
@@ -260,11 +271,19 @@ impl Edit {
             Edit::MoveObjects { objects, .. } => plural("Move object", "Move objects", objects.len()),
             Edit::EditPageImage { change, .. } => Label::of(match change {
                 ImageEdit::Move(_) => "Move image",
+                ImageEdit::Transform(_) => "Transform image",
                 ImageEdit::Rotate(_) | ImageEdit::RotateBy(_) => "Rotate image",
                 ImageEdit::Crop(_) => "Crop image",
                 ImageEdit::Flip { .. } => "Flip image",
                 ImageEdit::Replace { .. } => "Replace image",
                 ImageEdit::Delete => "Delete image",
+                ImageEdit::Arrange(ord) => match ord {
+                    pdfcraft_edit::ArrangeOrder::BringToFront => "Bring to front",
+                    pdfcraft_edit::ArrangeOrder::BringForward => "Bring forward",
+                    pdfcraft_edit::ArrangeOrder::SendBackward => "Send backward",
+                    pdfcraft_edit::ArrangeOrder::SendToBack => "Send to back",
+                },
+                ImageEdit::RemoveCrop => "Remove crop",
             }),
             Edit::AddHeaderFooter { replace: false, .. } => Label::of("Add header & footer"),
             Edit::AddHeaderFooter { .. } => Label::of("Update header & footer"),

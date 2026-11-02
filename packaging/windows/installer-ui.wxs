@@ -2,95 +2,95 @@
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
   <Fragment>
     <UI Id="PdfcraftInstallerUI">
-      <TextStyle Id="InstallerNormal" FaceName="Segoe UI" Size="9" />
-      <TextStyle Id="InstallerTitle" FaceName="Segoe UI" Size="12" Bold="yes" />
+      <TextStyle Id="InstallerNormal" FaceName="Leelawadee UI" Size="9" />
+      <TextStyle Id="InstallerTitle" FaceName="Leelawadee UI" Size="12" Bold="yes" />
       <Property Id="DefaultUIFont" Value="InstallerNormal" />
 
-      <Dialog Id="InstallWelcome" Width="370" Height="180" Title="[ProductName] Setup">
-        <Control Id="Title" Type="Text" X="20" Y="20" Width="330" Height="25" Text="{\InstallerTitle}Install [ProductName]" />
-        <Control Id="Description" Type="Text" X="20" Y="55" Width="330" Height="40" Text="Setup will install [ProductName] for all users and add it to the Start menu. Click Install to continue." HideCondition="ALLUSERS &lt;&gt; 1" ShowCondition="ALLUSERS = 1" />
-        <Control Id="DescriptionUser" Type="Text" X="20" Y="55" Width="330" Height="40" Text="Setup will install [ProductName] only for your account and add it to the Start menu. Click Install to continue." HideCondition="ALLUSERS = 1" ShowCondition="ALLUSERS &lt;&gt; 1" />
-        <Control Id="DesktopShortcut" Type="CheckBox" X="20" Y="105" Width="330" Height="17" Property="INSTALLDESKTOPSHORTCUT" CheckBoxValue="1" Text="Create a &amp;desktop shortcut" />
-        <Control Id="PdfContextMenu" Type="CheckBox" X="20" Y="123" Width="330" Height="17" Property="INSTALLPDFCONTEXTMENU" CheckBoxValue="1" Text="Add &quot;&amp;Edit with PdfCraft&quot; to the right-click menu of PDF files" />
-        <Control Id="Install" Type="PushButton" X="195" Y="145" Width="75" Height="23" Default="yes" DefaultCondition="ALLUSERS = 1" ElevationShield="yes" HideCondition="ALLUSERS &lt;&gt; 1" ShowCondition="ALLUSERS = 1" Text="&amp;Install">
+      <Dialog Id="InstallWelcome" Width="370" Height="180" Title="ติดตั้ง [ProductName]">
+        <Control Id="Title" Type="Text" X="20" Y="20" Width="330" Height="25" Text="{\InstallerTitle}ติดตั้ง [ProductName]" />
+        <Control Id="Description" Type="Text" X="20" Y="55" Width="330" Height="40" Text="โปรแกรมจะติดตั้ง [ProductName] ให้ผู้ใช้ทุกคนในเครื่อง และเพิ่มลงในเมนู Start กด ติดตั้ง เพื่อดำเนินการต่อ" HideCondition="ALLUSERS &lt;&gt; 1" ShowCondition="ALLUSERS = 1" />
+        <Control Id="DescriptionUser" Type="Text" X="20" Y="55" Width="330" Height="40" Text="โปรแกรมจะติดตั้ง [ProductName] ให้บัญชีของคุณเท่านั้น และเพิ่มลงในเมนู Start กด ติดตั้ง เพื่อดำเนินการต่อ" HideCondition="ALLUSERS = 1" ShowCondition="ALLUSERS &lt;&gt; 1" />
+        <Control Id="DesktopShortcut" Type="CheckBox" X="20" Y="105" Width="330" Height="17" Property="INSTALLDESKTOPSHORTCUT" CheckBoxValue="1" Text="สร้างทางลัดบนเดสก์ท็อป (&amp;D)" />
+        <Control Id="PdfContextMenu" Type="CheckBox" X="20" Y="123" Width="330" Height="17" Property="INSTALLPDFCONTEXTMENU" CheckBoxValue="1" Text="เพิ่ม &quot;แก้ไขด้วย PdfCraft&quot; ในเมนูคลิกขวาของไฟล์ PDF (&amp;E)" />
+        <Control Id="Install" Type="PushButton" X="195" Y="145" Width="75" Height="23" Default="yes" DefaultCondition="ALLUSERS = 1" ElevationShield="yes" HideCondition="ALLUSERS &lt;&gt; 1" ShowCondition="ALLUSERS = 1" Text="ติดตั้ง (&amp;I)">
           <Publish Event="EndDialog" Value="Return" />
         </Control>
-        <Control Id="InstallUser" Type="PushButton" DefaultCondition="ALLUSERS &lt;&gt; 1" HideCondition="ALLUSERS = 1" ShowCondition="ALLUSERS &lt;&gt; 1" X="195" Y="145" Width="75" Height="23" Text="&amp;Install">
+        <Control Id="InstallUser" Type="PushButton" DefaultCondition="ALLUSERS &lt;&gt; 1" HideCondition="ALLUSERS = 1" ShowCondition="ALLUSERS &lt;&gt; 1" X="195" Y="145" Width="75" Height="23" Text="ติดตั้ง (&amp;I)">
           <Publish Event="EndDialog" Value="Return" />
         </Control>
-        <Control Id="Cancel" Type="PushButton" X="280" Y="145" Width="70" Height="23" Cancel="yes" Text="Cancel">
+        <Control Id="Cancel" Type="PushButton" X="280" Y="145" Width="70" Height="23" Cancel="yes" Text="ยกเลิก">
           <Publish Event="EndDialog" Value="Exit" />
         </Control>
       </Dialog>
 
-      <Dialog Id="InstallMaintenance" Width="370" Height="180" Title="[ProductName] Setup">
-        <Control Id="Title" Type="Text" X="20" Y="20" Width="330" Height="25" Text="{\InstallerTitle}Maintain [ProductName]" />
-        <Control Id="Description" Type="Text" X="20" Y="55" Width="330" Height="70" Text="[ProductName] is already installed. Choose Repair to restore missing files and shortcuts, or Remove to uninstall it." />
-        <Control Id="Repair" Type="PushButton" X="110" Y="145" Width="75" Height="23" Default="yes" DefaultCondition="ALLUSERS = 1" ElevationShield="yes" HideCondition="ALLUSERS &lt;&gt; 1" ShowCondition="ALLUSERS = 1" Text="&amp;Repair">
+      <Dialog Id="InstallMaintenance" Width="370" Height="180" Title="ติดตั้ง [ProductName]">
+        <Control Id="Title" Type="Text" X="20" Y="20" Width="330" Height="25" Text="{\InstallerTitle}ดูแลรักษา [ProductName]" />
+        <Control Id="Description" Type="Text" X="20" Y="55" Width="330" Height="70" Text="ติดตั้ง [ProductName] ไว้แล้ว เลือก ซ่อมแซม เพื่อกู้คืนไฟล์และทางลัดที่หายไป หรือเลือก ถอนการติดตั้ง" />
+        <Control Id="Repair" Type="PushButton" X="110" Y="145" Width="75" Height="23" Default="yes" DefaultCondition="ALLUSERS = 1" ElevationShield="yes" HideCondition="ALLUSERS &lt;&gt; 1" ShowCondition="ALLUSERS = 1" Text="ซ่อมแซม (&amp;R)">
           <Publish Property="REINSTALL" Value="ALL" Order="1" />
           <Publish Property="REINSTALLMODE" Value="amus" Order="2" />
           <Publish Event="EndDialog" Value="Return" Order="3" />
         </Control>
-        <Control Id="RepairUser" Type="PushButton" DefaultCondition="ALLUSERS &lt;&gt; 1" HideCondition="ALLUSERS = 1" ShowCondition="ALLUSERS &lt;&gt; 1" X="110" Y="145" Width="75" Height="23" Text="&amp;Repair">
+        <Control Id="RepairUser" Type="PushButton" DefaultCondition="ALLUSERS &lt;&gt; 1" HideCondition="ALLUSERS = 1" ShowCondition="ALLUSERS &lt;&gt; 1" X="110" Y="145" Width="75" Height="23" Text="ซ่อมแซม (&amp;R)">
           <Publish Property="REINSTALL" Value="ALL" Order="1" />
           <Publish Property="REINSTALLMODE" Value="amus" Order="2" />
           <Publish Event="EndDialog" Value="Return" Order="3" />
         </Control>
-        <Control Id="Remove" Type="PushButton" X="195" Y="145" Width="75" Height="23" ElevationShield="yes" HideCondition="ALLUSERS &lt;&gt; 1" ShowCondition="ALLUSERS = 1" Text="R&amp;emove">
+        <Control Id="Remove" Type="PushButton" X="195" Y="145" Width="75" Height="23" ElevationShield="yes" HideCondition="ALLUSERS &lt;&gt; 1" ShowCondition="ALLUSERS = 1" Text="ถอนการติดตั้ง (&amp;E)">
           <Publish Property="REMOVE" Value="ALL" Order="1" />
           <Publish Event="EndDialog" Value="Return" Order="2" />
         </Control>
-        <Control Id="RemoveUser" Type="PushButton" HideCondition="ALLUSERS = 1" ShowCondition="ALLUSERS &lt;&gt; 1" X="195" Y="145" Width="75" Height="23" Text="R&amp;emove">
+        <Control Id="RemoveUser" Type="PushButton" HideCondition="ALLUSERS = 1" ShowCondition="ALLUSERS &lt;&gt; 1" X="195" Y="145" Width="75" Height="23" Text="ถอนการติดตั้ง (&amp;E)">
           <Publish Property="REMOVE" Value="ALL" Order="1" />
           <Publish Event="EndDialog" Value="Return" Order="2" />
         </Control>
-        <Control Id="Cancel" Type="PushButton" X="280" Y="145" Width="70" Height="23" Cancel="yes" Text="Cancel">
+        <Control Id="Cancel" Type="PushButton" X="280" Y="145" Width="70" Height="23" Cancel="yes" Text="ยกเลิก">
           <Publish Event="EndDialog" Value="Exit" />
         </Control>
       </Dialog>
 
-      <Dialog Id="InstallProgress" Width="370" Height="180" Title="[ProductName] Setup" Modeless="yes">
-        <Control Id="Title" Type="Text" X="20" Y="20" Width="330" Height="25" Text="{\InstallerTitle}Setting up [ProductName]" />
+      <Dialog Id="InstallProgress" Width="370" Height="180" Title="ติดตั้ง [ProductName]" Modeless="yes">
+        <Control Id="Title" Type="Text" X="20" Y="20" Width="330" Height="25" Text="{\InstallerTitle}กำลังติดตั้ง [ProductName]" />
         <!-- No ActionText table is authored: subscribing would blank this message (#305). -->
-        <Control Id="Status" Type="Text" X="20" Y="60" Width="330" Height="40" Text="Please wait while setup completes." />
+        <Control Id="Status" Type="Text" X="20" Y="60" Width="330" Height="40" Text="กรุณารอสักครู่จนกว่าจะติดตั้งเสร็จ" />
         <Control Id="Progress" Type="ProgressBar" X="20" Y="110" Width="330" Height="15" ProgressBlocks="yes">
           <Subscribe Event="SetProgress" Attribute="Progress" />
         </Control>
-        <Control Id="Cancel" Type="PushButton" X="280" Y="145" Width="70" Height="23" Cancel="yes" Text="Cancel">
+        <Control Id="Cancel" Type="PushButton" X="280" Y="145" Width="70" Height="23" Cancel="yes" Text="ยกเลิก">
           <Publish Event="SpawnDialog" Value="ConfirmCancel" />
         </Control>
       </Dialog>
 
-      <Dialog Id="ConfirmCancel" Width="300" Height="110" Title="Cancel setup">
-        <Control Id="Description" Type="Text" X="20" Y="20" Width="260" Height="35" Text="Cancel [ProductName] setup?" />
-        <Control Id="Yes" Type="PushButton" X="130" Y="70" Width="70" Height="23" Text="&amp;Yes">
+      <Dialog Id="ConfirmCancel" Width="300" Height="110" Title="ยกเลิกการติดตั้ง">
+        <Control Id="Description" Type="Text" X="20" Y="20" Width="260" Height="35" Text="ยกเลิกการติดตั้ง [ProductName] ใช่ไหม" />
+        <Control Id="Yes" Type="PushButton" X="130" Y="70" Width="70" Height="23" Text="ใช่ (&amp;Y)">
           <Publish Event="EndDialog" Value="Exit" />
         </Control>
-        <Control Id="No" Type="PushButton" X="210" Y="70" Width="70" Height="23" Default="yes" Cancel="yes" Text="&amp;No">
+        <Control Id="No" Type="PushButton" X="210" Y="70" Width="70" Height="23" Default="yes" Cancel="yes" Text="ไม่ (&amp;N)">
           <Publish Event="EndDialog" Value="Return" />
         </Control>
       </Dialog>
 
-      <Dialog Id="InstallComplete" Width="370" Height="180" Title="[ProductName] Setup">
-        <Control Id="Title" Type="Text" X="20" Y="20" Width="330" Height="25" Text="{\InstallerTitle}Setup completed successfully" />
-        <Control Id="Description" Type="Text" X="20" Y="55" Width="330" Height="70" Text="[ProductName] setup has completed successfully. Click Finish to close this window." />
-        <Control Id="Finish" Type="PushButton" X="280" Y="145" Width="70" Height="23" Default="yes" Cancel="yes" Text="&amp;Finish">
+      <Dialog Id="InstallComplete" Width="370" Height="180" Title="ติดตั้ง [ProductName]">
+        <Control Id="Title" Type="Text" X="20" Y="20" Width="330" Height="25" Text="{\InstallerTitle}ติดตั้งสำเร็จ" />
+        <Control Id="Description" Type="Text" X="20" Y="55" Width="330" Height="70" Text="ติดตั้ง [ProductName] เรียบร้อยแล้ว กด เสร็จสิ้น เพื่อปิดหน้าต่างนี้" />
+        <Control Id="Finish" Type="PushButton" X="280" Y="145" Width="70" Height="23" Default="yes" Cancel="yes" Text="เสร็จสิ้น (&amp;F)">
           <Publish Event="EndDialog" Value="Return" />
         </Control>
       </Dialog>
 
-      <Dialog Id="InstallFailed" Width="370" Height="180" Title="[ProductName] Setup">
-        <Control Id="Title" Type="Text" X="20" Y="20" Width="330" Height="25" Text="{\InstallerTitle}Setup failed" />
-        <Control Id="Description" Type="Text" X="20" Y="55" Width="330" Height="70" Text="[ProductName] setup could not be completed. Resolve the reported error and run setup again." />
-        <Control Id="Finish" Type="PushButton" X="280" Y="145" Width="70" Height="23" Default="yes" Cancel="yes" Text="&amp;Finish">
+      <Dialog Id="InstallFailed" Width="370" Height="180" Title="ติดตั้ง [ProductName]">
+        <Control Id="Title" Type="Text" X="20" Y="20" Width="330" Height="25" Text="{\InstallerTitle}ติดตั้งไม่สำเร็จ" />
+        <Control Id="Description" Type="Text" X="20" Y="55" Width="330" Height="70" Text="ติดตั้ง [ProductName] ไม่สำเร็จ แก้ไขข้อผิดพลาดที่แจ้งไว้ แล้วเปิดตัวติดตั้งอีกครั้ง" />
+        <Control Id="Finish" Type="PushButton" X="280" Y="145" Width="70" Height="23" Default="yes" Cancel="yes" Text="เสร็จสิ้น (&amp;F)">
           <Publish Event="EndDialog" Value="Return" />
         </Control>
       </Dialog>
 
-      <Dialog Id="InstallCancelled" Width="370" Height="180" Title="[ProductName] Setup">
-        <Control Id="Title" Type="Text" X="20" Y="20" Width="330" Height="25" Text="{\InstallerTitle}Setup cancelled" />
-        <Control Id="Description" Type="Text" X="20" Y="55" Width="330" Height="70" Text="[ProductName] setup was cancelled. Run setup again when you are ready." />
-        <Control Id="Finish" Type="PushButton" X="280" Y="145" Width="70" Height="23" Default="yes" Cancel="yes" Text="&amp;Finish">
+      <Dialog Id="InstallCancelled" Width="370" Height="180" Title="ติดตั้ง [ProductName]">
+        <Control Id="Title" Type="Text" X="20" Y="20" Width="330" Height="25" Text="{\InstallerTitle}ยกเลิกการติดตั้งแล้ว" />
+        <Control Id="Description" Type="Text" X="20" Y="55" Width="330" Height="70" Text="ยกเลิกการติดตั้ง [ProductName] แล้ว เปิดตัวติดตั้งอีกครั้งเมื่อพร้อม" />
+        <Control Id="Finish" Type="PushButton" X="280" Y="145" Width="70" Height="23" Default="yes" Cancel="yes" Text="เสร็จสิ้น (&amp;F)">
           <Publish Event="EndDialog" Value="Return" />
         </Control>
       </Dialog>
@@ -98,15 +98,15 @@
       <!-- Shown by Windows Installer (Restart Manager) when an upgrade or repair must replace files
            that a running PdfCraft holds open. OK closes those programs (MSIRMSHUTDOWN=2) and
            continues; Cancel ends setup. -->
-      <Dialog Id="MsiRMFilesInUse" Width="370" Height="200" Title="[ProductName] Setup" KeepModeless="yes">
-        <Control Id="Title" Type="Text" X="20" Y="15" Width="330" Height="25" Text="{\InstallerTitle}Files in use" />
-        <Control Id="Description" Type="Text" X="20" Y="45" Width="330" Height="30" Text="These programs are using files that setup needs to update. Click OK to close them and continue, or Cancel to stop setup." />
+      <Dialog Id="MsiRMFilesInUse" Width="370" Height="200" Title="ติดตั้ง [ProductName]" KeepModeless="yes">
+        <Control Id="Title" Type="Text" X="20" Y="15" Width="330" Height="25" Text="{\InstallerTitle}มีไฟล์กำลังถูกใช้งาน" />
+        <Control Id="Description" Type="Text" X="20" Y="45" Width="330" Height="30" Text="โปรแกรมเหล่านี้กำลังใช้ไฟล์ที่ต้องอัปเดต กด ตกลง เพื่อปิดโปรแกรมแล้วทำต่อ หรือกด ยกเลิก เพื่อหยุดการติดตั้ง" />
         <Control Id="List" Type="ListBox" X="20" Y="80" Width="330" Height="55" Property="FileInUseProcess" Sunken="yes" TabSkip="yes" />
-        <Control Id="OK" Type="PushButton" X="195" Y="165" Width="75" Height="23" Default="yes" Text="OK">
+        <Control Id="OK" Type="PushButton" X="195" Y="165" Width="75" Height="23" Default="yes" Text="ตกลง">
           <Publish Property="MSIRMSHUTDOWN" Value="2" Order="1" />
           <Publish Event="EndDialog" Value="Return" Order="2" />
         </Control>
-        <Control Id="Cancel" Type="PushButton" X="280" Y="165" Width="70" Height="23" Cancel="yes" Text="Cancel">
+        <Control Id="Cancel" Type="PushButton" X="280" Y="165" Width="70" Height="23" Cancel="yes" Text="ยกเลิก">
           <Publish Event="EndDialog" Value="Exit" />
         </Control>
       </Dialog>

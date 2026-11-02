@@ -268,3 +268,62 @@ fn an_update_that_did_not_take_is_said_at_the_next_start() {
     assert!(notified("v99.0.0"), "the old version is still here");
     assert!(!notified("v0.0.1"), "this build is newer than what was asked for");
 }
+
+/// Thai edition: the prompt is at most daily: once today's start has asked, another start the
+/// same day doesn't.
+#[test]
+fn the_check_at_start_asks_once_a_day() {
+    let first = starting(newer_release(), true, Default::default());
+    let mut first = first;
+    wait_for(&mut first, "Update and restart");
+    let today = first.state().update_asked_on.clone();
+    assert_eq!(today.len(), 10, "{today}");
+    let mut again = Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_eframe(move |_cc| {
+        let mut app = PdfCraftApp::new();
+        app.set_option("language", "en").unwrap();
+        app.update_source = Some(Arc::new(|| Ok(newer_release())));
+        app.update_asked_on = today;
+        app.set_startup_update_check(true);
+        app
+    });
+    for _ in 0..20 {
+        again.run_steps(2);
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    assert!(again.query_by_label("Later").is_none(), "asked already today");
+}
+
+/// Thai edition: ticking the box puts this version aside: later starts say nothing of it, a
+/// newer one is offered again, and Check for updates still finds it.
+#[test]
+fn a_version_put_aside_is_not_offered_at_start() {
+    let mut h = starting(newer_release(), true, Default::default());
+    wait_for(&mut h, "Update and restart");
+    h.get_by_label("Don't remind me about this version").click();
+    h.run_steps(2);
+    h.get_by_label("Later").click();
+    h.run_steps(3);
+    assert_eq!(h.state().update_skipped.as_deref(), Some("v99.0.0"));
+    let start = |release: Release| {
+        Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_eframe(move |_cc| {
+            let mut app = PdfCraftApp::new();
+            app.set_option("language", "en").unwrap();
+            app.update_source = Some(Arc::new(move || Ok(release.clone())));
+            app.update_install =
+                Some(pdfcraft_ui_egui::updates::UpdateInstall { download: Arc::new(|_, _, _| Err("no".into())), run: Arc::new(|_| Ok(())) });
+            app.update_skipped = Some("v99.0.0".into());
+            app.set_startup_update_check(true);
+            app
+        })
+    };
+    let mut quiet = start(newer_release());
+    for _ in 0..30 {
+        quiet.run_steps(2);
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    assert!(quiet.query_by_label("Update and restart").is_none(), "put aside");
+    quiet.state_mut().check_for_updates();
+    wait_for(&mut quiet, "Update and restart");
+    let mut next = start(Release { version: "v99.1.0".into(), ..newer_release() });
+    wait_for(&mut next, "Update and restart");
+}

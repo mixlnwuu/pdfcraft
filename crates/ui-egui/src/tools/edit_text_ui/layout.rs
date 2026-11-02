@@ -6,7 +6,7 @@ const THAI_SYSTEM_FONTS: [&str; 10] =
     ["angsana", "browallia", "cordia", "dilleniaupc", "eucrosiaupc", "freesiaupc", "irisupc", "jasmineupc", "kodchiang", "lilyupc"];
 
 /// The look shown for a paragraph: the family and weight guessed from its PDF font name.
-fn source_look(base_font: &str, size: f64, color: [f64; 3], detected_bold: bool, detected_italic: bool) -> pdfcraft_engine::AddedText {
+pub(super) fn source_look(base_font: &str, size: f64, color: [f64; 3], detected_bold: bool, detected_italic: bool) -> pdfcraft_engine::AddedText {
     use pdfcraft_engine::FontFamily as F;
     let name = base_font.to_ascii_lowercase();
     let family = if ["courier", "mono", "consolas", "menlo", "monaco", "lucida console"].iter().any(|s| name.contains(s)) {

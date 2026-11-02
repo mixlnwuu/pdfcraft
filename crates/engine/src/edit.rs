@@ -493,6 +493,16 @@ pub enum Edit {
         content: AddedContent,
         copy: bool,
     },
+    /// Move (or, with `copy`, copy) the page's own picture `index` of `page` (from
+    /// `Document::page_images`) onto `to_page` at `rect` (display space there), as an added picture
+    /// drawing the same image object (Thai edition: a picture dragged onto another page).
+    MovePageImageToPage {
+        page: usize,
+        index: usize,
+        to_page: usize,
+        rect: [f64; 4],
+        copy: bool,
+    },
     /// Move an added item to another layer of its page (Thai edition: Arrange).
     ArrangeContent {
         page: usize,
