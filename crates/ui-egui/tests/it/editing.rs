@@ -4873,6 +4873,41 @@ fn the_format_panel_restyles_the_paragraph_being_edited() {
 }
 
 #[test]
+fn an_underlined_paragraph_opens_underlined_and_the_underline_comes_off() {
+    // Owner's report (Thai edition): once underlined, the text couldn't go back to plain, and the
+    // line stayed when the text was deleted.
+    let mut h = harness(1, |_| {});
+    assert!(h.state_mut().execute("edit.edit_text"));
+    h.run_steps(2);
+    let r = h.state().views[0].page_screen_rect(0).expect("on screen");
+    let at = egui::pos2(r.left() + 40.0 / 200.0 * r.width(), r.top() + (300.0 - 158.0) / 300.0 * r.height());
+    h.hover_at(at);
+    h.run_steps(1);
+    double_click(&mut h, at);
+    h.run_steps(3);
+    h.get_by_label("Underline").click();
+    h.run_steps(4);
+    let underlined = |h: &Harness<'_, PdfCraftApp>| {
+        let s = h.state();
+        s.session.get(s.views[0].id).unwrap().text_blocks(0)[0].underlined
+    };
+    assert!(underlined(&h));
+    // Closed and opened again: its underline shows as on.
+    h.key_press(egui::Key::Escape);
+    h.run_steps(3);
+    assert!(h.state().views[0].line_editor.is_none());
+    h.hover_at(at);
+    h.run_steps(1);
+    double_click(&mut h, at);
+    h.run_steps(3);
+    assert!(h.state().views[0].line_editor.as_ref().is_some_and(|e| e.extras.underline), "opens underlined");
+    // Clicked off: the line goes.
+    h.get_by_label("Underline").click();
+    h.run_steps(4);
+    assert!(!underlined(&h));
+}
+
+#[test]
 fn the_format_panel_toggles_superscript_and_subscript_on_selection() {
     let mut h = harness(1, |_| {});
     assert!(h.state_mut().execute("edit.edit_text"));
@@ -5864,7 +5899,11 @@ fn drag_paragraph(h: &mut Harness<'static, PdfCraftApp>, text: &str, offset: [f6
         "no objects selected"
     );
     assert!(h.state().views[0].line_editor.is_none());
+    // Alt held (Thai edition): the exact offset, not where smart guides would snap it.
+    h.event(egui::Event::ModifiersChanged(egui::Modifiers::ALT));
     drag(h, from, to);
+    h.event(egui::Event::ModifiersChanged(egui::Modifiers::NONE));
+    h.run_steps(1);
     assert!(h.state().views[0].line_editor.is_none(), "a body drag must not open the typing editor");
     // The moved paragraph stays selected (for the arrow keys, Thai edition) until Esc.
     if h.query_all_by_label_contains("selected").next().is_some() {

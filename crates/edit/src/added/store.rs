@@ -39,6 +39,11 @@ fn parse(doc: &Document, d: &Dict) -> Option<Content> {
                 aligns: crate::paragraph_align::tidy(aligns, align),
                 // Items written before character spacing have none.
                 char_spacing: d.get(b"CharSpacing").and_then(Object::as_f64).filter(|v| v.is_finite()).unwrap_or(0.0),
+                // Items written before underline have none.
+                underline: matches!(d.get(b"Underline"), Some(Object::Bool(true))),
+                // Items written before line spacing have the ordinary one.
+                line_spacing: d.get(b"LineSpacing").and_then(Object::as_f64).filter(|v| super::types::LINE_SPACING_RANGE.contains(v)).unwrap_or(0.0),
+                direction: d.name(b"Direction").map_or(super::types::TextDirection::Horizontal, super::types::TextDirection::from_name),
             }))
         }
         b"Image" => {
@@ -143,6 +148,9 @@ fn validate(c: &Content) -> Result<(), EditError> {
                 return Err(EditError::Invalid(format!(
                     "the character spacing must be between -{CHAR_SPACING_LIMIT} and {CHAR_SPACING_LIMIT} points"
                 )));
+            }
+            if t.line_spacing != 0.0 && !super::types::LINE_SPACING_RANGE.contains(&t.line_spacing) {
+                return Err(EditError::Invalid("the line spacing must be between 0.5 and 5 times the font size".into()));
             }
             if (r[2] - r[0]).abs() < 1.0 {
                 return Err(EditError::Invalid("the text box is too narrow".into()));

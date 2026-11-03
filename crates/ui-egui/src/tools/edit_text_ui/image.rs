@@ -877,8 +877,10 @@ pub(crate) fn image_input(cx: &ImageCx<'_>, images: &[pdfcraft_engine::PageImage
                     }
                     // Smart guides (Thai edition): the picture's centre snaps to the page's centre lines.
                     DragTarget::Move => {
-                        let moved = drag.initial_rect.translate(crate::content_ui::snap_to_centre(ui, xf.rect, drag.initial_rect, p - drag.start));
-                        crate::content_ui::paint_guides(ui.painter(), xf.rect, moved);
+                        let d = crate::content_ui::snap_to_centre(ui, xf.rect, drag.initial_rect, p - drag.start);
+                        let moved = drag.initial_rect.translate(d);
+                        crate::content_ui::paint_guides(ui.painter(), xf.rect, drag.initial_rect, moved);
+                        crate::content_ui::paint_offset(ui.painter(), xf, p, d);
                         moved
                     }
                     _ => drag.initial_rect,

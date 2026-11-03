@@ -211,11 +211,62 @@ pub struct AddedText {
     /// Paragraphs (lines typed with Enter) aligned other than [`AddedText::align`], by index;
     /// `None` and paragraphs past the end follow `align` ([`crate::paragraph_align`]).
     pub aligns: Vec<Option<Align>>,
+    /// A line under every line of the text, in the text's colour.
+    pub underline: bool,
+    /// Line spacing as a multiple of the font size (Thai edition); 0 is the ordinary 1.2.
+    pub line_spacing: f64,
+    /// Which way the text runs (Thai edition).
+    pub direction: TextDirection,
 }
 
+/// Which way an added text runs (Thai edition).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum TextDirection {
+    /// Lines across the page, as typed.
+    #[default]
+    Horizontal,
+    /// Upright letters one below another, each with its vowels and tone marks, centred in a
+    /// column; paragraphs are columns side by side.
+    Stacked,
+    /// The whole text turned a quarter clockwise: it reads from the top down, its first line on
+    /// the right. The box's height is the length its lines wrap at.
+    Rotated,
+}
+
+impl TextDirection {
+    /// The name `/Direction` stores (none for horizontal text).
+    pub fn name(self) -> Option<&'static str> {
+        match self {
+            TextDirection::Horizontal => None,
+            TextDirection::Stacked => Some("Stacked"),
+            TextDirection::Rotated => Some("Rotated"),
+        }
+    }
+
+    pub fn from_name(name: &[u8]) -> TextDirection {
+        match name {
+            b"Stacked" => TextDirection::Stacked,
+            b"Rotated" => TextDirection::Rotated,
+            _ => TextDirection::Horizontal,
+        }
+    }
+}
+
+/// The line spacings an added text takes, as multiples of its size (besides 0, the ordinary one).
+pub const LINE_SPACING_RANGE: std::ops::RangeInclusive<f64> = 0.5..=5.0;
+
 impl AddedText {
-    /// Paragraph `i`'s alignment.
+    /// How far one line's baseline is below the one before, in points.
+    pub fn line_advance(&self) -> f64 {
+        let m = if LINE_SPACING_RANGE.contains(&self.line_spacing) { self.line_spacing } else { 1.2 };
+        self.size * m
+    }
+
+    /// Paragraph `i`'s alignment. Stacked letters are centred in their column.
     pub fn paragraph_align(&self, i: usize) -> Align {
+        if self.direction == TextDirection::Stacked {
+            return Align::Center;
+        }
         crate::paragraph_align::align_of(&self.aligns, i, self.align)
     }
 }
@@ -233,6 +284,9 @@ impl Default for AddedText {
             align: Align::Left,
             aligns: Vec::new(),
             char_spacing: 0.0,
+            underline: false,
+            line_spacing: 0.0,
+            direction: TextDirection::Horizontal,
         }
     }
 }

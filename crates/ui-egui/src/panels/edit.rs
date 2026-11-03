@@ -287,7 +287,7 @@ fn format_section(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens) {
             t,
             &mut ed.look,
             Some(&mut ed.extras),
-            Fonts { sources: Some(&sources), shown, mixed_size },
+            Fonts { sources: Some(&sources), shown, mixed_size, directions: false },
             Some(paragraphs),
         );
         if out.size_committed {
@@ -418,7 +418,9 @@ fn selected_boxes_format(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens) -
     }
     painter_button(app, ui, i, &first.text, first.source_font.as_deref());
     let mut look = first.text.clone();
-    let mut extras = crate::edit_text_ui::Extras::default();
+    // Its underline shows as it is, so it can be turned off here too (Thai edition).
+    let extras0 = crate::edit_text_ui::Extras { underline: first.text.underline, ..Default::default() };
+    let mut extras = extras0;
     let mut shown = match &first.source_font {
         // An OCR layer's font is nobody's choice: the box shows as what draws it.
         Some(font) if font != pdfcraft_fonts::thai_text::INVISIBLE_NAME => crate::restyle::plain_name(font).to_owned(),
@@ -432,20 +434,27 @@ fn selected_boxes_format(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens) -
         t,
         &mut look,
         Some(&mut extras),
-        crate::format_text_ui::Fonts { sources: None, shown, mixed_size: false },
+        crate::format_text_ui::Fonts { sources: None, shown, mixed_size: false, directions: true },
         None,
     );
     if let Some(crate::format_text_ui::FontChoice::Family(family)) = out.font {
         look.family = family;
     }
-    let underline = (extras.underline != crate::edit_text_ui::Extras::default().underline).then_some(extras.underline);
+    let underline = (extras.underline != extras0.underline).then_some(extras.underline);
     let change = crate::restyle::change_between(&first.text, &look, underline);
     if change.is_empty() {
         return true;
     }
     let Some(doc) = app.session.get(id) else { return true };
-    if let Some(edit) = crate::restyle::restyle_edit(doc, page, &targets, &change) {
-        app.views[i].objects.keep_after_restyle();
+    let xf = app.views[i].page_xform(page);
+    if let Some(edit) = crate::restyle::restyle_edit(doc, page, &targets, &change, xf.as_ref()) {
+        // Paragraphs turned into added boxes are new objects: those are selected afterwards.
+        let turned = change.direction.is_some() && targets.iter().any(|t| t.kind == pdfcraft_engine::ObjectKind::Text);
+        if turned {
+            app.views[i].objects.keep_after_turn();
+        } else {
+            app.views[i].objects.keep_after_restyle();
+        }
         app.apply_edit(edit);
     }
     true
@@ -484,7 +493,14 @@ fn added_text_format(
     paragraphs: Option<crate::format_text_ui::Paragraphs>,
 ) -> crate::format_text_ui::Outcome {
     let shown = style.family.label().to_string();
-    let out = crate::format_text_ui::panel(ui, t, style, None, crate::format_text_ui::Fonts { sources: None, shown, mixed_size: false }, paragraphs);
+    let out = crate::format_text_ui::panel(
+        ui,
+        t,
+        style,
+        None,
+        crate::format_text_ui::Fonts { sources: None, shown, mixed_size: false, directions: true },
+        paragraphs,
+    );
     if let Some(crate::format_text_ui::FontChoice::Family(family)) = out.font {
         style.family = family;
     }

@@ -370,6 +370,10 @@ pub struct PdfCraftApp {
     pub reading_colors: pdfcraft_render::ReadingColors,
     /// App-wide page decoration only; never part of a PDF edit or render request.
     pub show_page_edge_shadows: bool,
+    /// Rulers along the document (Thai edition), in the measuring units.
+    pub show_rulers: bool,
+    /// A grid over the pages (Thai edition): drawn on screen only, and moved boxes snap to it.
+    pub show_grid: bool,
     /// The Linux portal is enabled only by the native host, and starts on the first System choice.
     #[cfg(target_os = "linux")]
     desktop_theme: Option<pdfcraft_platform::desktop_theme::DesktopTheme>,

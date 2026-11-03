@@ -34,6 +34,7 @@ mod fallback;
 mod interp;
 mod lines;
 mod rewrite;
+mod underline;
 
 use blocks::paragraph_separator;
 #[cfg(test)]
@@ -194,6 +195,7 @@ mod tests {
             reflow_text: text.into(),
             spans: Vec::new(),
             invisible: false,
+            underlined: false,
         }
     }
 

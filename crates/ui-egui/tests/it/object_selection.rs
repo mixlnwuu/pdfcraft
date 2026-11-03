@@ -335,7 +335,11 @@ fn group_drag_respects_document_rotation_and_view_rotation() {
         let from = xf.screen_to_view(start);
         let to = xf.screen_to_view(end);
         let delta = doc.object_move_offset(0, [f64::from(to.0 - from.0), f64::from(to.1 - from.1)]).unwrap();
+        // Alt held (Thai edition): the exact offset, not where smart guides would snap it.
+        h.event(egui::Event::ModifiersChanged(Modifiers::ALT));
         drag(&mut h, start, end);
+        h.event(egui::Event::ModifiersChanged(Modifiers::NONE));
+        h.run_steps(1);
         for (old, new) in before.iter().zip(objects(&h)) {
             let expected = if targets.contains(&old.target) { delta } else { [0.0, 0.0] };
             for i in 0..4 {

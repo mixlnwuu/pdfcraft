@@ -38,7 +38,8 @@ pub(super) fn source_look(base_font: &str, size: f64, color: [f64; 3], detected_
 }
 
 pub(crate) fn look_of(b: &pdfcraft_engine::TextBlock) -> pdfcraft_engine::AddedText {
-    source_look(&b.base_font, b.size, b.color, b.bold, b.italic)
+    // With the underline PdfCraft drew under it (Thai edition).
+    pdfcraft_engine::AddedText { underline: b.underlined, ..source_look(&b.base_font, b.size, b.color, b.bold, b.italic) }
 }
 
 /// A paragraph of the page as an added text box with its text and look, over the paragraph

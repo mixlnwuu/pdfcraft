@@ -2,8 +2,8 @@
 //! alignment; bold, italic, underline, superscript and subscript; line and paragraph spacing;
 //! horizontal scale and character spacing. One panel serves a paragraph being edited (with the
 //! fonts already on its page and the spacing controls) and added text (the standard families,
-//! size, colour, style, alignment and character spacing). What PdfCraft can't apply yet (lists,
-//! paragraph spacing, or line spacing and scale for added text) is shown
+//! size, colour, style with underline, alignment, line spacing and character spacing). What PdfCraft can't apply yet (lists,
+//! paragraph spacing, or superscript, subscript and scale for added text) is shown
 //! disabled and says so.
 //!
 //! The icons are Lucide's (AGENTS.md §1); only the arrangement follows Acrobat.
@@ -41,6 +41,8 @@ pub(crate) struct Fonts<'a> {
     /// The name the list shows for the current choice.
     pub shown: String,
     pub mixed_size: bool,
+    /// The text's direction can be chosen (Thai edition): added text, and selected boxes.
+    pub directions: bool,
 }
 
 /// Text being typed in, for the alignment buttons: with some of it selected, they show and set the
@@ -314,7 +316,13 @@ pub(crate) fn panel(
                 }
                 hover.underline = toggle_preview(ui, &underline, e.underline);
             }
-            None => planned(ui, "underline", tl!("Underline")),
+            None => {
+                let underline = icons::button(ui, "underline", 30.0, look.underline, tl!("Underline"));
+                if underline.clicked() {
+                    look.underline = !look.underline;
+                }
+                hover.underline = toggle_preview(ui, &underline, look.underline);
+            }
         }
         if let Some(p) = &paragraphs {
             for (script, icon, tip) in [(Script::Super, "superscript", tl!("Superscript")), (Script::Sub, "subscript", tl!("Subscript"))] {
@@ -335,18 +343,20 @@ pub(crate) fn panel(
     let editing = extras.is_some();
     let mut fallback = Extras::default();
     let e = extras.as_deref_mut().unwrap_or(&mut fallback);
-    ui.add_enabled_ui(editing, |ui| {
+    // Added text has line spacing of its own too (Thai edition).
+    {
         row(ui, |ui| {
             labelled_icon(ui, t, "arrow-up-down", tl!("Line spacing"));
             let own = tl!("Auto").to_string();
-            let shown = if e.line_spacing == 0.0 { own.clone() } else { number(e.line_spacing) };
+            let line_spacing = if editing { &mut e.line_spacing } else { &mut look.line_spacing };
+            let shown = if *line_spacing == 0.0 { own.clone() } else { number(*line_spacing) };
             let spacing_resp = craft_ui::ComboBox::from_id_salt("format-line-spacing")
                 .selected_text(shown)
                 .width(half)
                 .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut e.line_spacing, 0.0, own.as_str());
+                    ui.selectable_value(line_spacing, 0.0, own.as_str());
                     for v in LINE_SPACINGS {
-                        ui.selectable_value(&mut e.line_spacing, v, number(v));
+                        ui.selectable_value(line_spacing, v, number(v));
                     }
                 })
                 .response;
@@ -363,7 +373,32 @@ pub(crate) fn panel(
                     .disabled_tip(tip);
             });
         });
-    });
+    }
+    // Which way added text runs (Thai edition).
+    if fonts.directions {
+        row(ui, |ui| {
+            // Named in words, not only an icon: the owner couldn't find it by its icon.
+            labelled_icon(ui, t, "type", tl!("Text direction"));
+            let caption = ui.label(egui::RichText::new(tl!("Text direction")).color(t.text_muted));
+            let width = (2.0 * half + LABEL_ICON + 8.0 + GAP - caption.rect.width() - GAP).max(80.0);
+            use pdfcraft_engine::TextDirection;
+            let name = |d: TextDirection| match d {
+                TextDirection::Horizontal => tl!("Horizontal"),
+                TextDirection::Stacked => tl!("Vertical, letters upright"),
+                TextDirection::Rotated => tl!("Vertical, turned 90°"),
+            };
+            let resp = craft_ui::ComboBox::from_id_salt("format-text-direction")
+                .selected_text(name(look.direction))
+                .width(width)
+                .show_ui(ui, |ui| {
+                    for d in [TextDirection::Horizontal, TextDirection::Stacked, TextDirection::Rotated] {
+                        ui.selectable_value(&mut look.direction, d, name(d));
+                    }
+                })
+                .response;
+            resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, ui.is_enabled(), tl!("Text direction")));
+        });
+    }
     // Any value the engine takes can be typed; the lists hold the common ones. Added text has
     // character spacing of its own (#4245), but no scale yet.
     row(ui, |ui| {

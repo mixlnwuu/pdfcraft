@@ -359,6 +359,7 @@ fn group_layout(lines: &[TextLine], mixed: bool) -> Vec<TextBlock> {
                 lines: Vec::new(),
                 rows: Vec::new(),
                 invisible: true,
+                underlined: false,
             });
         }
         let Some(block) = blocks.last_mut() else { continue };
