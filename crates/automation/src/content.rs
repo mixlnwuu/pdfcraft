@@ -62,6 +62,9 @@ fn style(a: &Args, t: &mut AddedText) -> Result<()> {
     if let Some(i) = a.opt_bool("italic")? {
         t.italic = i;
     }
+    if let Some(u) = a.opt_bool("underline")? {
+        t.underline = u;
+    }
     if let Some(c) = a.opt_str("color")? {
         t.color = parse_color(c)?;
     }
@@ -73,6 +76,20 @@ fn style(a: &Args, t: &mut AddedText) -> Result<()> {
     if let Some(aligns) = opt_aligns(a)? {
         let count = pdfcraft_engine::paragraph_align::count(&t.text);
         t.aligns = pdfcraft_engine::paragraph_align::tidy(aligns.into_iter().take(count).collect(), t.align);
+    }
+    if let Some(d) = a.opt_str("direction")? {
+        t.direction = match d {
+            "horizontal" => pdfcraft_engine::TextDirection::Horizontal,
+            "stacked" => pdfcraft_engine::TextDirection::Stacked,
+            "rotated" => pdfcraft_engine::TextDirection::Rotated,
+            _ => return Err(bad("direction must be horizontal, stacked or rotated")),
+        };
+    }
+    if let Some(l) = a.opt_num("line_spacing")? {
+        if l != 0.0 && !(0.5..=5.0).contains(&l) {
+            return Err(bad("line_spacing must be 0 (ordinary) or between 0.5 and 5 times the font size"));
+        }
+        t.line_spacing = l;
     }
     if let Some(c) = a.opt_num("char_spacing")? {
         if !(-ADDED_CHAR_SPACING_LIMIT..=ADDED_CHAR_SPACING_LIMIT).contains(&c) {
@@ -96,10 +113,10 @@ pub(crate) fn parse_align(al: &str) -> Result<TextAlign> {
 /// Most entries `aligns` takes: one per paragraph, and no text has this many.
 const MAX_ALIGNS: usize = 4096;
 
-/// `aligns`: each paragraph's (line's) own alignment, or null where it follows `align`.
+/// `aligns`: each paragraph's (line's) own alignment, or inherit/null where it follows `align`.
 pub(crate) fn opt_aligns(a: &Args) -> Result<Option<Vec<Option<TextAlign>>>> {
     let Some(v) = a.get("aligns") else { return Ok(None) };
-    let items = v.as_array().ok_or_else(|| bad("aligns must be an array of left, center, right, justify or null"))?;
+    let items = v.as_array().ok_or_else(|| bad("aligns must be an array of left, center, right, justify, inherit or null"))?;
     if items.len() > MAX_ALIGNS {
         return Err(bad(format!("aligns takes at most {MAX_ALIGNS} entries")));
     }
@@ -107,8 +124,9 @@ pub(crate) fn opt_aligns(a: &Args) -> Result<Option<Vec<Option<TextAlign>>>> {
         .iter()
         .map(|v| match v {
             Value::Null => Ok(None),
+            Value::String(s) if s == "inherit" => Ok(None),
             Value::String(s) => parse_align(s).map(Some),
-            _ => Err(bad("each entry of aligns is left, center, right, justify or null")),
+            _ => Err(bad("each entry of aligns is left, center, right, justify, inherit or null")),
         })
         .collect::<Result<Vec<_>>>()
         .map(Some)
@@ -135,7 +153,14 @@ impl Automation {
                         v["size"] = json!(t.size);
                         v["bold"] = json!(t.bold);
                         v["italic"] = json!(t.italic);
+                        v["underline"] = json!(t.underline);
                         v["char_spacing"] = json!(t.char_spacing);
+                        v["line_spacing"] = json!(t.line_spacing);
+                        v["direction"] = json!(match t.direction {
+                            pdfcraft_engine::TextDirection::Horizontal => "horizontal",
+                            pdfcraft_engine::TextDirection::Stacked => "stacked",
+                            pdfcraft_engine::TextDirection::Rotated => "rotated",
+                        });
                     }
                     AddedContent::Image(_) => v["type"] = json!("image"),
                 }
@@ -160,6 +185,11 @@ impl Automation {
         };
         let mut t = AddedText { rect, text: a.str("text")?.to_string(), ..AddedText::default() };
         style(a, &mut t)?;
+        // Vertical text placed at a point hugs its text, as the app makes it (Thai edition).
+        if t.direction != pdfcraft_engine::TextDirection::Horizontal && rect_arg(a, "rect")?.is_none() {
+            let pw = self.doc(a)?.info.pages[page].width as f64;
+            t = pdfcraft_engine::fitted_text(&t, pw);
+        }
         let mut out = self.apply(a, Edit::AddText { page, text: t })?;
         out["index"] = json!(self.doc(a)?.added().iter().filter(|x| x.page == page).count());
         Ok(out)
@@ -217,8 +247,13 @@ impl Automation {
                 if a.get("text").is_some() {
                     return Err(bad("images have no text"));
                 }
-                if ["font", "size", "bold", "italic", "color", "align", "aligns", "char_spacing"].iter().any(|k| a.get(k).is_some()) {
-                    return Err(bad("font, size, bold, italic, color, align, aligns and char_spacing apply to text"));
+                if ["font", "size", "bold", "italic", "underline", "color", "align", "aligns", "char_spacing", "line_spacing", "direction"]
+                    .iter()
+                    .any(|k| a.get(k).is_some())
+                {
+                    return Err(bad(
+                        "font, size, bold, italic, underline, color, align, aligns, char_spacing, line_spacing and direction apply to text",
+                    ));
                 }
                 if let Some(deg) = a.opt_int("rotate")? {
                     if deg.rem_euclid(90) != 0 {

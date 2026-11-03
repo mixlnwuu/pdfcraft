@@ -281,9 +281,15 @@ fn click_page(h: &mut Harness<'static, PdfCraftApp>, session: &Session, x: f32, 
     let at = egui::pos2(page.left() + x / pw * page.width(), page.top() + (ph - y) / ph * page.height());
     h.hover_at(at);
     h.run_steps(1);
-    h.drag_at(at);
-    h.run_steps(1);
-    h.drop_at(at);
+    // One click selects a paragraph and a second opens it (Thai edition): the sessions' clicks on
+    // text they then type into are double clicks here.
+    let start = h.ctx.input(|i| i.time) + 1.0;
+    for (k, pressed) in [true, false, true, false].into_iter().enumerate() {
+        let input = h.input_mut();
+        input.time = Some(start + 0.03 * (k + 1) as f64);
+        input.events.push(egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed, modifiers: Modifiers::NONE });
+        h.step();
+    }
     h.run_steps(4);
     Ok(())
 }

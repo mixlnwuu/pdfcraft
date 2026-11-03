@@ -3135,6 +3135,37 @@ fn extract_options_and_rotate_pages_dialog() {
     assert_eq!(d.info.pages.iter().map(|p| p.rotation).collect::<Vec<_>>(), [90, 0]);
 }
 
+/// #5579: typing the last page of Rotate Pages' range keeps what is typed (croquete1): "12" after
+/// a first page of 5 rotates pages 5–12, not page 5 alone. An end typed below the start and left
+/// by clicking OK is raised to the start as the field lets go: page 5, not nothing.
+#[test]
+fn rotate_pages_keeps_a_typed_last_page() {
+    use egui::accesskit::Role;
+    for (typed, rotated) in [("12", 5..13), ("3", 5..6)] {
+        let mut h = organize(20);
+        h.state_mut().run_command("page.rotate_dialog");
+        h.run_steps(2);
+        let d = &mut h.state_mut().rotate_draft;
+        (d.which, d.from, d.to) = (2, 5, 5);
+        h.run_steps(1);
+        h.get_by_role_and_label(Role::SpinButton, "to").click();
+        h.run_steps(2);
+        // As events, not `key_press`: its `run` checks the dialog's unnamed combo boxes.
+        h.event(egui::Event::Key { key: egui::Key::A, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::COMMAND });
+        for c in typed.chars() {
+            h.event(egui::Event::Text(c.to_string()));
+            h.run_steps(2);
+        }
+        // OK at once, the end still being typed.
+        h.get_by_label("OK").click();
+        h.run_steps(3);
+        let s = h.state();
+        let d = s.session.get(s.views[0].id).unwrap();
+        let turned: Vec<usize> = d.info.pages.iter().enumerate().filter(|(_, p)| p.rotation != 0).map(|(i, _)| i + 1).collect();
+        assert_eq!(turned, rotated.collect::<Vec<usize>>(), "typed {typed:?}");
+    }
+}
+
 #[test]
 fn dragging_thumbnails_reorders_pages() {
     let mut h = organize(4);
@@ -4873,6 +4904,41 @@ fn the_format_panel_restyles_the_paragraph_being_edited() {
 }
 
 #[test]
+fn an_underlined_paragraph_opens_underlined_and_the_underline_comes_off() {
+    // Owner's report (Thai edition): once underlined, the text couldn't go back to plain, and the
+    // line stayed when the text was deleted.
+    let mut h = harness(1, |_| {});
+    assert!(h.state_mut().execute("edit.edit_text"));
+    h.run_steps(2);
+    let r = h.state().views[0].page_screen_rect(0).expect("on screen");
+    let at = egui::pos2(r.left() + 40.0 / 200.0 * r.width(), r.top() + (300.0 - 158.0) / 300.0 * r.height());
+    h.hover_at(at);
+    h.run_steps(1);
+    double_click(&mut h, at);
+    h.run_steps(3);
+    h.get_by_label("Underline").click();
+    h.run_steps(4);
+    let underlined = |h: &Harness<'_, PdfCraftApp>| {
+        let s = h.state();
+        s.session.get(s.views[0].id).unwrap().text_blocks(0)[0].underlined
+    };
+    assert!(underlined(&h));
+    // Closed and opened again: its underline shows as on.
+    h.key_press(egui::Key::Escape);
+    h.run_steps(3);
+    assert!(h.state().views[0].line_editor.is_none());
+    h.hover_at(at);
+    h.run_steps(1);
+    double_click(&mut h, at);
+    h.run_steps(3);
+    assert!(h.state().views[0].line_editor.as_ref().is_some_and(|e| e.extras.underline), "opens underlined");
+    // Clicked off: the line goes.
+    h.get_by_label("Underline").click();
+    h.run_steps(4);
+    assert!(!underlined(&h));
+}
+
+#[test]
 fn the_format_panel_toggles_superscript_and_subscript_on_selection() {
     let mut h = harness(1, |_| {});
     assert!(h.state_mut().execute("edit.edit_text"));
@@ -5864,7 +5930,11 @@ fn drag_paragraph(h: &mut Harness<'static, PdfCraftApp>, text: &str, offset: [f6
         "no objects selected"
     );
     assert!(h.state().views[0].line_editor.is_none());
+    // Alt held (Thai edition): the exact offset, not where smart guides would snap it.
+    h.event(egui::Event::ModifiersChanged(egui::Modifiers::ALT));
     drag(h, from, to);
+    h.event(egui::Event::ModifiersChanged(egui::Modifiers::NONE));
+    h.run_steps(1);
     assert!(h.state().views[0].line_editor.is_none(), "a body drag must not open the typing editor");
     // The moved paragraph stays selected (for the arrow keys, Thai edition) until Esc.
     if h.query_all_by_label_contains("selected").next().is_some() {

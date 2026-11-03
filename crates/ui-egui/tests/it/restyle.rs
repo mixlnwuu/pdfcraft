@@ -185,3 +185,61 @@ fn format_text_previews_on_every_selected_paragraph() {
     assert_eq!(reds(&mut h), (0, 0, 0), "moving away takes the preview back");
     assert_eq!(h.state().session.get(h.state().views[0].id).unwrap().can_undo(), None, "a preview applies nothing");
 }
+
+/// Owner's report (Thai edition): a selected paragraph, not opened, could be underlined from
+/// Format text but not plain again. The button shows its underline and takes it off.
+#[test]
+fn a_selected_paragraph_loses_its_underline_from_format_text() {
+    let mut h = harness();
+    let alpha = at(&h, 280.0);
+    click(&mut h, alpha, Modifiers::NONE);
+    h.get_by_label("1 object selected");
+    let underlined = |h: &Harness<'static, PdfCraftApp>| {
+        let app = h.state();
+        let doc = app.session.get(app.views[0].id).unwrap();
+        doc.text_blocks(0).into_iter().find(|b| b.text == "Alpha").is_some_and(|b| b.underlined)
+    };
+    h.get_by_label("Underline").click();
+    h.run_steps(5);
+    assert!(underlined(&h), "underlined");
+    h.get_by_label("1 object selected");
+    h.get_by_label("Underline").click();
+    h.run_steps(5);
+    assert!(!underlined(&h), "plain again");
+}
+
+/// Owner's request (Thai edition): Text direction for a paragraph of the page, selected with a
+/// click. It becomes an added text box with its text, turned, in one undo step, and stays selected.
+#[test]
+fn a_selected_paragraph_turns_vertical_as_an_added_box() {
+    let mut h = harness();
+    let bravo = at(&h, 220.0);
+    click(&mut h, bravo, Modifiers::NONE);
+    h.get_by_role_and_label(egui::accesskit::Role::ComboBox, "Text direction").click();
+    h.run_steps(2);
+    h.get_by_label("Vertical, letters upright").click();
+    h.run_steps(5);
+    let app = h.state();
+    let doc = app.session.get(app.views[0].id).unwrap();
+    assert!(doc.text_blocks(0).iter().all(|b| b.text != "Bravo"), "the paragraph went: {:?}", looks(&h));
+    let turned: Vec<_> = doc
+        .added()
+        .iter()
+        .filter_map(|a| match &a.content {
+            pdfcraft_engine::AddedContent::Text(t) => Some(t.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(turned.len(), 1);
+    assert_eq!(turned[0].text, "Bravo");
+    assert_eq!(turned[0].direction, pdfcraft_engine::TextDirection::Stacked);
+    let r = turned[0].rect;
+    assert!(r[3] - r[1] > r[2] - r[0], "taller than wide: {r:?}");
+    assert_eq!(doc.can_undo(), Some("Edit text"));
+    h.get_by_label("1 object selected");
+    assert!(h.state_mut().execute("edit.undo"));
+    h.run_steps(3);
+    let app = h.state();
+    let doc = app.session.get(app.views[0].id).unwrap();
+    assert!(doc.added().is_empty() && doc.text_blocks(0).iter().any(|b| b.text == "Bravo"), "one undo brings it back");
+}

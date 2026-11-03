@@ -554,6 +554,8 @@ pub struct DocView {
     /// The previous frame's, for pages not drawn yet this frame (Thai edition: a drop onto a
     /// page after the dragged item's own).
     last_screen_xforms: Vec<(usize, PageXform)>,
+    /// Pixels per point last frame, for telling a rounding sliver of a page from a visible one.
+    screen_ppp: f32,
     /// The scroll viewport on screen last frame.
     viewport_screen: Rect,
     /// Pending zoom anchor: page, fractional position (also in gutters), and viewport offset.
@@ -945,6 +947,7 @@ impl DocView {
             screen_rects: Vec::new(),
             screen_xforms: Vec::new(),
             last_screen_xforms: Vec::new(),
+            screen_ppp: 1.0,
             viewport_screen: Rect::NOTHING,
             zoom_anchor: None,
             shown: false,
@@ -1143,6 +1146,8 @@ struct PageEnv<'a> {
     navigation_enabled: bool,
     paper: Color32,
     show_page_edge_shadows: bool,
+    /// The grid over the pages (Thai edition).
+    show_grid: bool,
     ppp: f32,
     precise_scroll: Vec2,
     prefs: &'a comments::CommentPrefs,
@@ -1513,8 +1518,13 @@ fn page_tool_input(ui: &mut egui::Ui, view: &mut DocView, frame: &mut PageFrame<
     let PageFrame { resp, ptr, pointer, .. } = *frame;
     let cx = PageToolContext { ui, resp, xf: &xf, ptr, page: i, doc, info };
     let pcx = comments::PageCx { page: i, xf: &xf, ptr, info, tool, prefs, allowed, hidden: comments_hidden, redact_mark };
-    let (lines, images) =
-        if matches!(tool, QuickTool::AddText | QuickTool::EditText) && can_modify { edit_inventory(view, doc, i) } else { Default::default() };
+    let (lines, images) = if matches!(tool, QuickTool::AddText | QuickTool::EditText) && can_modify {
+        let (lines, images) = edit_inventory(view, doc, i);
+        set_snap(ui.ctx(), &xf, info, i, (added, &lines, &images), frame.env.show_grid.then_some(units));
+        (lines, images)
+    } else {
+        Default::default()
+    };
     let field_tool = match tool {
         QuickTool::Field(f) => Some(f),
         _ => None,
@@ -1681,7 +1691,9 @@ fn page_tool_input(ui: &mut egui::Ui, view: &mut DocView, frame: &mut PageFrame<
                 cx,
                 added,
                 tool == QuickTool::AddText && !over_source,
-                matches!(tool, QuickTool::AddText | QuickTool::EditText),
+                // Edit text & images: one click selects an added box and a double click opens
+                // it, as for the page's own paragraphs (Thai edition).
+                tool == QuickTool::AddText,
                 text_style,
                 view,
             )
@@ -1761,7 +1773,6 @@ fn edit_inventory(
     (lines, images)
 }
 
-/// Images parsed once per page and document edit generation, shared by painting and menus.
 /// The pixels of the page picture being moved or resized on `page`, decoded once per gesture (Thai
 /// edition).
 fn prepare_image_drag_picture(ctx: &egui::Context, view: &mut DocView, doc: &pdfcraft_engine::Document, page: usize) {
@@ -1797,6 +1808,7 @@ fn prepare_image_drag_picture(ctx: &egui::Context, view: &mut DocView, doc: &pdf
     view.image_drag_picture = Some((key, texture));
 }
 
+/// Images parsed once per page and document edit generation, shared by painting and menus.
 fn cached_edit_images<'a>(view: &'a mut DocView, doc: &pdfcraft_engine::Document, page: usize) -> &'a [pdfcraft_engine::PageImage] {
     let generation = doc.edit_generation();
     let entry = view.edit_images.entry(page).or_insert_with(|| (generation, doc.page_images(page)));
@@ -2166,6 +2178,9 @@ fn page_overlays(ui: &mut egui::Ui, view: &mut DocView, frame: &mut PageFrame<'_
     let PageSlot { i, xf, .. } = *slot;
     let PageFrame { resp, ptr, pointer, .. } = *frame;
     let painter = ui.painter();
+    if frame.env.show_grid {
+        paint_grid(painter, &xf, info, i, frame.env.units);
+    }
     let tool_cx = PageToolContext { ui, resp, xf: &xf, ptr, page: i, doc, info };
     let pcx = comments::PageCx { page: i, xf: &xf, ptr, info, tool, prefs, allowed, hidden: comments_hidden, redact_mark };
     if tool == QuickTool::Select && !input.consumed {
@@ -2283,6 +2298,123 @@ fn page_overlays(ui: &mut egui::Ui, view: &mut DocView, frame: &mut PageFrame<'_
         if pointer.is_some_and(|p| mark.expand(2.0).contains(p)) {
             view.cursor.describe(Subject::SignatureBadge, badge.summary.to_string());
         }
+    }
+}
+
+/// The grid's spacing in `units` (Thai edition): a fine step for each, every `MAJOR`th line
+/// stronger and, on the rulers, numbered.
+pub(crate) fn grid_units(units: crate::units::Unit) -> f64 {
+    match units {
+        crate::units::Unit::Millimetres => 5.0,
+        crate::units::Unit::Centimetres => 0.5,
+        crate::units::Unit::Inches => 0.25,
+        crate::units::Unit::Points => 12.0,
+    }
+}
+
+/// Every how many grid steps a line is a major one (a centimetre, an inch, 72 points).
+pub(crate) fn grid_major(units: crate::units::Unit) -> usize {
+    match units {
+        crate::units::Unit::Millimetres | crate::units::Unit::Centimetres => 2,
+        crate::units::Unit::Inches => 4,
+        crate::units::Unit::Points => 6,
+    }
+}
+
+/// The grid step on screen for page `page` (`None` when the page has no size, or the step is too
+/// fine to see).
+fn grid_step(xf: &PageXform, info: &DocInfo, page: usize, units: crate::units::Unit) -> Option<f32> {
+    let width = info.pages.get(page).map(|p| p.width).filter(|w| *w > 0.0)?;
+    let step = (grid_units(units) / units.per_point()) as f32 * xf.rect.width() / width;
+    (step.is_finite() && step >= 4.0).then_some(step)
+}
+
+/// What a box moved on page `page` lines up with (Thai edition): the page's other boxes (added
+/// items, paragraphs, pictures), and the grid when it shows (`grid`: its units).
+fn set_snap(
+    ctx: &egui::Context,
+    xf: &PageXform,
+    info: &DocInfo,
+    page: usize,
+    (added, lines, images): (&[pdfcraft_engine::Added], &[pdfcraft_engine::TextBlock], &[pdfcraft_engine::PageImage]),
+    grid: Option<crate::units::Unit>,
+) {
+    crate::content_ui::set_snap_targets(ctx, xf.rect, crate::content_ui::page_boxes(xf, info, page, added, lines, images));
+    crate::content_ui::set_snap_grid(ctx, xf.rect, grid.and_then(|units| grid_step(xf, info, page, units)));
+}
+
+/// How wide the rulers are (screen points).
+const RULER: f32 = 18.0;
+
+/// Rulers along the top and left of the document (Thai edition), measuring the current page from
+/// its top left corner in `units`.
+fn paint_rulers(ui: &egui::Ui, view: &DocView, info: &DocInfo, units: crate::units::Unit, area: Rect) {
+    let Some(page) = view.page_screen_rect(view.current) else { return };
+    let Some(width) = info.pages.get(view.current).map(|p| p.width).filter(|w| *w > 0.0) else { return };
+    let step_units = grid_units(units);
+    let step = (step_units / units.per_point()) as f32 * page.width() / width;
+    if !step.is_finite() || step < 3.0 {
+        return;
+    }
+    let painter = ui.painter().with_clip_rect(area);
+    let visuals = ui.visuals();
+    let (fill, ink) = (visuals.extreme_bg_color, visuals.weak_text_color());
+    let top = Rect::from_min_max(area.min, Pos2::new(area.right(), area.top() + RULER));
+    let left = Rect::from_min_max(Pos2::new(area.left(), area.top() + RULER), Pos2::new(area.left() + RULER, area.bottom()));
+    for r in [top, left] {
+        painter.rect_filled(r, 0.0, fill);
+    }
+    painter.line_segment([top.left_bottom(), top.right_bottom()], Stroke::new(1.0, ink.gamma_multiply(0.4)));
+    painter.line_segment([left.right_top(), left.right_bottom()], Stroke::new(1.0, ink.gamma_multiply(0.4)));
+    let every = grid_major(units) as i64;
+    let font = egui::FontId::proportional(9.0);
+    let label = |k: i64| {
+        let v = k as f64 * step_units;
+        if (v - v.round()).abs() < 1e-6 { format!("{}", v.round() as i64) } else { format!("{v:.1}") }
+    };
+    // The ticks over the strip, `from` (the page's edge) every `step` along `span`.
+    let ticks = |from: f32, span: (f32, f32)| {
+        let first = ((span.0 - from) / step).floor() as i64;
+        let last = ((span.1 - from) / step).ceil() as i64;
+        (first..=last.min(first.saturating_add(3000))).map(move |k| (k, from + k as f32 * step))
+    };
+    for (k, x) in ticks(page.left(), (top.left() + RULER, top.right())) {
+        let major = k.rem_euclid(every) == 0;
+        let h = if major { RULER * 0.6 } else { RULER * 0.3 };
+        painter.line_segment([Pos2::new(x, top.bottom() - h), Pos2::new(x, top.bottom())], Stroke::new(1.0, ink));
+        if major {
+            painter.text(Pos2::new(x + 2.0, top.top() + 1.0), egui::Align2::LEFT_TOP, label(k), font.clone(), ink);
+        }
+    }
+    for (k, y) in ticks(page.top(), (left.top(), left.bottom())) {
+        let major = k.rem_euclid(every) == 0;
+        let w = if major { RULER * 0.6 } else { RULER * 0.3 };
+        painter.line_segment([Pos2::new(left.right() - w, y), Pos2::new(left.right(), y)], Stroke::new(1.0, ink));
+        if major {
+            painter.text(Pos2::new(left.left() + 1.0, y + 2.0), egui::Align2::LEFT_TOP, label(k), font.clone(), ink);
+        }
+    }
+    painter.rect_filled(Rect::from_min_size(area.min, egui::vec2(RULER, RULER)), 0.0, fill);
+    painter.text(Rect::from_min_size(area.min, egui::vec2(RULER, RULER)).center(), egui::Align2::CENTER_CENTER, units.label(), font, ink);
+}
+
+/// The grid over page `page` (Thai edition): drawn on screen only, from the page's top left.
+fn paint_grid(painter: &egui::Painter, xf: &PageXform, info: &DocInfo, page: usize, units: crate::units::Unit) {
+    let Some(step) = grid_step(xf, info, page, units) else { return };
+    let r = xf.rect;
+    let clip = painter.with_clip_rect(painter.clip_rect().intersect(r));
+    let (fine, major) =
+        (Stroke::new(0.5, Color32::from_rgba_unmultiplied(120, 150, 200, 70)), Stroke::new(0.8, Color32::from_rgba_unmultiplied(80, 120, 190, 110)));
+    let every = grid_major(units);
+    // At most a few thousand lines, whatever the zoom.
+    let (across, down) = ((r.width() / step) as usize, (r.height() / step) as usize);
+    for k in 0..=across.min(4000) {
+        let x = r.left() + k as f32 * step;
+        clip.line_segment([Pos2::new(x, r.top()), Pos2::new(x, r.bottom())], if k % every == 0 { major } else { fine });
+    }
+    for k in 0..=down.min(4000) {
+        let y = r.top() + k as f32 * step;
+        clip.line_segment([Pos2::new(r.left(), y), Pos2::new(r.right(), y)], if k % every == 0 { major } else { fine });
     }
 }
 
@@ -2486,6 +2618,7 @@ fn draw_pages(
     let origin = resp_rect.min - vec2(0.0, y_shift);
     let visible = viewport.translate(resp_rect.min.to_vec2());
     view.screen_rects.clear();
+    view.screen_ppp = ui.ctx().pixels_per_point();
     view.last_screen_xforms = std::mem::take(&mut view.screen_xforms);
     // The pointer as the pages see it: nothing over them (a dialog from the frame it opens),
     // or a press they hold. The page modules read it rather than egui's raw pointer state.
@@ -3775,6 +3908,7 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
 
     scroll = refine_goto_point(scroll, view, &ScrollGeometry { rects: &rects, y_shift, content_w, content_h, avail, middle_gesture, hand });
     let selection_wheel = view.selection_drag && navigation_enabled && unobstructed && !single_paging && ui.rect_contains_pointer(avail);
+    let show_rulers = app.show_rulers;
     let env = PageEnv {
         added: &added,
         allowed,
@@ -3810,6 +3944,7 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
         navigation_enabled,
         paper,
         show_page_edge_shadows: app.show_page_edge_shadows,
+        show_grid: app.show_grid,
         ppp,
         precise_scroll,
         prefs,
@@ -3868,6 +4003,9 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
 
     view.viewport_screen = out.inner_rect;
     view.auto_scroll.paint(ui, avail);
+    if show_rulers {
+        paint_rulers(ui, view, info, env.units, out.inner_rect);
+    }
     if unobstructed && matches!(tool, QuickTool::Select | QuickTool::ColumnSelect) {
         copy_selected |= selection_actions(ui, avail, view, info, prefs, allowed && !comments_hidden, can_copy);
     }
@@ -4203,7 +4341,10 @@ fn apply_frame_requests(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui, 
     // Read mode hides the tools (#2646), and full screen is the page and nothing else (#1459);
     // the quick tools come back with the window.
     if app.mode != crate::Mode::Read && !app.full_screen {
-        quick_bar(app, avail, ui);
+        // The page nearest the left edge, whose margin the bar sits in.
+        let page_left = app.views[index].screen_rects.iter().map(|(_, r)| r.left()).reduce(f32::min);
+        quick_bar(app, avail, page_left, ui);
+        crate::hotbar::show(app, avail, ui.ctx());
     }
     if let Some((source, file, destination)) = remote_open {
         app.open_remote_link(source, file, destination);

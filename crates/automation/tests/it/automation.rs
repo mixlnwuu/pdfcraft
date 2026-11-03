@@ -664,6 +664,44 @@ fn tool_table_is_well_formed() {
     }
 }
 
+fn assert_homogeneous_enums(schema: &Value, path: &str) {
+    fn json_kind(value: &Value) -> &'static str {
+        match value {
+            Value::Null => "null",
+            Value::Bool(_) => "boolean",
+            Value::Number(_) => "number",
+            Value::String(_) => "string",
+            Value::Array(_) => "array",
+            Value::Object(_) => "object",
+        }
+    }
+
+    if let Some(values) = schema.get("enum").and_then(Value::as_array) {
+        let first = values.first().map(json_kind);
+        assert!(values.iter().map(json_kind).all(|kind| Some(kind) == first), "mixed enum types at {path}: {values:?}");
+    }
+    match schema {
+        Value::Object(object) => {
+            for (key, child) in object {
+                assert_homogeneous_enums(child, &format!("{path}.{key}"));
+            }
+        }
+        Value::Array(array) => {
+            for (index, child) in array.iter().enumerate() {
+                assert_homogeneous_enums(child, &format!("{path}[{index}]"));
+            }
+        }
+        _ => {}
+    }
+}
+
+#[test]
+fn tool_schema_enums_have_one_json_type() {
+    for tool in tools() {
+        assert_homogeneous_enums(&tool.input_schema, tool.name);
+    }
+}
+
 #[test]
 fn explicit_font_and_disjoint_ranges_save_reopen_through_tools() {
     let dir = workdir("font-ranges");
@@ -2109,6 +2147,27 @@ fn comments_through_tools() {
     edit_text_comment(&mut a, doc, &list);
     verify_comment_errors(&mut a, doc, &id);
     save_and_reopen_comments(&dir, &mut a, doc);
+}
+
+#[test]
+fn freehand_highlight_through_tools() {
+    let dir = workdir("freehand-highlight");
+    let mut a = auto(&dir);
+    let doc = ok(&mut a, "doc_open", json!({ "path": "a.pdf" }))["doc"].as_u64().unwrap();
+    ok(
+        &mut a,
+        "comment_add",
+        json!({ "doc": doc, "page": 1, "type": "freehand_highlight", "width": 100,
+        "strokes": [[[20, 100], [120, 100]]] }),
+    );
+    let list = ok(&mut a, "comment_list", json!({ "doc": doc }));
+    assert_eq!(list["count"], 1);
+    assert_eq!(list["comments"][0]["type"], "Ink");
+    assert_eq!(list["comments"][0]["intent"], "FreehandHighlight");
+    assert_eq!(list["comments"][0]["color"], "#FFF000");
+    let undone = ok(&mut a, "edit_undo", json!({ "doc": doc }));
+    assert_eq!(undone["undone"], "Add freehand highlight");
+    assert_eq!(ok(&mut a, "comment_list", json!({ "doc": doc }))["count"], 0);
 }
 
 fn add_comment_examples(a: &mut Automation, doc: u64) -> String {
@@ -4839,6 +4898,39 @@ fn adding_content_through_tools() {
     assert!(matches!(a.call("content_delete", &json!({ "doc": doc, "page": 1, "index": 5 })), Err(ToolError::Failed(_))));
 }
 
+/// Added text can be underlined, and it reads back (#4236).
+#[test]
+fn added_text_underline_through_tools() {
+    let dir = workdir("content-underline");
+    let mut png = Vec::new();
+    {
+        let mut enc = png::Encoder::new(&mut png, 40, 20);
+        enc.set_color(png::ColorType::Rgb);
+        let mut w = enc.write_header().unwrap();
+        w.write_image_data(&[200u8; 2400]).unwrap();
+    }
+    std::fs::write(dir.join("logo.png"), png).unwrap();
+    let mut a = auto(&dir);
+    let doc = ok(&mut a, "doc_open", json!({ "path": "a.pdf" }))["doc"].as_u64().unwrap();
+    ok(&mut a, "page_add_text", json!({ "doc": doc, "page": 1, "text": "Title", "at": [20, 20], "underline": true }));
+    ok(&mut a, "page_add_text", json!({ "doc": doc, "page": 1, "text": "Body", "at": [20, 60] }));
+    ok(&mut a, "page_add_image", json!({ "doc": doc, "page": 1, "path": "logo.png", "rect": [100, 200, 180, 240] }));
+    let flags = |a: &mut Automation| -> Vec<Option<bool>> {
+        let list = ok(a, "content_list", json!({ "doc": doc }));
+        list["items"].as_array().unwrap().iter().map(|i| i["underline"].as_bool()).collect()
+    };
+    assert_eq!(flags(&mut a), [Some(true), Some(false), None]);
+    ok(&mut a, "content_update", json!({ "doc": doc, "page": 1, "index": 1, "underline": false }));
+    ok(&mut a, "content_update", json!({ "doc": doc, "page": 1, "index": 2, "underline": true }));
+    assert_eq!(flags(&mut a), [Some(false), Some(true), None]);
+    assert!(
+        matches!(a.call("content_update", &json!({ "doc": doc, "page": 1, "index": 3, "underline": true })), Err(ToolError::InvalidArgs(_))),
+        "pictures aren't underlined"
+    );
+    ok(&mut a, "edit_undo", json!({ "doc": doc }));
+    assert_eq!(flags(&mut a), [Some(false), Some(false), None]);
+}
+
 /// Edit ▸ Copy and Paste headlessly (#2636): an added text box or image, as it is, onto its own
 /// page beside it, onto a point, and into another document.
 #[test]
@@ -6610,10 +6702,12 @@ fn optimizing_through_tools() {
     let reduced = ok(&mut a, "doc_reduce", json!({ "doc": doc, "path": "reduced.pdf" }));
     assert!(reduced["bytes_after"].as_u64().unwrap() < reduced["bytes_before"].as_u64().unwrap());
     assert_eq!(reduced["written"], true);
+    assert_eq!(reduced["images_refused"], 0);
     assert_eq!(std::fs::metadata(dir.join("reduced.pdf")).unwrap().len(), reduced["bytes_after"].as_u64().unwrap());
 
     // Target PDF 1.4 (disables object streams) and PDF 2.0 (with object_streams toggled off).
     let v14 = ok(&mut a, "doc_optimize", json!({ "doc": doc, "path": "v14.pdf", "compatibility": "1.4" }));
+    assert_eq!(v14["images_refused"], 0);
     assert_eq!((v14["pdf_version"].as_str(), v14["object_streams"].as_bool()), (Some("1.4"), Some(false)), "{v14}");
     let v14_bytes = std::fs::read(dir.join("v14.pdf")).unwrap();
     assert!(v14_bytes.starts_with(b"%PDF-1.4\n") && !v14_bytes.windows(7).any(|w| w == b"/ObjStm"));
@@ -9896,7 +9990,11 @@ fn added_text_lines_take_their_own_alignments() {
     let dir = workdir("paragraph-aligns");
     let mut a = auto(&dir);
     let id = ok(&mut a, "doc_create", json!({"from":"blank","width":600,"height":400}))["doc"].as_u64().unwrap();
-    ok(&mut a, "page_add_text", json!({"doc":id,"page":1,"text":"Left line\nRight line","at":[40,50],"width":500,"size":12,"aligns":[null,"right"]}));
+    ok(
+        &mut a,
+        "page_add_text",
+        json!({"doc":id,"page":1,"text":"Left line\nRight line\nInherited line","at":[40,50],"width":500,"size":12,"aligns":[null,"right","inherit"]}),
+    );
     let rect = |a: &mut Automation, text: &str| -> Vec<f64> {
         let lines = ok(a, "text_lines", json!({"doc":id,"page":1}));
         let line = lines["lines"].as_array().unwrap().iter().find(|l| l["text"] == text).cloned().unwrap();
@@ -9904,10 +10002,13 @@ fn added_text_lines_take_their_own_alignments() {
     };
     assert!((rect(&mut a, "Left line")[0] - 40.0).abs() < 1.0);
     assert!((rect(&mut a, "Right line")[2] - 540.0).abs() < 1.0, "{:?}", rect(&mut a, "Right line"));
+    assert!((rect(&mut a, "Inherited line")[0] - 40.0).abs() < 1.0);
     // The whole box centred: the right-aligned line goes with it.
     ok(&mut a, "content_update", json!({"doc":id,"page":1,"index":1,"align":"center"}));
     let right = rect(&mut a, "Right line");
     assert!(((right[0] + right[2]) / 2.0 - 290.0).abs() < 1.0, "{right:?}");
+    let inherited = rect(&mut a, "Inherited line");
+    assert!(((inherited[0] + inherited[2]) / 2.0 - 290.0).abs() < 1.0, "{inherited:?}");
     assert!(a.call("content_update", &json!({"doc":id,"page":1,"index":1,"aligns":["sideways"]})).is_err());
     assert!(a.call("content_update", &json!({"doc":id,"page":1,"index":1,"aligns":"right"})).is_err());
 }
@@ -10472,4 +10573,29 @@ fn mixed_script_tools_normalize_but_undo_restores_the_exact_mixture() {
         let reopened = ok(&mut a, "doc_open", json!({"path":path}))["doc"].as_u64().unwrap();
         assert_eq!(page_text(&mut a, reopened)[0], plain);
     }
+}
+
+/// Thai edition: added text can run vertically, letters upright or turned, through the tools, and
+/// says which way it runs.
+#[test]
+fn vertical_added_text_through_tools() {
+    let dir = workdir("content-vertical");
+    let mut a = auto(&dir);
+    let doc = ok(&mut a, "doc_open", json!({ "path": "a.pdf" }))["doc"].as_u64().unwrap();
+    ok(&mut a, "page_add_text", json!({ "doc": doc, "page": 1, "text": "ABC", "at": [20, 20], "direction": "stacked" }));
+    ok(&mut a, "page_add_text", json!({ "doc": doc, "page": 1, "text": "Approved", "at": [80, 20], "direction": "rotated" }));
+    let list = ok(&mut a, "content_list", json!({ "doc": doc }));
+    let items = list["items"].as_array().unwrap();
+    assert_eq!(items.iter().map(|i| i["direction"].as_str().unwrap()).collect::<Vec<_>>(), ["stacked", "rotated"]);
+    for i in items {
+        let r: Vec<f64> = i["rect"].as_array().unwrap().iter().map(|v| v.as_f64().unwrap()).collect();
+        assert!(r[3] - r[1] > r[2] - r[0], "taller than wide: {i}");
+    }
+    ok(&mut a, "content_update", json!({ "doc": doc, "page": 1, "index": 1, "direction": "horizontal" }));
+    let list = ok(&mut a, "content_list", json!({ "doc": doc }));
+    assert_eq!(list["items"][0]["direction"], "horizontal");
+    assert!(matches!(
+        a.call("content_update", &json!({ "doc": doc, "page": 1, "index": 1, "direction": "sideways" })),
+        Err(ToolError::InvalidArgs(_))
+    ));
 }

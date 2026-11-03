@@ -76,6 +76,7 @@ mod restyle;
 mod script_noop;
 mod side_panels;
 mod signing;
+mod smart_guides;
 mod stamps;
 mod text_select;
 mod theme;

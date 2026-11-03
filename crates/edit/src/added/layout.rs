@@ -1,4 +1,4 @@
-use super::types::{AddedImage, AddedText, Align, Family, craft_face};
+use super::types::{AddedImage, AddedText, Align, Family, TextDirection, craft_face};
 use super::{
     Content, Document, EditError, GlyphError, Level, ObjRef, Object, ParagraphBidiInfo, ShapedCluster, ShapedScript, shape_arabic, shape_hebrew,
     shape_thai,
@@ -35,6 +35,10 @@ thread_local! {
 pub(super) fn wrapped(t: &AddedText) -> Vec<(String, bool, usize)> {
     #[cfg(test)]
     WRAP_CALLS.with(|c| c.set(c.get().saturating_add(1)));
+    // Stacked letters (Thai edition): one letter, with its marks, a line.
+    if t.direction == TextDirection::Stacked {
+        return t.text.split('\n').enumerate().flat_map(|(index, para)| letters(para).into_iter().map(move |l| (l, false, index))).collect();
+    }
     let width = (t.rect[2] - t.rect[0]).max(t.size);
     let mut out = Vec::new();
     for (index, para) in t.text.split('\n').enumerate() {
@@ -323,14 +327,50 @@ pub(super) fn thai_error(e: GlyphError, text: &str) -> EditError {
     })
 }
 
+/// The letters of `s` for stacked text (Thai edition), each with the marks written over or under
+/// it: a Thai vowel or tone mark (and sara am) never stands on a line of its own.
+pub fn letters(s: &str) -> Vec<String> {
+    let mark = |c: char| matches!(c, '\u{0E31}' | '\u{0E33}'..='\u{0E3A}' | '\u{0E47}'..='\u{0E4E}' | '\u{0300}'..='\u{036F}' | '\u{0610}'..='\u{061A}' | '\u{064B}'..='\u{065F}');
+    let mut out: Vec<String> = Vec::new();
+    for c in s.chars() {
+        match out.last_mut() {
+            Some(last) if mark(c) => last.push(c),
+            _ => out.push(c.to_string()),
+        }
+    }
+    if out.is_empty() {
+        out.push(String::new());
+    }
+    out
+}
+
+/// A rotated text as it reads before it is turned (Thai edition): horizontal, its lines wrapping
+/// at the box's height.
+pub fn rotated_twin(t: &AddedText) -> AddedText {
+    let r = norm(t.rect);
+    let length = (r[3] - r[1]).max(t.size);
+    AddedText { rect: [0.0, -t.size, length, 0.0], direction: TextDirection::Horizontal, ..t.clone() }
+}
+
 /// Whether `t`'s box is narrow enough to wrap one of its paragraphs.
 pub fn text_is_wrapped(t: &AddedText) -> bool {
-    lines(t).len() > t.text.split('\n').count()
+    match t.direction {
+        TextDirection::Horizontal => lines(t).len() > t.text.split('\n').count(),
+        TextDirection::Stacked => false,
+        TextDirection::Rotated => text_is_wrapped(&rotated_twin(t)),
+    }
 }
 
 /// The width of `t`'s widest paragraph when nothing wraps, at its size.
 pub(super) fn natural_width(t: &AddedText) -> f64 {
     let shaped = craft_face(t).is_some() || t.text.chars().any(|c| is_thai(c) || is_arabic(c));
+    // Stacked (Thai edition): its widest letter.
+    if t.direction == TextDirection::Stacked {
+        return lines(t)
+            .iter()
+            .map(|l| if shaped { shaped_width(t, l, false) } else { t.family.width(l, t.size, t.bold, t.italic) })
+            .fold(0.0, f64::max);
+    }
     t.text
         .split('\n')
         .map(|para| {
@@ -344,9 +384,23 @@ pub(super) fn natural_width(t: &AddedText) -> f64 {
 /// edge (`page_width`, display points), where it wraps. The box keeps the edge its alignment
 /// anchors: the left one, the right one for right-aligned text, the middle for centred text.
 pub fn fitted_text(t: &AddedText, page_width: f64) -> AddedText {
+    let r = norm(t.rect);
+    match t.direction {
+        TextDirection::Horizontal => {}
+        // Turned text hugs its length down the page; its width follows from its lines.
+        TextDirection::Rotated => {
+            let length = natural_width(&rotated_twin(t)) + 2.0;
+            let turned = AddedText { rect: [r[0], r[3] - length, r[0] + t.size, r[3]], ..t.clone() };
+            return AddedText { rect: text_rect(&turned), ..turned };
+        }
+        // A column as wide as its widest letter, its left edge kept.
+        TextDirection::Stacked => {
+            let w = (natural_width(t) + 2.0).max(t.size.max(4.0));
+            return AddedText { rect: [r[0], r[1], r[0] + w, r[3]], ..t.clone() };
+        }
+    }
     // Room so rounding never wraps the last word.
     let natural = natural_width(t) + 2.0;
-    let r = norm(t.rect);
     let least = t.size.max(4.0);
     let (x0, x1) = match t.align {
         Align::Right => {
@@ -372,7 +426,15 @@ pub fn fitted_text(t: &AddedText, page_width: f64) -> AddedText {
 /// The box a text item occupies (height from its lines).
 pub fn text_rect(t: &AddedText) -> [f64; 4] {
     let r = norm(t.rect);
-    let h = lines(t).len().max(1) as f64 * t.size * 1.2;
+    // Turned text (Thai edition): its box keeps its top, left and length; its width is the
+    // height its lines take before they are turned.
+    if t.direction == TextDirection::Rotated {
+        let length = (r[3] - r[1]).max(t.size);
+        let twin = text_rect(&rotated_twin(t));
+        return [r[0], r[3] - length, r[0] + (twin[3] - twin[1]), r[3]];
+    }
+    // The first line is 1.2 em tall; each further one adds the line spacing (Thai edition).
+    let h = (lines(t).len().max(1) - 1) as f64 * t.line_advance() + t.size * 1.2;
     [r[0], r[3] - h, r[2], r[3]]
 }
 

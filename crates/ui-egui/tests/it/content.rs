@@ -454,7 +454,15 @@ fn text_tool_single_click_retypes_added_text_without_another_item() {
             h.run_steps(3);
             let point = at(&h, 45.0, 195.0);
             click(&mut h, point);
-            let draft = h.state().views[0].content.draft.as_ref().expect("one click edits the existing item");
+            if command == "edit.edit_text" {
+                // Thai edition: in Edit text & images one click selects the added box, as it does
+                // a paragraph of the page's own, and a double click opens it.
+                assert!(h.state().views[0].content.draft.is_none(), "one click only selects");
+                assert_eq!(h.state().views[0].content.selected, Some((0, 0)));
+                crate::support::input::double_click(&mut h, point);
+                h.run_steps(2);
+            }
+            let draft = h.state().views[0].content.draft.as_ref().expect("the click (Add text) or double click opens the existing item");
             assert_eq!(draft.index, Some(0));
             assert_eq!(draft.text, original);
             h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
@@ -486,7 +494,9 @@ fn text_tool_deleting_a_draft_hides_the_old_added_glyphs_and_cancel_restores_the
     assert!(h.state_mut().execute("edit.edit_text"));
     h.run_steps(3);
     let point = at(&h, 45.0, 185.0);
-    click(&mut h, point);
+    // Thai edition: a double click opens an added box in Edit text & images.
+    crate::support::input::double_click(&mut h, point);
+    h.run_steps(2);
     h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
     h.key_press(egui::Key::Backspace);
     crate::support::settle(&mut h);
@@ -1195,6 +1205,68 @@ fn format_text_rows_line_up_and_fit_the_panel() {
     }
     for r in h.query_all_by_role(Role::ComboBox).map(|n| n.rect()).chain(scale_row).chain([size, h.get_by_label("Font size").rect()]) {
         assert!(r.right() <= font.right() + 0.5, "{r:?} reaches past the panel ({font:?})");
+    }
+}
+
+/// The Tools pane can't be dragged narrower than Format text needs: at its smallest width no
+/// control reaches past the font list, which spans the panel.
+#[test]
+fn format_text_fits_the_tools_pane_at_its_narrowest() {
+    use egui::accesskit::Role;
+    let mut h = harness();
+    // At the largest interface size too: it scales points to pixels, and the layout is in points.
+    h.state_mut().set_option("ui-scale", "300").unwrap();
+    h.state_mut().side_panels.tools_width = 0.0;
+    assert!(h.state_mut().execute("edit.text"));
+    h.run_steps(3);
+    let font = h.query_all_by_role(Role::ComboBox).find(|n| n.value().as_deref() == Some("Helvetica")).map(|n| n.rect()).expect("the font list");
+    let rects = ["Alignment", "Colour", "Font size", "Character spacing", "Horizontal scale", "Line spacing", "Paragraph spacing"]
+        .into_iter()
+        .flat_map(|l| h.query_all_by_label(l).map(move |n| (l, n.rect())))
+        .chain(h.query_all_by_role(Role::ComboBox).map(|n| ("list", n.rect())))
+        .collect::<Vec<_>>();
+    for (label, r) in rects {
+        assert!(r.right() <= font.right() + 0.5, "{label} {r:?} reaches past the font list ({font:?})");
+    }
+    // The font list ends where the pane's own content does: the header's Close button is its right edge.
+    let close = h.get_by_label("Close panel").rect();
+    assert!((font.right() - close.right()).abs() < 1.5, "the font list {font:?} is not at the pane's content edge ({close:?})");
+    // The rows below scroll, and the scrollbar floats over their right edge: they stop short of it.
+    let image = h.get_by_label("Image").rect();
+    assert!(image.right() <= font.right() - 17.0, "the Image row {image:?} runs under the scrollbar ({font:?})");
+    // The right-hand column ends where the font list does, as the left one starts where it does.
+    for label in ["Paragraph spacing", "Character spacing"] {
+        let right = h.query_all_by_label(label).map(|n| n.rect().right()).fold(f32::MIN, f32::max);
+        assert!((right - font.right()).abs() < 1.5, "{label} ends at {right}, the font list at {}", font.right());
+    }
+}
+
+/// The lists and the size row in Format text fit the narrowest Tools pane in every interface
+/// language: "Auto" in the line spacing list and "Mixed" in the size field are translated, and in
+/// Czech or French they are much longer. The font list spans the pane, so nothing may end past it.
+#[test]
+fn format_text_lists_fit_the_narrowest_tools_pane_in_every_language() {
+    use egui::accesskit::Role;
+    for lang in pdfcraft_ui_egui::i18n::Lang::all() {
+        let mut h = harness();
+        // A script with no face on this machine (Lao without system fonts) can't be drawn at all.
+        if !h.ctx.fonts_mut(|f| f.has_glyphs(&egui::FontId::proportional(13.0), lang.name())) {
+            continue;
+        }
+        h.state_mut().set_option("language", lang.code()).unwrap();
+        h.state_mut().side_panels.tools_width = 0.0;
+        assert!(h.state_mut().execute("edit.text"));
+        h.run_steps(3);
+        let lists: Vec<egui::Rect> = h.query_all_by_role(Role::ComboBox).map(|n| n.rect()).collect();
+        // Found by its value (a font name, never translated), not as the widest list: an overrun
+        // could make another list the widest.
+        let font = h.query_all_by_role(Role::ComboBox).find(|n| n.value().as_deref() == Some("Helvetica")).map(|n| n.rect()).expect("the font list");
+        for r in &lists {
+            assert!(r.right() <= font.right() + 0.5, "{}: {r:?} reaches past the font list ({font:?})", lang.code());
+        }
+        // The size row too: its field reserves room for a translated "Mixed".
+        let align = h.get_by_label(pdfcraft_ui_egui::i18n::t("Alignment")).rect();
+        assert!(align.right() <= font.right() + 0.5, "{}: Alignment {align:?} reaches past the font list ({font:?})", lang.code());
     }
 }
 
@@ -1942,4 +2014,155 @@ fn typing_in_one_tab_never_reaches_another_tabs_added_text() {
     h.key_press_modifiers(egui::Modifiers::COMMAND | egui::Modifiers::SHIFT, egui::Key::Z);
     h.run_steps(3);
     assert_eq!(h.state().views[1].content.draft.as_ref().map(|d| d.text.as_str()), Some("Reviewed"), "the other tab's typing stays out");
+}
+
+/// #4236: Format text underlines added text, as one undoable change, and the page draws the rule.
+#[test]
+fn format_text_underlines_added_text() {
+    let _gpu = gpu();
+    let mut h = harness();
+    assert!(h.state_mut().execute("edit.text"));
+    h.run_steps(2);
+    let p = at(&h, 40.0, 300.0);
+    click(&mut h, p);
+    h.event(egui::Event::Text("MMMMMMMM".into()));
+    h.run_steps(2);
+    h.get_by_label("Done adding text").click();
+    h.run_steps(3);
+    let rect = added(&h)[0].content.rect();
+    let underlined = |h: &Harness<'static, PdfCraftApp>| matches!(&added(h)[0].content, pdfcraft_engine::AddedContent::Text(t) if t.underline);
+    assert!(!underlined(&h));
+    // Dark pixels in a strip across the text's baseline, once the page shows the text.
+    let from = item_on_screen(&h, rect);
+    let strip =
+        egui::Rect::from_min_max(egui::pos2(from.left(), from.bottom() - 6.0), egui::pos2(from.left() + from.width() * 0.5, from.bottom() + 2.0));
+    let settle = |h: &mut Harness<'static, PdfCraftApp>, more: &dyn Fn(usize) -> bool| {
+        let mut n = 0;
+        for _ in 0..100 {
+            h.run_steps(2);
+            n = ink(&h.render().unwrap(), strip);
+            if more(n) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        n
+    };
+    let plain = settle(&mut h, &|n| n > 10);
+    assert!(plain > 10, "the text is on the page ({plain} dark pixels)");
+    h.get_by_label("Underline").click();
+    h.run_steps(3);
+    assert!(underlined(&h), "the new text is underlined");
+    {
+        let s = h.state();
+        assert_eq!(s.session.get(s.views[0].id).unwrap().can_undo(), Some("Edit content"));
+    }
+    let ruled = settle(&mut h, &|n| n > plain + 30);
+    assert!(ruled > plain + 30, "a rule under the text ({plain} dark pixels before, {ruled} after)");
+    h.state_mut().undo();
+    h.run_steps(3);
+    assert!(!underlined(&h), "undo takes it off");
+}
+
+/// Thai edition: Format text sets added text's line spacing, as one undoable change.
+#[test]
+fn format_text_sets_the_line_spacing_of_added_text() {
+    let mut h = harness();
+    assert!(h.state_mut().execute("edit.text"));
+    h.run_steps(2);
+    let p = at(&h, 40.0, 300.0);
+    click(&mut h, p);
+    h.event(egui::Event::Text("First".into()));
+    h.run_steps(2);
+    h.get_by_label("Done adding text").click();
+    h.run_steps(3);
+    let spacing = |h: &Harness<'static, PdfCraftApp>| match &added(h)[0].content {
+        pdfcraft_engine::AddedContent::Text(t) => t.line_spacing,
+        _ => -1.0,
+    };
+    assert_eq!(spacing(&h), 0.0);
+    h.get_by_role_and_label(egui::accesskit::Role::ComboBox, "Line spacing").click();
+    h.run_steps(2);
+    h.get_by_label("2.5").click();
+    h.run_steps(3);
+    assert_eq!(spacing(&h), 2.5, "the box takes the spacing");
+    {
+        let s = h.state();
+        assert_eq!(s.session.get(s.views[0].id).unwrap().can_undo(), Some("Edit content"));
+    }
+    h.state_mut().undo();
+    h.run_steps(3);
+    assert_eq!(spacing(&h), 0.0, "undo puts it back");
+}
+
+/// Thai edition: Format text turns added text vertical, letters upright or the whole text turned,
+/// and the box takes its new shape; retyping keeps the direction.
+#[test]
+fn format_text_turns_added_text_vertical() {
+    use pdfcraft_engine::TextDirection;
+    let mut h = harness();
+    assert!(h.state_mut().execute("edit.text"));
+    h.run_steps(2);
+    let p = at(&h, 40.0, 300.0);
+    click(&mut h, p);
+    h.event(egui::Event::Text("Hello".into()));
+    h.run_steps(2);
+    h.get_by_label("Done adding text").click();
+    h.run_steps(3);
+    let text = |h: &Harness<'static, PdfCraftApp>| match &added(h)[0].content {
+        pdfcraft_engine::AddedContent::Text(t) => t.clone(),
+        _ => panic!("text"),
+    };
+    let across = text(&h).rect;
+    assert!(across[2] - across[0] > across[3] - across[1], "across: {across:?}");
+    for (choice, direction) in [("Vertical, letters upright", TextDirection::Stacked), ("Vertical, turned 90°", TextDirection::Rotated)] {
+        h.get_by_role_and_label(egui::accesskit::Role::ComboBox, "Text direction").click();
+        h.run_steps(2);
+        h.get_by_label(choice).click();
+        h.run_steps(3);
+        let t = text(&h);
+        assert_eq!(t.direction, direction);
+        let r = t.rect;
+        assert!(r[3] - r[1] > r[2] - r[0], "{choice}: taller than wide: {r:?}");
+        assert!((r[3] - across[3]).abs() < 0.01 && (r[0] - across[0]).abs() < 0.01, "{choice}: it keeps its top left corner: {r:?}");
+    }
+    // Retyped, it stays turned.
+    let r = text(&h).rect;
+    let page = h.state().views[0].page_screen_rect(0).unwrap();
+    let k = page.width() / 300.0;
+    let ph = page.height() / k;
+    let mid = page.min + egui::vec2(((r[0] + r[2]) / 2.0) as f32 * k, (ph - ((r[1] + r[3]) / 2.0) as f32) * k);
+    // Done left Add text: in Edit text & images a double click opens it.
+    assert!(h.state_mut().execute("edit.edit_text"));
+    h.run_steps(2);
+    crate::support::input::double_click(&mut h, mid);
+    h.run_steps(2);
+    assert!(h.state().views[0].content.draft.is_some(), "a double click opens it");
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+    h.event(egui::Event::Text("Hi there".into()));
+    h.run_steps(2);
+    h.get_by_label("Done adding text").click();
+    h.run_steps(3);
+    let t = text(&h);
+    assert_eq!((t.text.as_str(), t.direction), ("Hi there", TextDirection::Rotated));
+}
+
+/// The rail's page and zoom fields are the same size, and each sits wholly inside the rail, so
+/// neither box is cut off at the edge (the page box lost its right side once the rail's contents
+/// changed width).
+#[test]
+fn rail_page_and_zoom_fields_match_and_fit_the_rail() {
+    let mut h = harness();
+    h.run_steps(3);
+    // The rail is 49 pt wide at the window's right edge (1400 pt wide), inside a 1 pt border.
+    let (rail_left, rail_right) = (1400.0 - 49.0 + 1.0, 1400.0 - 1.0);
+    let rail = h.get_by_label("Bookmarks").rect();
+    let (page, zoom) = (h.get_by_label("Current page").rect(), h.get_by_label("Zoom").rect());
+    assert_eq!((page.width(), page.height()), (zoom.width(), zoom.height()), "{page:?} vs {zoom:?}");
+    // The size `RAIL_FIELD_SIZE` sets: wide enough for "6400%", the largest zoom.
+    assert_eq!((page.width(), page.height()), (42.0, 22.0), "{page:?}");
+    for r in [page, zoom] {
+        assert!(r.left() >= rail_left && r.right() <= rail_right, "{r:?} is cut off by the rail ({rail_left}..{rail_right})");
+        assert!((r.center().x - rail.center().x).abs() < 1.0, "{r:?} is off the rail's centre ({rail:?})");
+    }
 }

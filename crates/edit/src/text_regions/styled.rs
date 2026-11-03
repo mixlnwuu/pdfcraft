@@ -857,6 +857,8 @@ fn rewrite_anchor<'a>(
     let origin = &lead.origin;
     let mut drop = coincident_ops(lines, &members);
     drop.extend(members.iter().flat_map(|line| line.ops.iter().copied()));
+    // The underlines drawn under them go with them (Thai edition).
+    drop.extend(crate::text::underline::indexes(&crate::text::underline::own_underlines(ops, &members)));
     let start = lead.ops.first().copied().unwrap_or(origin.bt_op);
     let split = ops
         .get(origin.bt_op..start)
@@ -1257,11 +1259,14 @@ pub(crate) fn rewrite_styled_block(
                 let underline_size = size_of(source, item.1) * source.origin.k;
                 let (x0, y0) = back.apply(x - o.ctm[4], baseline - o.ctm[5] - underline_size * 0.12);
                 let (x1, y1) = back.apply(x + segment_width - o.ctm[4], baseline - o.ctm[5] - underline_size * 0.12);
-                block_ops.push(Op::new("RG", vec![n(r), n(g), n(b)]));
-                block_ops.push(Op::new("w", vec![n(underline_size * 0.06 / o.ctm[2].hypot(o.ctm[3]).max(1e-6))]));
-                block_ops.push(Op::new("m", vec![n(x0), n(y0)]));
-                block_ops.push(Op::new("l", vec![n(x1), n(y1)]));
-                block_ops.push(Op::new("S", vec![]));
+                // Tagged, so the next rewrite finds it (Thai edition).
+                block_ops.extend(crate::text::underline::tagged(vec![
+                    Op::new("RG", vec![n(r), n(g), n(b)]),
+                    Op::new("w", vec![n(underline_size * 0.06 / o.ctm[2].hypot(o.ctm[3]).max(1e-6))]),
+                    Op::new("m", vec![n(x0), n(y0)]),
+                    Op::new("l", vec![n(x1), n(y1)]),
+                    Op::new("S", vec![]),
+                ]));
             }
             block_ops.push(Op::new("Q", vec![]));
             x += segment_width;

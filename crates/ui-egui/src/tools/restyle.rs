@@ -58,7 +58,9 @@ pub(crate) fn change_between(before: &AddedText, after: &AddedText, underline: O
         color: (after.color != before.color).then_some(after.color),
         bold: (after.bold != before.bold).then_some(after.bold),
         italic: (after.italic != before.italic).then_some(after.italic),
-        underline,
+        // An added box's own underline (Thai edition), when the extras didn't say.
+        underline: underline.or((after.underline != before.underline).then_some(after.underline)),
+        direction: (after.direction != before.direction).then_some(after.direction),
     }
 }
 
@@ -70,23 +72,42 @@ pub(crate) fn all_of(look: &AddedText, underline: Option<bool>) -> LookPreview {
         color: Some(look.color),
         bold: Some(look.bold),
         italic: Some(look.italic),
-        underline,
+        // An underlined added box passes its underline on (Thai edition).
+        underline: underline.or(look.underline.then_some(true)),
+        direction: None,
     }
 }
 
 /// The edit that makes `change` to every one of `targets` on `page`, as one undo step; `None`
 /// when it changes nothing. Paragraphs go from the last to the first, so rewriting one never
-/// renumbers one still to come; added text keeps its numbering whatever its style.
-pub(crate) fn restyle_edit(doc: &Document, page: usize, targets: &[ObjectTarget], change: &LookPreview) -> Option<Edit> {
+/// renumbers one still to come; added text keeps its numbering whatever its style. A paragraph
+/// turned vertical (Thai edition) becomes an added text box in its place, made over `xf`.
+pub(crate) fn restyle_edit(
+    doc: &Document,
+    page: usize,
+    targets: &[ObjectTarget],
+    change: &LookPreview,
+    xf: Option<&crate::canvas::PageXform>,
+) -> Option<Edit> {
     let mut targets = targets.to_vec();
     targets.sort_by_key(|t| (t.kind == ObjectKind::Added, std::cmp::Reverse(t.index)));
     targets.dedup();
     let blocks = doc.text_blocks(page);
     let added: Vec<&pdfcraft_engine::Added> = doc.added().iter().filter(|a| a.page == page).collect();
     let page_width = doc.info.pages.get(page).map(|p| f64::from(p.width));
+    // Added after everything else, so no index named here moves.
+    let mut turned = Vec::new();
     let mut edits: Vec<Edit> = targets
         .iter()
         .filter_map(|t| match t.kind {
+            ObjectKind::Text if change.direction.is_some_and(|d| d != pdfcraft_engine::TextDirection::Horizontal) => {
+                let b = blocks.get(t.index)?;
+                let flat = crate::edit_text_ui::paragraph_as_added(xf?, &doc.info, page, b)?;
+                let mut text = flat.clone();
+                change.apply(&mut text);
+                turned.push(Edit::AddText { page, text: crate::content_ui::restyled(&flat, text, page_width) });
+                Some(Edit::EditTextBlock { page, block: t.index, text: String::new(), style: BlockStyle::default() })
+            }
             ObjectKind::Text => {
                 let b = blocks.get(t.index)?;
                 let style = paragraph_style(&crate::edit_text_ui::look_of(b), change);
@@ -103,6 +124,7 @@ pub(crate) fn restyle_edit(doc: &Document, page: usize, targets: &[ObjectTarget]
             ObjectKind::Image => None,
         })
         .collect();
+    edits.extend(turned);
     match edits.len() {
         0 => None,
         1 => edits.pop(),

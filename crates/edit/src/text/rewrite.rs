@@ -750,7 +750,7 @@ fn block_ops(plan: &BlockPlan<'_>, writer: &LineWriter<'_>, wrapped: &[(String, 
     let underlines = writer.write_all(wrapped, &mut cursor, &mut ops)?;
     ops.push(Op::new("ET", vec![]));
     if plan.underline {
-        ops.extend(underline_ops(&state.fill, &plan.tm, plan.size, &underlines));
+        ops.extend(super::underline::tagged(underline_ops(&state.fill, &plan.tm, plan.size, &underlines)));
     }
     ops.push(Op::new("Q", vec![]));
     Ok(ops)
@@ -852,6 +852,20 @@ pub(crate) fn rewrite_block_from(
     let p = page_dict(doc, page)?;
     let mut res = p.dict.get(b"Resources").map(|r| doc.resolve(r)).and_then(|r| r.as_dict().cloned()).unwrap_or_default();
     let mut fonts_res = res.get(b"Font").map(|f| doc.resolve(f)).and_then(|f| f.as_dict().cloned()).unwrap_or_default();
+    let streams = content_streams(doc, &p.dict)?;
+    let pieces = Pieces::join(&streams.iter().map(|(_, d)| d.as_slice()).collect::<Vec<_>>());
+    let ops = pieces.parse().ops;
+    // The underline drawn under it goes with it, and it stays underlined unless asked otherwise
+    // (Thai edition).
+    let underlines = super::underline::own_underlines(&ops, &members);
+    dropped.extend(super::underline::indexes(&underlines));
+    let kept_underline;
+    let style = if style.underline.is_none() && !underlines.is_empty() {
+        kept_underline = BlockStyle { underline: Some(true), ..style.clone() };
+        &kept_underline
+    } else {
+        style
+    };
     let dispatch = choose_rewrite_path(doc, &fonts_res, &b, &members, first, text, style)?;
     if dispatch.use_styled_path && style.align == Some(crate::added::Align::Justify) {
         return Err(EditError::Invalid("justification of mixed-style existing paragraphs is not supported".into()));
@@ -860,9 +874,6 @@ pub(crate) fn rewrite_block_from(
         return rewrite_styled_block(doc, page, &b, &lines, text, style, max_glyphs);
     }
     let upright = dispatch.upright;
-    let streams = content_streams(doc, &p.dict)?;
-    let pieces = Pieces::join(&streams.iter().map(|(_, d)| d.as_slice()).collect::<Vec<_>>());
-    let ops = pieces.parse().ops;
     let text = paragraph_text(text.unwrap_or(&b.text));
     // The characters to show, for choosing fonts: the breaks are moves, not glyphs.
     let flat = text.replace('\n', " ");
@@ -1219,6 +1230,25 @@ pub(crate) fn translate_blocks(doc: &mut Document, page: usize, indexes: &[usize
     }
     if patches.len() != selected.len() {
         return Err(EditError::Invalid("a selected text operation cannot be moved".into()));
+    }
+    // Their underlines move with them (Thai edition), in the space the text they follow is drawn in.
+    for index in indexes {
+        let Some(b) = blocks.get(*index) else { continue };
+        let members: Vec<&TextLine> = b.lines.iter().filter_map(|i| lines.get(*i)).collect();
+        for range in super::underline::own_underlines(&ops, &members) {
+            let (open, close) = (*range.start(), *range.end());
+            let Some(ctm) = members.iter().find(|l| l.ops.iter().any(|i| *i < open)).map(|l| l.origin.ctm) else { continue };
+            let inverse = Matrix(ctm).invert().ok_or_else(|| EditError::Invalid("a selected paragraph has no area".into()))?;
+            let [a, b, c, d, _, _] = inverse.0;
+            let (dx, dy) = (a * offset[0] + c * offset[1], b * offset[0] + d * offset[1]);
+            if !(dx.is_finite() && dy.is_finite()) {
+                return Err(EditError::Invalid("the paragraph move is too large".into()));
+            }
+            let (Some(start), Some(end)) = (ops.get(open), ops.get(close)) else { continue };
+            let shift = Op::new("cm", vec![n(1.0), n(0.0), n(0.0), n(1.0), n(dx), n(dy)]);
+            patches.insert(open, vec![start.clone(), Op::new("q", vec![]), shift]);
+            patches.insert(close, vec![Op::new("Q", vec![]), end.clone()]);
+        }
     }
     let data = splice(&pieces, &ops, |i| patches.remove(&i).map_or((Vec::new(), true), |v| (v, false)));
     let contents = rewritten_contents(doc, &streams, data);

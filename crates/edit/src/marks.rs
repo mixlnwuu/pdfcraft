@@ -89,6 +89,9 @@ impl HeaderFooter {
             align: [Align::Left, Align::Center, Align::Right][slot % 3],
             char_spacing: 0.0,
             aligns: Vec::new(),
+            underline: false,
+            line_spacing: 0.0,
+            direction: crate::added::TextDirection::Horizontal,
         }
     }
 }
@@ -215,6 +218,9 @@ impl Watermark {
             align: Align::Center,
             char_spacing: 0.0,
             aligns: Vec::new(),
+            underline: false,
+            line_spacing: 0.0,
+            direction: crate::added::TextDirection::Horizontal,
         }
     }
 }

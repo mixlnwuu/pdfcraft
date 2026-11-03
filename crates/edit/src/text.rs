@@ -34,6 +34,7 @@ mod fallback;
 mod interp;
 mod lines;
 mod rewrite;
+mod underline;
 
 use blocks::paragraph_separator;
 #[cfg(test)]
@@ -54,7 +55,7 @@ use fallback::{
 use fallback::{add_type3_font, is_type3_fallback};
 use interp::{Origin, Paint, Shown, TextState, union};
 use lines::page_dict;
-pub(crate) use lines::{FormBudget, content_streams, content_streams_within, form_call, rewritten_contents, splice};
+pub(crate) use lines::{FormBudget, content_streams, content_streams_within, dict_in_place, form_call, resource_dict, rewritten_contents, splice};
 pub use lines::{MAX_FORM_DEPTH, MAX_FORM_VISITS, glyph_text_lines, lift_paragraph, paragraph_stream, text_lines};
 pub use rewrite::{LineEdit, replace_line, rewrite_block};
 use rewrite::{coincident_ops, rewrite_block_from};
@@ -194,6 +195,7 @@ mod tests {
             reflow_text: text.into(),
             spans: Vec::new(),
             invisible: false,
+            underlined: false,
         }
     }
 

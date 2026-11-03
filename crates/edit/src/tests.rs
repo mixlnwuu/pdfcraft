@@ -4,6 +4,9 @@ use pdfcraft_cos::{Document, SaveOptions, write_full, write_incremental};
 
 use super::*;
 
+#[path = "mark_transaction_tests.rs"]
+mod mark_transactions;
+
 /// Three pages: an upright page with content that leaves the graphics state changed (an
 /// unbalanced `cm`), a page rotated 90° and one with inherited, shared resources.
 fn fixture() -> Document {
@@ -5732,6 +5735,41 @@ fn reading_follows_form_xobjects() {
     assert!(own[0].is_form && own[0].object == Some(pdfcraft_cos::ObjRef::new(6, 0)), "{own:?}");
 }
 
+/// A page's `/XObject` and a form's `/Resources` are read wherever they are stored, and a form with
+/// none of its own, or with something else there, uses the ones it was drawn with (PDF 1.1 files).
+/// Each of these pages shows one line of text and one picture through one form.
+#[test]
+fn reading_follows_forms_however_their_resources_are_stored() {
+    let body = "BT /F1 12 Tf 72 700 Td (In the form) Tj ET q 20 0 0 10 5 5 cm /Im Do Q";
+    let (font, direct) = ("/Font << /F1 5 0 R >>", "/XObject << /Fm 6 0 R /Im 7 0 R >>");
+    for (page, form) in [
+        (format!("<< {font} {direct} >>"), ""),
+        (format!("<< {font} /XObject 9 0 R >>"), ""),
+        (format!("<< /Font 10 0 R {direct} >>"), ""),
+        (format!("<< {font} {direct} >>"), "/Resources 99 0 R"),
+        (format!("<< {font} {direct} >>"), "/Resources 12"),
+        ("<< /XObject << /Fm 6 0 R >> >>".to_string(), "/Resources 8 0 R"),
+        ("<< /XObject 9 0 R >>".to_string(), "/Resources << /Font << /F1 5 0 R >> /XObject 9 0 R >>"),
+    ] {
+        let doc = build(&[
+            "<< /Type /Catalog /Pages 2 0 R >>",
+            "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            &format!("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 600 800] /Resources {page} /Contents 4 0 R >>"),
+            &stream("", "/Fm Do"),
+            "<< /Type /Font /Subtype /Type1 /BaseFont /Courier >>",
+            &stream(&format!("/Type /XObject /Subtype /Form /BBox [0 0 600 800] {form}"), body),
+            &stream("/Type /XObject /Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceGray /BitsPerComponent 8", "A"),
+            "<< /Font << /F1 5 0 R >> /XObject 9 0 R >>",
+            "<< /Fm 6 0 R /Im 7 0 R >>",
+            "<< /F1 5 0 R >>",
+        ]);
+        let blocks = text::reading_blocks(&doc, 0).unwrap();
+        let texts: Vec<(&str, &str)> = blocks.iter().map(|b| (b.text.as_str(), b.base_font.as_str())).collect();
+        assert_eq!(texts, [("In the form", "Courier")], "{page} {form}");
+        assert_eq!(images::reading_images(&doc, 0).unwrap().len(), 1, "{page} {form}");
+    }
+}
+
 /// A chain of forms, each drawing the next twenty times, twelve deep: within the depth cap but
 /// 20^11 visits without a budget. Reading stops at the page's visit budget instead of hanging.
 #[test]
@@ -9038,6 +9076,175 @@ fn added_text_character_spacing_is_drawn_and_reopens() {
     assert_eq!(tc, [false, true], "{page:?}");
 }
 
+/// The (x, y, width, height) of every `re f` rectangle a content stream draws.
+fn rules(stream: &str) -> Vec<[f64; 4]> {
+    stream
+        .lines()
+        .filter_map(|l| l.strip_suffix(" re f"))
+        .filter_map(|l| {
+            let v: Vec<f64> = l.split(' ').filter_map(|x| x.parse().ok()).collect();
+            <[f64; 4]>::try_from(v).ok()
+        })
+        .collect()
+}
+
+/// Underlined added text (#4236) is a rule under each line in the text's colour, kept in
+/// `/PCAdded` so the item reopens underlined; an item written without it reads not underlined.
+#[test]
+fn added_text_underline_is_drawn_and_reopens() {
+    let mut doc = fixture();
+    let plain = AddedText { rect: [72.0, 600.0, 400.0, 700.0], text: "Approved\nSigned off".into(), size: 10.0, ..AddedText::default() };
+    add_content(&mut doc, 0, &Content::Text(plain.clone())).unwrap();
+    add_content(&mut doc, 0, &Content::Text(AddedText { underline: true, color: [1.0, 0.0, 0.0], ..plain.clone() })).unwrap();
+    let doc = reopen(&doc);
+    let flags: Vec<bool> = list_added(&doc).iter().map(|a| if let Content::Text(t) = &a.content { t.underline } else { false }).collect();
+    assert_eq!(flags, [false, true]);
+    let page = streams(&doc, 0);
+    let items: Vec<&String> = page.iter().filter(|s| s.contains("(Approved) Tj")).collect();
+    assert_eq!(items.len(), 2, "{page:?}");
+    assert!(rules(items[0]).is_empty(), "no rule without underline: {}", items[0]);
+    let under = rules(items[1]);
+    assert_eq!(under.len(), 2, "a rule per line: {}", items[1]);
+    // Each as wide as its line, from the box's left edge, under the baseline, and 6 % of the size thick.
+    let widths = [
+        added::text_width(&AddedText { text: "Approved".into(), ..plain.clone() }),
+        added::text_width(&AddedText { text: "Signed off".into(), ..plain.clone() }),
+    ];
+    for (rule, width) in under.iter().zip(widths) {
+        assert!((rule[0] - 72.0).abs() < 1e-6 && (rule[2] - width).abs() < 1e-6 && (rule[3] - 0.6).abs() < 1e-6, "{rule:?} for a line {width} wide");
+    }
+    // The first baseline is 0.95 em below the box's top; the rule sits beneath it, the next line 1.2 em lower.
+    assert!(under[0][1] < 700.0 - 9.5 && under[0][1] > 700.0 - 12.0, "{under:?}");
+    assert!((under[0][1] - under[1][1] - 12.0).abs() < 1e-6, "{under:?}");
+    assert!(items[1].contains("1 0 0 rg"), "in the text's colour: {}", items[1]);
+}
+
+/// The rule ends at the last letter: not at the spacing after it, not under trailing spaces.
+#[test]
+fn added_text_underline_stops_at_the_last_letter() {
+    let mut doc = fixture();
+    let text = AddedText {
+        rect: [72.0, 600.0, 400.0, 700.0],
+        text: "Approved  ".into(),
+        size: 10.0,
+        char_spacing: 2.0,
+        underline: true,
+        ..AddedText::default()
+    };
+    add_content(&mut doc, 0, &Content::Text(text.clone())).unwrap();
+    let page = streams(&reopen(&doc), 0);
+    let item = page.iter().find(|s| s.contains("(Approved")).unwrap();
+    let rule = rules(item);
+    let bare = added::text_width(&AddedText { text: "Approved".into(), ..text });
+    assert_eq!(rule.len(), 1, "{item}");
+    assert!((rule[0][2] - (bare - 2.0)).abs() < 1e-6, "{:?}: the letters and the spacing between them, {bare} - 2", rule[0]);
+}
+
+/// The rule runs under the letters only: not under a tab (or space) after the last one, and a line
+/// of white space alone has none. (Wrapping drops the white space that would start a line, so a
+/// rule never has to start later than the box's edge.)
+#[test]
+fn added_text_underline_skips_white_space_at_the_ends_of_a_line() {
+    let mut doc = fixture();
+    let text = AddedText { rect: [72.0, 600.0, 400.0, 700.0], text: "Hi\n\t\nHi\t".into(), size: 10.0, underline: true, ..AddedText::default() };
+    assert_eq!(added::lines(&text), ["Hi", "\t", "Hi\t"], "the lines as drawn");
+    add_content(&mut doc, 0, &Content::Text(text.clone())).unwrap();
+    let page = streams(&reopen(&doc), 0);
+    let item = page.iter().find(|s| s.contains("/PCFHelvetica") && s.contains("(Hi")).unwrap();
+    let under = rules(item);
+    assert_eq!(under.len(), 2, "no rule for the tab-only line: {item}");
+    let hi = added::text_width(&AddedText { text: "Hi".into(), ..text.clone() });
+    for rule in &under {
+        assert!((rule[0] - 72.0).abs() < 1e-6 && (rule[2] - hi).abs() < 1e-6, "as wide as \"Hi\", tab or not: {under:?}");
+    }
+}
+
+/// A justified line stretches its tabs as well as its spaces (WinAnsi writes a tab as a space, and
+/// the PDF's word spacing applies to it), so its rule still reaches the last letter, which sits
+/// at the box's edge.
+#[test]
+fn a_justified_underline_counts_tabs_as_the_spaces_they_are_drawn_as() {
+    let mut doc = fixture();
+    // One paragraph that wraps, so its first row is stretched to the box's width.
+    let text = AddedText {
+        rect: [72.0, 600.0, 140.0, 700.0],
+        text: "a\tb c a\tb c a\tb c a\tb c".into(),
+        size: 10.0,
+        align: Align::Justify,
+        underline: true,
+        ..AddedText::default()
+    };
+    let lines = added::lines(&text);
+    assert!(lines.len() >= 2 && lines[0].contains('\t'), "a tab in the stretched first row: {lines:?}");
+    add_content(&mut doc, 0, &Content::Text(text.clone())).unwrap();
+    let page = streams(&reopen(&doc), 0);
+    let item = page.iter().find(|s| s.contains("/PCFHelvetica")).unwrap();
+    let under = rules(item);
+    assert_eq!(under.len(), lines.len(), "{item}");
+    assert!((under[0][0] + under[0][2] - 140.0).abs() < 1e-6, "the first row's rule ends at its last letter, at the box's right edge: {under:?}");
+    // The word spacing shares the slack between its tabs and spaces: every one is a stretched space.
+    let width = added::text_width(&AddedText { text: lines[0].clone(), ..text });
+    let spaces = lines[0].chars().filter(|c| matches!(c, ' ' | '\t')).count();
+    let tw: f64 = item.split(" Tw ").next().unwrap().rsplit(' ').next().unwrap().parse().unwrap();
+    assert!((tw - (68.0 - width) / spaces as f64).abs() < 1e-6, "Tw {tw} for a row {width} wide with {spaces} spaces in a 68 box: {item}");
+}
+
+/// A character spacing so negative that the pen moves left still underlines the glyphs: from the
+/// leftmost to the rightmost reach, not from the start to a computed end left of it.
+#[test]
+fn a_negative_character_spacing_still_has_an_underline_under_its_glyphs() {
+    let mut doc = fixture();
+    let text =
+        AddedText { rect: [72.0, 600.0, 400.0, 700.0], text: "iiii".into(), size: 8.0, char_spacing: -3.0, underline: true, ..AddedText::default() };
+    add_content(&mut doc, 0, &Content::Text(text.clone())).unwrap();
+    let page = streams(&reopen(&doc), 0);
+    let item = page.iter().find(|s| s.contains("/PCFHelvetica")).unwrap();
+    let under = rules(item);
+    assert_eq!(under.len(), 1, "a rule, though the pen moves left: {item}");
+    // Each "i" is `w` wide and the pen steps `w - 3` (left): the glyphs reach from 3 steps left of
+    // the start to one glyph right of it.
+    let w = added::text_width(&AddedText { text: "i".into(), char_spacing: 0.0, ..text });
+    let left = 3.0 * (3.0 - w);
+    assert!((under[0][0] - (72.0 - left)).abs() < 1e-6 && (under[0][2] - (left + w)).abs() < 1e-6, "{under:?} for glyphs {w} wide");
+}
+
+/// Right-aligned, centred and justified text carry the rule where the text is, and an empty line
+/// has none.
+#[test]
+fn added_text_underline_follows_the_alignment() {
+    let mut doc = fixture();
+    let base = AddedText { rect: [100.0, 600.0, 300.0, 700.0], text: "Hi\n\nThere".into(), size: 10.0, underline: true, ..AddedText::default() };
+    for align in [Align::Left, Align::Center, Align::Right] {
+        add_content(&mut doc, 0, &Content::Text(AddedText { align, ..base.clone() })).unwrap();
+    }
+    let page = streams(&reopen(&doc), 0);
+    let items: Vec<&String> = page.iter().filter(|s| s.contains("(Hi) Tj") && s.contains("/PCFHelvetica")).collect();
+    assert_eq!(items.len(), 3, "{page:?}");
+    let hi = added::text_width(&AddedText { text: "Hi".into(), ..base.clone() });
+    let lefts: Vec<f64> = items.iter().map(|s| rules(s)[0][0]).collect();
+    assert!((lefts[0] - 100.0).abs() < 1e-6, "{lefts:?}");
+    assert!((lefts[1] - (100.0 + (200.0 - hi) / 2.0)).abs() < 1e-6, "{lefts:?}");
+    assert!((lefts[2] - (300.0 - hi)).abs() < 1e-6, "{lefts:?}");
+    assert!(items.iter().all(|s| rules(s).len() == 2), "two rules for three lines, the empty one has none");
+}
+
+/// Shaped (Arabic) lines are underlined too, from where the first glyph is to where the last ends.
+#[test]
+fn added_arabic_text_underline_is_drawn_when_the_font_is_built_in() {
+    if pdfcraft_fonts::document_arabic_font().is_none() {
+        eprintln!("skipping: built without a craft-fonts Arab face (set CRAFT_FONTS_DIR)");
+        return;
+    }
+    let mut doc = fixture();
+    let text = AddedText { rect: [72.0, 600.0, 400.0, 700.0], text: "مرحبا World".into(), size: 14.0, underline: true, ..AddedText::default() };
+    add_content(&mut doc, 0, &Content::Text(text)).unwrap();
+    let page = streams(&reopen(&doc), 0);
+    let item = page.iter().find(|s| s.contains("/PCAr")).unwrap();
+    let rule = rules(item);
+    assert_eq!(rule.len(), 1, "{item}");
+    assert!(rule[0][0] >= 72.0 - 1e-6 && rule[0][2] > 20.0 && rule[0][0] + rule[0][2] <= 400.0, "{:?}", rule[0]);
+}
+
 /// Spacing widens every measure the layout takes: the widest line and wrapping.
 #[test]
 fn added_text_character_spacing_widens_its_layout() {
@@ -10663,4 +10870,198 @@ fn review_inside_scope_group_move_matches_direct_transform_under_outer_scale() {
             );
         }
     }
+}
+
+/// Thai edition: added text takes a line spacing of its own. Its lines are that far apart on the
+/// page, its box grows with it, the spacing reopens, and the ordinary spacing writes nothing new.
+#[test]
+fn added_text_line_spacing_sets_the_lines_apart_and_reopens() {
+    let mut doc = fixture();
+    let plain =
+        AddedText { rect: [72.0, 600.0, 400.0, 700.0], text: "Approved\nSigned off".into(), size: 10.0, underline: true, ..AddedText::default() };
+    add_content(&mut doc, 0, &Content::Text(plain.clone())).unwrap();
+    add_content(&mut doc, 0, &Content::Text(AddedText { line_spacing: 2.0, ..plain.clone() })).unwrap();
+    let doc = reopen(&doc);
+    let spacings: Vec<f64> = list_added(&doc).iter().map(|a| if let Content::Text(t) = &a.content { t.line_spacing } else { -1.0 }).collect();
+    assert_eq!(spacings, [0.0, 2.0]);
+    let page = streams(&doc, 0);
+    let items: Vec<&String> = page.iter().filter(|s| s.contains("(Approved) Tj")).collect();
+    assert_eq!(items.len(), 2, "{page:?}");
+    // The underline rules sit under each baseline: 12 points apart ordinarily, 20 at double.
+    let gap = |item: &str| {
+        let r = rules(item);
+        r[0][1] - r[1][1]
+    };
+    assert!((gap(items[0]) - 12.0).abs() < 1e-6, "{}", items[0]);
+    assert!((gap(items[1]) - 20.0).abs() < 1e-6, "{}", items[1]);
+    // The box: 1.2 em for the first line and the spacing for each one after it.
+    assert!((added::text_rect(&AddedText { line_spacing: 2.0, ..plain.clone() })[1] - (700.0 - 12.0 - 20.0)).abs() < 1e-6);
+    assert!((added::text_rect(&plain)[1] - (700.0 - 24.0)).abs() < 1e-6);
+    // A spacing out of range is refused, not drawn.
+    let mut doc = fixture();
+    assert!(add_content(&mut doc, 0, &Content::Text(AddedText { line_spacing: 9.0, ..plain })).is_err());
+}
+
+/// Thai edition: stacked text keeps each Thai letter with its vowels and tone marks.
+#[test]
+fn stacked_text_keeps_each_letter_with_its_marks() {
+    assert_eq!(added::letters("สวัสดีจ้า"), ["ส", "วั", "ส", "ดี", "จ้", "า"]);
+    assert_eq!(added::letters("น้ำ"), ["น้ำ"]);
+    assert_eq!(added::letters("AB C"), ["A", "B", " ", "C"]);
+    assert_eq!(added::letters(""), [""]);
+}
+
+/// Thai edition: stacked text puts one letter a line, centred, in a column that hugs its widest
+/// letter; the direction reopens.
+#[test]
+fn stacked_text_is_one_letter_a_line_and_reopens() {
+    let mut doc = fixture();
+    let t = AddedText {
+        rect: [72.0, 600.0, 400.0, 700.0],
+        text: "ABC".into(),
+        size: 10.0,
+        direction: added::TextDirection::Stacked,
+        ..AddedText::default()
+    };
+    let fitted = added::fitted_text(&t, 600.0);
+    assert!(fitted.rect[2] - fitted.rect[0] < 15.0, "a column one letter wide: {:?}", fitted.rect);
+    add_content(&mut doc, 0, &Content::Text(fitted)).unwrap();
+    let doc = reopen(&doc);
+    let Content::Text(back) = &list_added(&doc)[0].content else { panic!() };
+    assert_eq!(back.direction, added::TextDirection::Stacked);
+    assert_eq!(added::lines(back), ["A", "B", "C"]);
+    // Three lines tall.
+    let r = added::text_rect(back);
+    assert!((r[3] - r[1] - (2.0 * 12.0 + 12.0)).abs() < 1e-6, "{r:?}");
+    let page = streams(&doc, 0).join("\n");
+    for letter in ["(A) Tj", "(B) Tj", "(C) Tj"] {
+        assert!(page.contains(letter), "{page}");
+    }
+}
+
+/// Thai edition: rotated text is drawn as it reads and turned a quarter clockwise into its box,
+/// whose height is the length its lines wrap at and whose width their height.
+#[test]
+fn rotated_text_is_turned_into_its_box_and_reopens() {
+    let mut doc = fixture();
+    let t = AddedText {
+        rect: [72.0, 500.0, 90.0, 700.0],
+        text: "Approved".into(),
+        size: 10.0,
+        direction: added::TextDirection::Rotated,
+        ..AddedText::default()
+    };
+    let r = added::text_rect(&t);
+    assert_eq!([r[0], r[1], r[3]], [72.0, 500.0, 700.0], "it keeps its left, top and length");
+    assert!((r[2] - r[0] - 12.0).abs() < 1e-6, "one line: 1.2 em wide: {r:?}");
+    add_content(&mut doc, 0, &Content::Text(t.clone())).unwrap();
+    let doc = reopen(&doc);
+    let Content::Text(back) = &list_added(&doc)[0].content else { panic!() };
+    assert_eq!(back.direction, added::TextDirection::Rotated);
+    let page = streams(&doc, 0).join("\n");
+    // Turned clockwise about the box's top right corner: (0, -1, 1, 0, right, top).
+    assert!(page.contains("0 -1 1 0 84 700 cm"), "{page}");
+    assert!(page.contains("(Approved) Tj"), "{page}");
+    // Hugging its text, it is as long as the word.
+    let fitted = added::fitted_text(&t, 600.0);
+    let length = fitted.rect[3] - fitted.rect[1];
+    assert!(length > 30.0 && length < 60.0, "{:?}", fitted.rect);
+}
+
+/// The underlines PdfCraft drew on the page, and the strokes in them (Thai edition).
+/// The lengths of the strokes too.
+fn own_underlines(doc: &Document) -> (usize, Vec<f64>) {
+    let content = String::from_utf8_lossy(&page_content_bytes(doc, 0)).into_owned();
+    let groups = content.matches("/PCUnderline BMC").count();
+    let ops = pdfcraft_content::parse(&page_content_bytes(doc, 0)).ops;
+    let x = |op: &pdfcraft_content::Op| op.operands.first().and_then(Object::as_f64).unwrap_or(f64::NAN);
+    let strokes = ops.windows(2).filter(|w| w[0].is("m") && w[1].is("l")).map(|w| (x(&w[1]) - x(&w[0])).abs()).collect();
+    (groups, strokes)
+}
+
+#[test]
+fn an_underline_goes_with_its_text_when_it_is_restyled_or_deleted() {
+    // Owner's report (Thai edition): underlined text could not be turned bold or plain again, and
+    // deleting it left the line.
+    let mut doc = text_page("BT /F1 12 Tf 72 700 Td (Hardware) Tj ET");
+    text::rewrite_block(&mut doc, 0, 0, None, &text::BlockStyle { underline: Some(true), ..Default::default() }).unwrap();
+    let doc = reopen(&doc);
+    assert_eq!(own_underlines(&doc).0, 1);
+    assert!(text::text_blocks(&doc, 0).unwrap()[0].underlined, "it reads back as underlined");
+    // Bold: still one underline.
+    let mut bold = doc.clone();
+    text::rewrite_block(&mut bold, 0, 0, None, &text::BlockStyle { bold: Some(true), ..Default::default() }).unwrap();
+    let bold = reopen(&bold);
+    assert_eq!(own_underlines(&bold).0, 1, "kept, not doubled");
+    assert!(text::text_blocks(&bold, 0).unwrap()[0].underlined);
+    // Plain again: no underline left.
+    let mut plain = bold.clone();
+    text::rewrite_block(&mut plain, 0, 0, None, &text::BlockStyle { underline: Some(false), ..Default::default() }).unwrap();
+    let plain = reopen(&plain);
+    assert_eq!(own_underlines(&plain).0, 0, "{}", String::from_utf8_lossy(&page_content_bytes(&plain, 0)));
+    assert!(own_underlines(&plain).1.is_empty());
+    assert!(!text::text_blocks(&plain, 0).unwrap()[0].underlined);
+    // Deleted: no line shows where the text was.
+    let mut gone = doc.clone();
+    text::replace_block(&mut gone, 0, 0, "").unwrap();
+    let (_, strokes) = own_underlines(&reopen(&gone));
+    assert!(strokes.iter().all(|len| *len < 1e-6), "{strokes:?}");
+}
+
+#[test]
+fn an_underline_drawn_by_the_styled_path_goes_with_its_text() {
+    // Two rows go through the path that keeps each run's style.
+    let mut doc = text_page("BT /F1 12 Tf 72 700 Td (Hardware) Tj ET");
+    let style = text::BlockStyle { underline: Some(true), ..Default::default() };
+    text::rewrite_block(
+        &mut doc,
+        0,
+        0,
+        Some(
+            "Hard
+ware",
+        ),
+        &style,
+    )
+    .unwrap();
+    let doc = reopen(&doc);
+    assert_eq!(own_underlines(&doc).0, 2, "one under each row");
+    let block = text::text_blocks(&doc, 0).unwrap().into_iter().position(|b| b.text.contains("Hard")).unwrap();
+    assert!(text::text_blocks(&doc, 0).unwrap()[block].underlined);
+    let mut plain = doc.clone();
+    text::rewrite_block(
+        &mut plain,
+        0,
+        block,
+        Some(
+            "Hard
+ware",
+        ),
+        &text::BlockStyle { underline: Some(false), ..Default::default() },
+    )
+    .unwrap();
+    assert_eq!(own_underlines(&reopen(&plain)).0, 0, "{}", String::from_utf8_lossy(&page_content_bytes(&plain, 0)));
+}
+
+#[test]
+fn an_underline_moves_with_its_text_in_a_group() {
+    let mut doc = text_page("BT /F1 12 Tf 72 700 Td (Hardware) Tj ET");
+    text::rewrite_block(&mut doc, 0, 0, None, &text::BlockStyle { underline: Some(true), ..Default::default() }).unwrap();
+    let mut doc = reopen(&doc);
+    text::translate_blocks(&mut doc, 0, &[0], [10.0, -20.0]).unwrap();
+    let content = String::from_utf8_lossy(&page_content_bytes(&doc, 0)).into_owned();
+    assert!(
+        content.contains(
+            "/PCUnderline BMC
+q
+1 0 0 1 10 -20 cm"
+        ),
+        "{content}"
+    );
+    let doc = reopen(&doc);
+    assert!(
+        text::text_blocks(&doc, 0).unwrap()[0].underlined,
+        "still its underline after the move: {}",
+        String::from_utf8_lossy(&page_content_bytes(&doc, 0))
+    );
 }

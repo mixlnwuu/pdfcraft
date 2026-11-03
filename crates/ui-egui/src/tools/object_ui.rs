@@ -72,6 +72,19 @@ impl ObjectSelection {
         self.restyled = true;
     }
 
+    /// The next edit turns the selected paragraphs into added text boxes (Thai edition): keep
+    /// those selected afterwards, found by their text as after a restyle.
+    pub(crate) fn keep_after_turn(&mut self) {
+        let mut expected = self.selected.clone();
+        for object in &mut expected {
+            if object.target.kind == ObjectKind::Text {
+                object.target.kind = ObjectKind::Added;
+            }
+        }
+        self.pending = Some(expected);
+        self.restyled = true;
+    }
+
     /// The one selected object and its page, when exactly one is selected (Copy).
     pub fn single_selected(&self) -> Option<(usize, ObjectTarget)> {
         match self.selected.as_slice() {
@@ -225,7 +238,7 @@ fn painter_input(cx: PageToolContext<'_>, view: &mut DocView) -> bool {
         && let Some(painter) = view.format_painter.clone()
     {
         if view.pending_edit.is_none()
-            && let Some(edit) = crate::restyle::restyle_edit(doc, page, &[target], &crate::restyle::all_of(&painter.look, None))
+            && let Some(edit) = crate::restyle::restyle_edit(doc, page, &[target], &crate::restyle::all_of(&painter.look, None), None)
         {
             view.pending_edit = Some(edit);
         }
@@ -764,7 +777,10 @@ pub(crate) fn paint(painter: &egui::Painter, xf: &PageXform, page: usize, info: 
         painter.rect_stroke(union.expand(4.0), 0.0, Stroke::new(1.0, BLUE.gamma_multiply(0.7)), egui::StrokeKind::Outside);
     }
     if selection.gesture.is_some_and(|g| !g.marquee && g.copy.is_none() && g.start.distance(g.now) > DRAG_SLOP) && union.is_positive() {
-        crate::content_ui::paint_guides(painter, xf.rect, union);
+        crate::content_ui::paint_guides(painter, xf.rect, union.translate(-delta), union);
+        if let Some(g) = selection.gesture {
+            crate::content_ui::paint_offset(painter, xf, g.now, delta);
+        }
     }
     if let Some(g) = selection.gesture.filter(|g| g.marquee) {
         let area = Rect::from_two_pos(g.start, g.now).intersect(xf.rect);
@@ -778,7 +794,8 @@ pub(crate) fn paint(painter: &egui::Painter, xf: &PageXform, page: usize, info: 
         let copy = xf.user_rect(info, page, rect.map(|v| v as f32)).translate(g.now - g.start);
         painter.rect_filled(copy, 0.0, BLUE.gamma_multiply(0.08));
         painter.rect_stroke(copy, 0.0, Stroke::new(1.5, BLUE), egui::StrokeKind::Outside);
-        crate::content_ui::paint_guides(painter, xf.rect, copy);
+        crate::content_ui::paint_guides(painter, xf.rect, copy.translate(g.start - g.now), copy);
+        crate::content_ui::paint_offset(painter, xf, g.now, g.now - g.start);
     }
 }
 

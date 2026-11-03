@@ -344,40 +344,152 @@ fn handles(r: Rect) -> [(Pos2, bool, bool); 4] {
     [(r.left_top(), true, true), (r.right_top(), false, true), (r.left_bottom(), true, false), (r.right_bottom(), false, false)]
 }
 
-/// How close (screen points) a moved box's centre comes to the page's centre line before it
-/// snaps onto it.
+/// How close (screen points) a moved box's edge or centre comes to a guide before it snaps onto
+/// it.
 const SNAP: f32 = 6.0;
 
-/// Smart guides (Thai edition), as in Word: the move `d` of a box `r` (screen), adjusted so the
-/// box's centre lands on the page's centre lines when it comes within [`SNAP`] of them. Alt held
-/// moves freely.
-pub(crate) fn snap_to_centre(ui: &egui::Ui, page: Rect, r: Rect, d: egui::Vec2) -> egui::Vec2 {
-    if ui.input(|i| i.modifiers.alt) { d } else { snap_delta(page, r, d) }
+/// Smart guides' colour, as in Photoshop.
+const GUIDE: Color32 = Color32::from_rgb(0xFF, 0x2E, 0xC8);
+
+/// What else is on `page` (screen boxes) for smart guides to line a moved box up with, kept for
+/// this frame (Thai edition).
+pub(crate) fn set_snap_targets(ctx: &egui::Context, page: Rect, boxes: Vec<Rect>) {
+    ctx.data_mut(|d| d.insert_temp(snap_id(page), std::sync::Arc::new(boxes)));
 }
 
-/// [`snap_to_centre`] without the Alt key.
-fn snap_delta(page: Rect, r: Rect, d: egui::Vec2) -> egui::Vec2 {
-    let (c, pc) = (r.center() + d, page.center());
-    let mut out = d;
-    if (c.x - pc.x).abs() <= SNAP {
-        out.x += pc.x - c.x;
+/// The grid step on screen over `page` (`None`: no grid), for smart guides to snap to too
+/// (Thai edition).
+pub(crate) fn set_snap_grid(ctx: &egui::Context, page: Rect, step: Option<f32>) {
+    ctx.data_mut(|d| d.insert_temp(grid_id(page), step));
+}
+
+fn grid_id(page: Rect) -> egui::Id {
+    egui::Id::unique(("snap-grid", page.min.x.to_bits(), page.min.y.to_bits()))
+}
+
+fn snap_id(page: Rect) -> egui::Id {
+    egui::Id::unique(("snap-targets", page.min.x.to_bits(), page.min.y.to_bits()))
+}
+
+/// The boxes to line up with on `page`, without those inside `from` (what is being moved).
+fn snap_targets(ctx: &egui::Context, page: Rect, from: Rect) -> Vec<Rect> {
+    let all: Option<std::sync::Arc<Vec<Rect>>> = ctx.data(|d| d.get_temp(snap_id(page)));
+    let inside = from.expand(0.5);
+    all.map(|v| v.iter().filter(|b| b.is_positive() && !inside.contains_rect(**b)).copied().collect()).unwrap_or_default()
+}
+
+/// Smart guides (Thai edition), as in Photoshop: the move `d` of a box `r` (screen), adjusted so
+/// one of its edges or its centre lands on another box's edge or centre, or on the page's centre
+/// lines, when it comes within [`SNAP`] of one. Alt held moves freely.
+pub(crate) fn snap_to_centre(ui: &egui::Ui, page: Rect, r: Rect, d: egui::Vec2) -> egui::Vec2 {
+    if ui.input(|i| i.modifiers.alt) {
+        return d;
     }
-    if (c.y - pc.y).abs() <= SNAP {
-        out.y += pc.y - c.y;
+    let grid = ui.ctx().data(|g| g.get_temp::<Option<f32>>(grid_id(page))).flatten();
+    snap_delta(page, r, d, &snap_targets(ui.ctx(), page, r), grid)
+}
+
+/// The lines a box lines up on along one axis: its two edges and its centre.
+fn lines_x(r: Rect) -> [f32; 3] {
+    [r.left(), r.center().x, r.right()]
+}
+
+fn lines_y(r: Rect) -> [f32; 3] {
+    [r.top(), r.center().y, r.bottom()]
+}
+
+/// The nearest guide to any of `moving` within [`SNAP`]: how far to shift onto it.
+fn nearest(moving: [f32; 3], guides: impl Iterator<Item = f32>) -> Option<f32> {
+    let mut best: Option<f32> = None;
+    for g in guides {
+        for m in moving {
+            let shift = g - m;
+            if shift.abs() <= SNAP && best.is_none_or(|b| shift.abs() < b.abs()) {
+                best = Some(shift);
+            }
+        }
+    }
+    best
+}
+
+/// [`snap_to_centre`] without the Alt key, lining up with `others` too, and with the grid lines
+/// `grid` apart from the page's top left when the grid shows.
+fn snap_delta(page: Rect, r: Rect, d: egui::Vec2, others: &[Rect], grid: Option<f32>) -> egui::Vec2 {
+    let moved = r.translate(d);
+    // The grid lines nearest the box's edges.
+    let near = |origin: f32, edges: [f32; 2]| -> Vec<f32> {
+        grid.filter(|s| s.is_finite() && *s >= 1.0).map_or_else(Vec::new, |s| edges.iter().map(|m| origin + ((m - origin) / s).round() * s).collect())
+    };
+    let xs = std::iter::once(page.center().x).chain(others.iter().flat_map(|o| lines_x(*o))).chain(near(page.left(), [moved.left(), moved.right()]));
+    let ys = std::iter::once(page.center().y).chain(others.iter().flat_map(|o| lines_y(*o))).chain(near(page.top(), [moved.top(), moved.bottom()]));
+    let mut out = d;
+    if let Some(shift) = nearest(lines_x(moved), xs) {
+        out.x += shift;
+    }
+    if let Some(shift) = nearest(lines_y(moved), ys) {
+        out.y += shift;
     }
     out
 }
 
-/// The page's centre lines a box being moved sits on, drawn across the page in green.
-pub(crate) fn paint_guides(painter: &egui::Painter, page: Rect, r: Rect) {
-    let guide = Stroke::new(1.0, Color32::from_rgb(0x2E, 0xB8, 0x5C));
+/// The guides a box moved from `from` to `r` sits on: the page's centre lines across the page,
+/// and a line from it to each other box it lines up with.
+pub(crate) fn paint_guides(painter: &egui::Painter, page: Rect, from: Rect, r: Rect) {
+    let stroke = Stroke::new(1.0, GUIDE);
+    let on = |a: f32, b: f32| (a - b).abs() < 0.5;
     let pc = page.center();
-    if (r.center().x - pc.x).abs() < 0.5 {
-        painter.line_segment([Pos2::new(pc.x, page.top()), Pos2::new(pc.x, page.bottom())], guide);
+    if on(r.center().x, pc.x) {
+        painter.line_segment([Pos2::new(pc.x, page.top()), Pos2::new(pc.x, page.bottom())], stroke);
     }
-    if (r.center().y - pc.y).abs() < 0.5 {
-        painter.line_segment([Pos2::new(page.left(), pc.y), Pos2::new(page.right(), pc.y)], guide);
+    if on(r.center().y, pc.y) {
+        painter.line_segment([Pos2::new(page.left(), pc.y), Pos2::new(page.right(), pc.y)], stroke);
     }
+    for o in snap_targets(painter.ctx(), page, from) {
+        for x in lines_x(o) {
+            if lines_x(r).into_iter().any(|m| on(m, x)) {
+                painter.line_segment([Pos2::new(x, r.top().min(o.top())), Pos2::new(x, r.bottom().max(o.bottom()))], stroke);
+            }
+        }
+        for y in lines_y(o) {
+            if lines_y(r).into_iter().any(|m| on(m, y)) {
+                painter.line_segment([Pos2::new(r.left().min(o.left()), y), Pos2::new(r.right().max(o.right()), y)], stroke);
+            }
+        }
+    }
+}
+
+/// How far a box has been moved, in points, beside the pointer `at` (screen move `d`), as
+/// Photoshop shows it (Thai edition).
+pub(crate) fn paint_offset(painter: &egui::Painter, xf: &PageXform, at: Pos2, d: egui::Vec2) {
+    let ((x0, y0), (x1, y1)) = (xf.screen_to_view(at - d), xf.screen_to_view(at));
+    let (dx, dy) = (x1 - x0, y1 - y0);
+    if !(dx.is_finite() && dy.is_finite()) || d.length() < 1.0 {
+        return;
+    }
+    let text = format!("\u{394}X: {dx:.0} pt\n\u{394}Y: {dy:.0} pt");
+    let galley = painter.layout_no_wrap(text, egui::FontId::proportional(12.0), Color32::WHITE);
+    let rect = Rect::from_min_size(at + egui::vec2(16.0, 16.0), galley.size() + egui::vec2(12.0, 8.0));
+    painter.rect_filled(rect, CornerRadius::same(3), Color32::from_rgba_unmultiplied(40, 40, 40, 230));
+    painter.galley(rect.min + egui::vec2(6.0, 4.0), galley, Color32::WHITE);
+}
+
+/// The boxes of what is on `page` besides the item moved, for [`set_snap_targets`]: added items,
+/// the page's paragraphs and pictures.
+pub(crate) fn page_boxes(
+    xf: &PageXform,
+    info: &DocInfo,
+    page: usize,
+    added: &[Added],
+    blocks: &[pdfcraft_engine::TextBlock],
+    images: &[pdfcraft_engine::PageImage],
+) -> Vec<Rect> {
+    on_page(added, page)
+        .into_iter()
+        .map(|(_, a)| screen_rect(xf, info, page, a.content.rect()))
+        .chain(blocks.iter().map(|b| xf.user_rect_f64(info, page, b.rect)))
+        .chain(images.iter().map(|im| crate::canvas::image_screen_rect(im, xf, info, page)))
+        .filter(|r| r.is_positive() && r.width().is_finite() && r.height().is_finite())
+        .collect()
 }
 
 /// The rect while moving or resizing (images keep their proportions).
@@ -603,7 +715,8 @@ pub(crate) fn page_input(
             view.pending_edit = Some(edit);
         }
         // A box with lines aligned on their own keeps its width: they are aligned in it.
-        let auto = !pdfcraft_engine::text_is_wrapped(t) && t.aligns.iter().all(Option::is_none);
+        let auto =
+            !pdfcraft_engine::text_is_wrapped(t) && t.aligns.iter().all(Option::is_none) || t.direction != pdfcraft_engine::TextDirection::Horizontal;
         cv.draft = Some(TextDraft {
             page,
             index: Some(i),
@@ -757,9 +870,11 @@ pub(crate) fn paint_page(
             && gp == page
         {
             let d = if g == Grab::Move { snap_to_centre(ui, xf.rect, r, p - start) } else { p - start };
+            let from = r;
             r = dragged(r, g, d, matches!(a.content, AddedContent::Image(_)));
             if g == Grab::Move {
-                paint_guides(painter, xf.rect, r);
+                paint_guides(painter, xf.rect, from, r);
+                paint_offset(painter, xf, p, d);
             }
         }
         if selected
@@ -954,7 +1069,9 @@ pub(crate) fn editor(ctx: &egui::Context, view: &mut DocView, info: &DocInfo, ad
     let zoom = xf.zoom();
     let Some(draft) = view.content.draft.as_mut() else { return (None, false) };
     let font = crate::edit_text_ui::editor_font(ctx, &draft.style, (draft.style.size as f32 * zoom).clamp(1.0, 300.0));
-    let text = AddedText { text: draft.text.clone(), ..draft.style.clone() };
+    // Vertical text is typed across, as it reads (Thai edition); the page turns it once committed.
+    let flat = AddedText { direction: pdfcraft_engine::TextDirection::Horizontal, ..draft.style.clone() };
+    let text = AddedText { text: draft.text.clone(), ..flat.clone() };
     let Some(page_width) = info.pages.get(page).map(|p| p.width as f64) else { return (None, false) };
     if let Some((key, z, width, rect)) = &view.content.layout
         && *key == text
@@ -1002,8 +1119,8 @@ pub(crate) fn editor(ctx: &egui::Context, view: &mut DocView, info: &DocInfo, ad
     // editor's left edge; anchor each line on its own if such boxes turn out to matter.
     let width = if hugs { r.width() + 2.0 * EDITOR_MARGIN } else { r.width() }.max(60.0);
     // The alignment every line shares, its own or the box's.
-    let first = draft.style.paragraph_align(0);
-    let shared = (1..pdfcraft_engine::paragraph_align::count(&draft.text)).all(|i| draft.style.paragraph_align(i) == first).then_some(first);
+    let first = flat.paragraph_align(0);
+    let shared = (1..pdfcraft_engine::paragraph_align::count(&draft.text)).all(|i| flat.paragraph_align(i) == first).then_some(first);
     let anchor = match shared {
         Some(pdfcraft_engine::TextAlign::Center) => 0.5,
         Some(pdfcraft_engine::TextAlign::Right) => 1.0,
@@ -1044,7 +1161,7 @@ pub(crate) fn editor(ctx: &egui::Context, view: &mut DocView, info: &DocInfo, ad
             let letter_spacing = (t.style.char_spacing * f64::from(zoom)) as f32;
             // Laid out as the page draws it, each paragraph with its own alignment, so opening the
             // box doesn't show it realigned.
-            let style = t.style.clone();
+            let style = AddedText { direction: pdfcraft_engine::TextDirection::Horizontal, ..t.style.clone() };
             let line_font = font.clone();
             let mut layouter = |ui: &egui::Ui, text: &dyn egui::TextBuffer, wrap: f32| {
                 aligned_galley(ui, text.as_str(), &style, &line_font, color, letter_spacing, wrap, hugs)
@@ -1145,7 +1262,7 @@ fn finish(cv: &mut ContentView, d: TextDraft, added: &[Added], info: &DocInfo) -
     let d = TextDraft { style: AddedText { aligns, ..d.style }, ..d };
     // A box that hugs its text is refitted to what was typed.
     let fit = |t: AddedText| match info.pages.get(d.page) {
-        Some(p) if d.auto => pdfcraft_engine::fitted_text(&t, p.width as f64),
+        Some(p) if d.auto || t.direction != pdfcraft_engine::TextDirection::Horizontal => pdfcraft_engine::fitted_text(&t, p.width as f64),
         _ => t,
     };
     match d.index {
@@ -1167,6 +1284,11 @@ fn finish(cv: &mut ContentView, d: TextDraft, added: &[Added], info: &DocInfo) -
 /// A restyled item: one whose box hugged its text is refitted to the new font or size.
 pub(crate) fn restyled(old: &AddedText, new: AddedText, page_width: Option<f64>) -> AddedText {
     match page_width {
+        // A box turned another way (Thai edition) hugs its text again, from its top left corner.
+        Some(w) if new.direction != old.direction => {
+            let r = pdfcraft_engine::added_text_rect(old);
+            pdfcraft_engine::fitted_text(&AddedText { rect: [r[0], r[3] - new.size, r[0] + w.max(1.0), r[3]], ..new }, w)
+        }
         Some(w) if !pdfcraft_engine::text_is_wrapped(old) => pdfcraft_engine::fitted_text(&new, w),
         _ => new,
     }
@@ -1411,8 +1533,9 @@ pub(crate) struct LookPreview {
     pub color: Option<[f64; 3]>,
     pub bold: Option<bool>,
     pub italic: Option<bool>,
-    /// Paragraphs only: added text has no underline yet.
     pub underline: Option<bool>,
+    /// Which way the text runs (Thai edition); a paragraph of the page turned becomes an added box.
+    pub direction: Option<pdfcraft_engine::TextDirection>,
 }
 
 impl LookPreview {
@@ -1436,6 +1559,12 @@ impl LookPreview {
         }
         if let Some(i) = self.italic {
             look.italic = i;
+        }
+        if let Some(u) = self.underline {
+            look.underline = u;
+        }
+        if let Some(d) = self.direction {
+            look.direction = d;
         }
     }
 }
@@ -1537,9 +1666,14 @@ fn aligned_galley(
 ) -> std::sync::Arc<egui::Galley> {
     use pdfcraft_engine::TextAlign;
     let line_width = if hugs { f32::INFINITY } else { wrap };
+    // Lines as far apart as the page sets them, when the spacing isn't the ordinary one.
+    let line_height = (style.line_spacing != 0.0).then(|| font.size * (style.line_advance() / style.size.max(f64::EPSILON)) as f32);
     let job = |text: &str, align: TextAlign| {
-        let mut job = spaced_job(text, font, color, letter_spacing, line_width, egui::Align::Min);
+        let mut job = spaced_job(text, font, color, letter_spacing, style.underline, line_width, egui::Align::Min);
         job.justify = align == TextAlign::Justify && !hugs;
+        for s in &mut job.sections {
+            s.format.line_height = line_height;
+        }
         job
     };
     let uniform = text.split('\n').enumerate().all(|(i, _)| style.paragraph_align(i) == style.align);
@@ -1572,7 +1706,11 @@ fn aligned_galley(
         }
         start = end + 1;
     }
-    let whole = std::sync::Arc::new(spaced_job(text, font, color, letter_spacing, line_width, egui::Align::Min));
+    let mut whole = spaced_job(text, font, color, letter_spacing, style.underline, line_width, egui::Align::Min);
+    for s in &mut whole.sections {
+        s.format.line_height = line_height;
+    }
+    let whole = std::sync::Arc::new(whole);
     std::sync::Arc::new(egui::Galley::concat(whole, &galleys, ui.ctx().pixels_per_point()))
 }
 
@@ -2047,11 +2185,23 @@ pub(crate) fn image_panel(ui: &mut egui::Ui, t: &Tokens, img: &pdfcraft_engine::
 /// The editor's layout of added text with character spacing. The page puts the spacing after every
 /// character, the last of a line included (`latin_width`), while epaint puts it only between
 /// characters: the wrap width gives up one spacing so both break lines at the same place.
-fn spaced_job(text: &str, font: &egui::FontId, color: Color32, letter_spacing: f32, wrap_width: f32, halign: egui::Align) -> egui::text::LayoutJob {
-    let format = egui::TextFormat { font_id: font.clone(), color, extra_letter_spacing: letter_spacing, ..Default::default() };
+fn spaced_job(
+    text: &str,
+    font: &egui::FontId,
+    color: Color32,
+    letter_spacing: f32,
+    underline: bool,
+    wrap_width: f32,
+    halign: egui::Align,
+) -> egui::text::LayoutJob {
+    let underline = if underline { Stroke::new(1.0, color) } else { Stroke::NONE };
+    let format = egui::TextFormat { font_id: font.clone(), color, extra_letter_spacing: letter_spacing, underline, ..Default::default() };
     let mut job = egui::text::LayoutJob::single_section(text.to_owned(), format);
     job.wrap.max_width = (wrap_width - letter_spacing).max(0.0);
     job.halign = halign;
+    // As the text field's own layout does: the page counts trailing spaces when it aligns a line,
+    // so a centred or right-aligned line must too, or the editor shifts it.
+    job.keep_trailing_whitespace = true;
     job
 }
 
@@ -2128,14 +2278,51 @@ mod snap_tests {
         let page = Rect::from_min_size(pos2(100.0, 50.0), vec2(600.0, 800.0));
         let r = Rect::from_min_size(pos2(120.0, 70.0), vec2(100.0, 40.0));
         // Its centre (170, 90) is dragged to (397, 448): 3 points short of (400, 450) both ways.
-        let d = snap_delta(page, r, vec2(227.0, 358.0));
+        let d = snap_delta(page, r, vec2(227.0, 358.0), &[], None);
         assert_eq!(r.center() + d, page.center());
         // Only the axis that is close snaps.
-        let d = snap_delta(page, r, vec2(229.0, 100.0));
+        let d = snap_delta(page, r, vec2(229.0, 100.0), &[], None);
         assert_eq!(((r.center() + d).x, (r.center() + d).y), (400.0, 190.0));
         // Beyond the snapping distance nothing changes.
         let far = vec2(230.0 - SNAP - 1.0, 100.0);
-        assert_eq!(snap_delta(page, r, far), far);
+        assert_eq!(snap_delta(page, r, far, &[], None), far);
+    }
+
+    /// Thai edition: a moved box's edges and centre line up with another box's, as in Photoshop.
+    #[test]
+    fn a_moved_box_lines_up_with_the_edges_and_centres_of_other_boxes() {
+        let page = Rect::from_min_size(pos2(0.0, 0.0), vec2(1000.0, 1000.0));
+        let other = Rect::from_min_size(pos2(300.0, 100.0), vec2(200.0, 80.0));
+        let r = Rect::from_min_size(pos2(40.0, 600.0), vec2(100.0, 50.0));
+        // Left edge 4 points right of the other's left edge: it lands on it.
+        let d = snap_delta(page, r, vec2(264.0, 0.0), &[other], None);
+        assert_eq!(r.translate(d).left(), other.left());
+        // Right edge 3 short of the other's right edge.
+        let d = snap_delta(page, r, vec2(357.0, 0.0), &[other], None);
+        assert_eq!(r.translate(d).right(), other.right());
+        // Centre onto the other's centre, both ways.
+        let d = snap_delta(page, r, other.center() - r.center() + vec2(2.0, -5.0), &[other], None);
+        assert_eq!(r.translate(d).center(), other.center());
+        // The top edge onto the other's bottom edge (stacking below it).
+        let d = snap_delta(page, r, vec2(500.0, other.bottom() - r.top() + 4.0), &[other], None);
+        assert_eq!(r.translate(d).top(), other.bottom());
+        // Far from everything it moves as dragged.
+        let far = vec2(700.0, -200.0);
+        assert_eq!(snap_delta(page, r, far, &[other], None), far);
+    }
+
+    /// Thai edition: with the grid showing, a moved box's edge lands on the nearest grid line.
+    #[test]
+    fn a_moved_box_snaps_onto_the_grid() {
+        let page = Rect::from_min_size(pos2(100.0, 50.0), vec2(600.0, 800.0));
+        let r = Rect::from_min_size(pos2(113.0, 77.0), vec2(31.0, 30.0));
+        // Moved by (35, 8): its left edge at 148, 2 short of the grid line at 150 (100 + 2 × 25).
+        // Its top (85) and bottom (115) are 10 from the nearest lines (75, 125): they stay.
+        let d = snap_delta(page, r, vec2(35.0, 8.0), &[], Some(25.0));
+        assert_eq!(r.translate(d).left(), 150.0);
+        assert_eq!(r.translate(d).top(), 85.0);
+        // Without the grid it moves as dragged.
+        assert_eq!(snap_delta(page, r, vec2(35.0, 8.0), &[], None), vec2(35.0, 8.0));
     }
 }
 
@@ -2333,7 +2520,7 @@ mod tests {
             let mut h = egui_kittest::Harness::new_ui_state(
                 move |ui, n: &mut usize| {
                     let font = egui::FontId::proportional(14.0);
-                    let job = spaced_job("AAAA BBBB", &font, Color32::BLACK, 10.0, wrap, egui::Align::Min);
+                    let job = spaced_job("AAAA BBBB", &font, Color32::BLACK, 10.0, false, wrap, egui::Align::Min);
                     *n = ui.fonts_mut(|f| f.layout_job(job)).rows.len();
                 },
                 n,
@@ -2350,7 +2537,7 @@ mod tests {
             let mut h = egui_kittest::Harness::new_ui_state(
                 |ui, w: &mut f32| {
                     let font = egui::FontId::proportional(14.0);
-                    let job = spaced_job("AAAA BBBB", &font, Color32::BLACK, 10.0, f32::INFINITY, egui::Align::Min);
+                    let job = spaced_job("AAAA BBBB", &font, Color32::BLACK, 10.0, false, f32::INFINITY, egui::Align::Min);
                     *w = ui.fonts_mut(|f| f.layout_job(job)).rect.width();
                 },
                 w,

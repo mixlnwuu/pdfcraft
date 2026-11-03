@@ -675,8 +675,9 @@ fn open_editor(cx: PageToolContext<'_>, lines: &[pdfcraft_engine::TextBlock], bo
         look0: look_of(l),
         family_chosen: false,
         size_chosen: false,
-        extras: Extras::default(),
-        extras0: Extras::default(),
+        // An underline PdfCraft drew shows as on, so it can be turned off (Thai edition).
+        extras: Extras { underline: l.underlined, ..Extras::default() },
+        extras0: Extras { underline: l.underlined, ..Extras::default() },
         typing_from: None,
     });
 }
@@ -731,8 +732,10 @@ pub(crate) fn page_input(cx: PageToolContext<'_>, lines: &[pdfcraft_engine::Text
         let preview = match d.grip {
             // Smart guides (Thai edition), as for pictures.
             Grip::Move => {
-                let moved = b.translate(crate::content_ui::snap_to_centre(ui, xf.rect, b, p - d.start));
-                crate::content_ui::paint_guides(&painter, xf.rect, moved);
+                let shift = crate::content_ui::snap_to_centre(ui, xf.rect, b, p - d.start);
+                let moved = b.translate(shift);
+                crate::content_ui::paint_guides(&painter, xf.rect, b, moved);
+                crate::content_ui::paint_offset(&painter, xf, p, shift);
                 moved
             }
             Grip::Left => Rect::from_min_max(Pos2::new((b.left() + dx).min(b.right() - 12.0), b.min.y), b.max),

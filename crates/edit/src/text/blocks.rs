@@ -33,6 +33,9 @@ pub struct TextBlock {
     /// Every line is invisible text (rendering mode 3): an OCR layer over a scanned image, whose
     /// pixels show the words. A rewrite draws the new text visibly (see [`BlockStyle::cover`]).
     pub invisible: bool,
+    /// A rewrite underlined it (Thai edition): the next rewrite keeps the underline unless asked
+    /// otherwise ([`BlockStyle::underline`]). Set by [`text_blocks`].
+    pub underlined: bool,
 }
 
 impl TextBlock {
@@ -252,7 +255,18 @@ pub fn block_overlapping(blocks: &[TextBlock], rect: [f64; 4]) -> Option<usize> 
 /// The paragraphs on a page (0-based).
 pub fn text_blocks(doc: &Document, page: usize) -> Result<Vec<TextBlock>, EditError> {
     let lines = text_lines(doc, page)?;
-    Ok(group_blocks(&lines))
+    let mut blocks = group_blocks(&lines);
+    // Which carry an underline of PdfCraft's (Thai edition): only looked for on pages that have one.
+    let p = page_dict(doc, page)?;
+    let streams = content_streams(doc, &p.dict)?;
+    if streams.iter().any(|(_, d)| d.windows(11).any(|w| w == b"PCUnderline")) {
+        let ops = Pieces::join(&streams.iter().map(|(_, d)| d.as_slice()).collect::<Vec<_>>()).parse().ops;
+        for block in &mut blocks {
+            let members: Vec<&TextLine> = block.lines.iter().filter_map(|i| lines.get(*i)).collect();
+            block.underlined = !super::underline::own_underlines(&ops, &members).is_empty();
+        }
+    }
+    Ok(blocks)
 }
 
 /// Remove a paragraph's glyphs for a temporary editor background. Numeric TJ adjustments
@@ -295,7 +309,9 @@ pub fn clear_block(doc: &mut Document, page: usize, block: usize) -> Result<(), 
         replacement.push(Op::new("TJ", vec![Object::Array(vec![pdfcraft_content::num(adjustment)])]));
         patches.insert(s.op, replacement);
     }
-    let data = splice(&pieces, &ops, |i| patches.remove(&i).map_or((Vec::new(), true), |v| (v, false)));
+    // Its underline goes from behind the editor too (Thai edition).
+    let underlines: std::collections::HashSet<usize> = super::underline::indexes(&super::underline::own_underlines(&ops, &targets)).collect();
+    let data = splice(&pieces, &ops, |i| patches.remove(&i).map_or((Vec::new(), !underlines.contains(&i)), |v| (v, false)));
     let contents = rewritten_contents(doc, &streams, data);
     doc.update_dict(p.obj, |d| d.set(b"Contents".to_vec(), contents))?;
     Ok(())

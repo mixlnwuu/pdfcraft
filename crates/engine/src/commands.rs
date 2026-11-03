@@ -163,6 +163,8 @@ const HELP: Option<&str> = Some("Help");
 
 /// Every command, in menu order.
 pub const COMMANDS: &[CommandSpec] = &[
+    c("view.select_tool", "Select", None, None, Document, "mouse-pointer-2"),
+    c("view.hand_tool", "Hand", None, None, Document, "hand"),
     c("file.open", "Open…", FILE, Some(Shortcut::cmd("O")), Nothing, "folder-open"),
     c("file.open_recent", "Open Recent", FILE, None, Nothing, "clock"),
     // Shown at the foot of File ▸ Open Recent and on Home, not as its own File menu item.
@@ -205,6 +207,9 @@ pub const COMMANDS: &[CommandSpec] = &[
     c("view.layout.two_up", "Two-page view", None, None, Document, "columns-2"),
     c("view.continuous", "Continuous scrolling", None, None, Document, "arrow-up-down"),
     c("view.page_gaps", "Show gaps between pages", None, None, Document, "arrow-up-down"),
+    // Thai edition: rulers along the document and a grid over the pages (View menu checkboxes).
+    c("view.rulers", "Rulers", None, None, Document, "ruler"),
+    c("view.grid", "Grid", None, None, Document, "grid-3x3"),
     c("view.layout.cover", "Show cover page in two-page view", None, None, TwoPageView, "bookmark"),
     // Acrobat's view modes, a page display and a zoom at once (the rail's Page display menu).
     c("view.fit_width_scrolling", "Fit to width scrolling", None, None, Document, "arrow-left-right"),
@@ -259,6 +264,7 @@ pub const COMMANDS: &[CommandSpec] = &[
     c("comment.underline", "Underline text", None, None, Annotate, "underline"),
     c("comment.strikeout", "Strikethrough text", None, None, Annotate, "strikethrough"),
     c("comment.squiggly", "Squiggly underline text", None, None, Annotate, "spline"),
+    c("comment.freehand_highlight", "Freehand-Highlight", None, None, Annotate, "highlighter"),
     c("comment.ink", "Draw freehand", None, None, Annotate, "pencil"),
     c("comment.line", "Draw a line", None, None, Annotate, "minus"),
     c("comment.arrow", "Draw an arrow", None, None, Annotate, "move-right"),
