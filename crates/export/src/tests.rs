@@ -13,6 +13,7 @@ fn varied_page(n: usize) -> Page {
             rotation: 0.0,
             space_around: [false; 2],
             font: String::new(),
+            bullet: false,
         })
         .collect();
     Page { width: 612.0, height: 792.0, blocks, images: Vec::new(), background: None, shapes: Vec::new() }
@@ -53,6 +54,7 @@ fn page() -> Page {
         rotation: 0.0,
         space_around: [false; 2],
         font: String::new(),
+        bullet: false,
     };
     Page {
         width: 612.0,
@@ -189,6 +191,7 @@ fn word_overlap_does_not_consume_invoice_body_space() {
         rotation: 0.0,
         space_around: [false; 2],
         font: String::new(),
+        bullet: false,
     });
     p.images = page().images;
     let xml = part(&docx(&[p], "Invoice"), "word/document.xml");
@@ -277,6 +280,7 @@ fn word_opens_text_with_control_characters_and_long_pages() {
         rotation: 0.0,
         space_around: [false; 2],
         font: String::new(),
+        bullet: false,
     });
     let xml = part(&docx(&[p.clone()], "Receipt\u{1}"), "word/document.xml");
     assert!(xml.contains(">Total 4.50\tGBP</w:t>"), "{xml}");
@@ -332,6 +336,7 @@ fn rtf_escapes_and_sizes() {
         rotation: 0.0,
         space_around: [false; 2],
         font: String::new(),
+        bullet: false,
     });
     let r = rtf(&[p]);
     assert!(r.starts_with("{\\rtf1") && r.ends_with('}'));
@@ -351,6 +356,7 @@ fn table_page() -> Page {
         rotation: 0.0,
         space_around: [false; 2],
         font: String::new(),
+        bullet: false,
     };
     Page {
         width: 612.0,
@@ -376,6 +382,7 @@ fn table_page() -> Page {
                 rotation: 0.0,
                 space_around: [false; 2],
                 font: String::new(),
+                bullet: false,
             },
         ],
         images: Vec::new(),
@@ -439,6 +446,7 @@ fn a_staircase_of_blocks_is_not_a_huge_table() {
                 rotation: 0.0,
                 space_around: [false; 2],
                 font: String::new(),
+                bullet: false,
             }
         })
         .collect();
@@ -468,6 +476,7 @@ fn word_opens_tables_up_to_its_column_limit() {
                         rotation: 0.0,
                         space_around: [false; 2],
                         font: String::new(),
+                        bullet: false,
                     }
                 })
             })
@@ -493,6 +502,7 @@ fn block(t: &str, x0: f64, y0: f64, x1: f64, y1: f64) -> Block {
         rotation: 0.0,
         space_around: [false; 2],
         font: String::new(),
+        bullet: false,
     }
 }
 
@@ -615,6 +625,7 @@ fn two_column_body_text_is_not_mistaken_for_a_table() {
         rotation: 0.0,
         space_around: [false; 2],
         font: String::new(),
+        bullet: false,
     };
     let p = Page {
         width: 612.0,
@@ -855,6 +866,7 @@ fn markdown_escapes_markup_and_keeps_emphasis_and_tables() {
         rotation: 0.0,
         space_around: [false; 2],
         font: String::new(),
+        bullet: false,
     };
     let p = Page {
         width: 612.0,
@@ -949,9 +961,9 @@ fn thai_runs_carry_their_size_weight_and_font_for_word() {
 fn a_ruled_table_keeps_its_header_borders_and_shading() {
     let (top, row, xs) = (700.0, 20.0, [72.0, 132.0, 272.0, 400.0, 520.0]);
     let mut p = Page { width: 595.0, height: 842.0, ..Default::default() };
-    let rule = |rect: [f64; 4]| Shape { rect, color: [0.0; 3], rule: true };
+    let rule = |rect: [f64; 4]| Shape { rect, color: [0.0; 3], rule: true, dot: false };
     // The header's fill, then four horizontal and five vertical rules.
-    p.shapes.push(Shape { rect: [xs[0], top - row, xs[4], top], color: [0.12, 0.31, 0.47], rule: false });
+    p.shapes.push(Shape { rect: [xs[0], top - row, xs[4], top], color: [0.12, 0.31, 0.47], rule: false, dot: false });
     for r in 0..4 {
         let y = top - row * r as f64;
         p.shapes.push(rule([xs[0], y - 0.375, xs[4], y + 0.375]));
@@ -983,4 +995,64 @@ fn a_ruled_table_keeps_its_header_borders_and_shading() {
     assert!(table.matches("<w:jc w:val=\"center\"/>").count() >= 4, "header labels centred: {table}");
     assert_eq!(table.matches("<w:trHeight w:val=\"400\"").count(), 3, "20 pt rows: {table}");
     assert!(!xml.split("<w:tbl>").next().unwrap_or("").contains("No.</w:t>"), "no header label is left above the table");
+}
+
+/// Thai edition: a header and a "page N of M" footer on every page are Word's own header and
+/// footer, the numbers as fields Word fills in, and they are no longer body text.
+#[test]
+fn a_running_header_and_page_numbers_become_words_header_and_footer() {
+    let page_n = |n: usize| Page {
+        width: 595.0,
+        height: 842.0,
+        blocks: vec![
+            block("บริษัท ตัวอย่าง จำกัด", 72.0, 805.0, 260.0, 817.0),
+            block(&format!("Body of page {n}"), 72.0, 700.0, 200.0, 712.0),
+            block(&format!("หน้า {n} จาก 2"), 470.0, 28.0, 523.0, 40.0),
+        ],
+        ..Default::default()
+    };
+    let zip = docx(&[page_n(1), page_n(2)], "Bands");
+    let doc = part(&zip, "word/document.xml");
+    let header = part(&zip, "word/header1.xml");
+    let footer = part(&zip, "word/footer1.xml");
+    assert!(header.contains(">บริษัท ตัวอย่าง จำกัด</w:t>"), "{header}");
+    assert!(footer.contains("<w:fldSimple w:instr=\" PAGE \">") && footer.contains("<w:fldSimple w:instr=\" NUMPAGES \">"), "{footer}");
+    assert!(footer.contains("<w:jc w:val=\"right\"/>"), "the footer sits at the right: {footer}");
+    assert!(!doc.contains("บริษัท") && !doc.contains("จาก 2"), "not body text any more: {doc}");
+    assert!(doc.contains("Body of page 1") && doc.contains("Body of page 2"));
+    assert_eq!(doc.matches("<w:headerReference w:type=\"default\" r:id=\"rIdHeader\"/>").count(), 2, "every section: {doc}");
+    let rels = part(&zip, "word/_rels/document.xml.rels");
+    assert!(rels.contains("Target=\"header1.xml\"") && rels.contains("Target=\"footer1.xml\""), "{rels}");
+    assert!(part(&zip, "[Content_Types].xml").contains("/word/footer1.xml"));
+}
+
+/// Thai edition: a page's list bullets, shaded box, signature line and centred title keep
+/// their look in Word: a bulleted list, a shaded and bordered paragraph, a line as long as the
+/// page draws it, a centred paragraph.
+#[test]
+fn bullets_boxes_lines_and_centring_keep_their_look() {
+    let mut p = Page { width: 595.0, height: 842.0, ..Default::default() };
+    p.blocks.push(block("รายงานผลการตรวจสอบ", 220.0, 700.0, 375.0, 724.0));
+    for (i, t) in ["เปลี่ยนแบตเตอรี่", "สำรองข้อมูล"].iter().enumerate() {
+        let y = 640.0 - 22.0 * i as f64;
+        p.blocks.push(Block { bullet: true, ..block(t, 110.0, y, 260.0, y + 14.0) });
+    }
+    // A pale yellow box with an orange border around a paragraph.
+    p.shapes.push(Shape { rect: [85.0, 520.0, 520.0, 560.0], color: [1.0, 0.95, 0.8], rule: false, dot: false });
+    for r in [[85.0, 559.5, 520.0, 560.5], [85.0, 519.5, 520.0, 520.5], [84.5, 520.0, 85.5, 560.0], [519.5, 520.0, 520.5, 560.0]] {
+        p.shapes.push(Shape { rect: r, color: [0.75, 0.56, 0.0], rule: true, dot: false });
+    }
+    p.blocks.push(block("ข้อเสนอแนะ: ควรตรวจเช็กทุก ๖ เดือน", 95.0, 532.0, 400.0, 548.0));
+    // A signature line on its own, and the name under it.
+    p.shapes.push(Shape { rect: [212.0, 420.0, 382.0, 420.75], color: [0.0; 3], rule: true, dot: false });
+    p.blocks.push(block("(นายสมชาย ใจดี)", 245.0, 400.0, 350.0, 414.0));
+    let zip = docx(&[p], "Look");
+    let xml = part(&zip, "word/document.xml");
+    assert!(part(&zip, "word/numbering.xml").contains("w:numFmt w:val=\"bullet\""));
+    assert_eq!(xml.matches("<w:numId w:val=\"1\"/>").count(), 2, "two list items: {xml}");
+    assert!(xml.contains("<w:shd w:val=\"clear\" w:color=\"auto\" w:fill=\"FFF2CC\"/>") && xml.contains("<w:pBdr><w:top w:val=\"single\""), "{xml}");
+    assert!(xml.contains("<w:tcBorders><w:bottom w:val=\"single\" w:sz=\"6\""), "the signature line: {xml}");
+    let title = xml.split("รายงานผลการตรวจสอบ").next().unwrap_or("");
+    assert!(title.rsplit("<w:p>").next().unwrap_or("").contains("<w:jc w:val=\"center\"/>"), "the title is centred: {xml}");
+    assert!(part(&zip, "word/_rels/document.xml.rels").contains("Target=\"numbering.xml\""));
 }

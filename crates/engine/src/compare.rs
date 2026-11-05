@@ -231,17 +231,26 @@ impl crate::Document {
                 let crop_width = f64::from(info.crop[2] - info.crop[0]);
                 let display_width = f64::from(if info.rotation % 180 == 0 { info.width } else { info.height });
                 let unit = if crop_width > 0.0 && crop_width.is_finite() && display_width.is_finite() { display_width / crop_width } else { 1.0 };
+                // What the page draws (Thai edition): rules and filled boxes, for ruled tables,
+                // shaded boxes and lines, and dots, for bulleted lists.
+                let shapes: Vec<pdfcraft_export::Shape> = pdfcraft_edit::reading_shapes(cos, i)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|s| pdfcraft_export::Shape { rect: visible_rect(s.rect), color: s.color, rule: s.rule, dot: s.dot })
+                    .collect();
+                let dots: Vec<[f64; 4]> = shapes.iter().filter(|s| s.dot).map(|s| s.rect).collect();
                 let reading = pdfcraft_edit::reading_blocks_checked(cos, i).unwrap_or_default();
                 let forms_unread = reading.truncated;
                 let blocks = reading
                     .blocks
                     .into_iter()
                     .filter(|b| !b.text.trim().is_empty())
-                    .map(|b| {
+                    .flat_map(|b| {
                         let f = b.base_font.to_ascii_lowercase();
                         // `text` is trimmed; the editor text keeps the source's own spaces.
                         let space_around = [b.editor_text.starts_with(char::is_whitespace), b.editor_text.ends_with(char::is_whitespace)];
-                        pdfcraft_export::Block {
+                        let rows: Vec<String> = b.editor_text.split('\n').map(str::to_string).collect();
+                        let block = pdfcraft_export::Block {
                             space_around,
                             text: b.text,
                             rect: visible_rect(b.rect),
@@ -251,7 +260,10 @@ impl crate::Document {
                             color: b.color,
                             rotation: b.rotation - f64::from(info.rotation),
                             font: b.base_font,
-                        }
+                            bullet: false,
+                        };
+                        // A paragraph with a bullet before its lines is a list, one item each.
+                        pdfcraft_export::list_items(block, &rows, &dots)
                     })
                     .collect();
                 let placed = if images { pdfcraft_edit::reading_images(cos, i).unwrap_or_default() } else { Vec::new() };
@@ -283,13 +295,6 @@ impl crate::Document {
                 }
                 // The page colour (Edit a PDF ▸ Background, a producer's page fill) for formats that keep one.
                 let background = pdfcraft_edit::page_background(cos, i).ok().flatten();
-                // What the page draws (Thai edition): rules and filled boxes, for ruled tables,
-                // shaded boxes and lines.
-                let shapes = pdfcraft_edit::reading_shapes(cos, i)
-                    .unwrap_or_default()
-                    .into_iter()
-                    .map(|s| pdfcraft_export::Shape { rect: visible_rect(s.rect), color: s.color, rule: s.rule })
-                    .collect();
                 pdfcraft_export::Page { width: info.width as f64, height: info.height as f64, blocks, images, background, shapes }
             })
             .collect();

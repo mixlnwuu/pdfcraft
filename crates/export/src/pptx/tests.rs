@@ -17,6 +17,7 @@ fn sample_page() -> Page {
                 rotation: 0.0,
                 space_around: [false; 2],
                 font: String::new(),
+                bullet: false,
             },
             Block {
                 text: "Revenue grew 25% year over year across all regions.".into(),
@@ -28,6 +29,7 @@ fn sample_page() -> Page {
                 rotation: 0.0,
                 space_around: [false; 2],
                 font: String::new(),
+                bullet: false,
             },
             Block {
                 text: "Operational expenses remained flat.".into(),
@@ -39,6 +41,7 @@ fn sample_page() -> Page {
                 rotation: 0.0,
                 space_around: [false; 2],
                 font: String::new(),
+                bullet: false,
             },
         ],
         images: vec![Image {
@@ -165,6 +168,7 @@ fn pptx_package_parts_are_complete_and_consistent() {
         rotation: 0.0,
         space_around: [false; 2],
         font: String::new(),
+        bullet: false,
     };
     let table_page = Page {
         width: 612.0,
@@ -269,6 +273,7 @@ fn hostile_sizes_do_not_overflow_the_slide_position() {
         rotation: 0.0,
         space_around: [false; 2],
         font: String::new(),
+        bullet: false,
     };
     let mut blocks = vec![huge("Title", f64::MAX, 500.0)];
     for k in 0..40 {
@@ -342,6 +347,7 @@ fn pptx_table_cell_with_largest_font_stays_in_table_and_not_in_title() {
         rotation: 0.0,
         space_around: [false; 2],
         font: String::new(),
+        bullet: false,
     };
     let p = Page {
         width: 720.0,
@@ -358,6 +364,7 @@ fn pptx_table_cell_with_largest_font_stays_in_table_and_not_in_title() {
                 rotation: 0.0,
                 space_around: [false; 2],
                 font: String::new(),
+                bullet: false,
             },
             // Table where one cell has a very large number (e.g. 36 pt callout in the table)
             cell("Metric", 72.0, 400.0, 100.0, 12.0),

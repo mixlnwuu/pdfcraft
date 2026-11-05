@@ -31,7 +31,16 @@ pub struct DrawnShape {
     pub color: Rgb,
     /// A line (stroked, or a fill no thicker than [`RULE_THICKNESS`]); otherwise a filled area.
     pub rule: bool,
+    /// A small filled curved shape, no bigger than [`DOT`] either way: a list's bullet, as a
+    /// browser or a word processor draws a disc or a circle. Its `rect` is its box.
+    pub dot: bool,
 }
+
+/// A filled curved shape no wider or taller than this (points) is a dot.
+const DOT: f64 = 8.0;
+
+/// The most points of a curved path kept for its box.
+const MAX_CURVE_POINTS: usize = 64;
 
 #[derive(Clone)]
 struct State {
@@ -63,6 +72,9 @@ pub(crate) fn shapes(ops: &[Op]) -> Vec<DrawnShape> {
     let mut segments: Vec<((f64, f64), (f64, f64))> = Vec::new();
     let mut start: Option<(f64, f64)> = None;
     let mut at: Option<(f64, f64)> = None;
+    // A path with curves: the points it passes (for a dot's box), and whether it has any.
+    let mut points: Vec<(f64, f64)> = Vec::new();
+    let mut curved = false;
     let mut out = Vec::new();
     for op in ops {
         if out.len() >= MAX_SHAPES {
@@ -113,6 +125,7 @@ pub(crate) fn shapes(ops: &[Op]) -> Vec<DrawnShape> {
                 if let Some([x, y]) = op.nums::<2>() {
                     let p = st.ctm.apply(x, y);
                     (start, at) = (Some(p), Some(p));
+                    keep(&mut points, &[p]);
                 }
             }
             b"l" => {
@@ -120,6 +133,7 @@ pub(crate) fn shapes(ops: &[Op]) -> Vec<DrawnShape> {
                     let p = st.ctm.apply(x, y);
                     segments.push((from, p));
                     at = Some(p);
+                    keep(&mut points, &[p]);
                 }
             }
             b"h" => {
@@ -128,8 +142,18 @@ pub(crate) fn shapes(ops: &[Op]) -> Vec<DrawnShape> {
                     at = Some(s);
                 }
             }
-            // Curves end the straight path here: what they draw isn't a rule or a box.
-            b"c" | b"v" | b"y" => at = None,
+            // Curves end the straight path here: what they draw isn't a rule or a box, but a small
+            // filled one is a dot.
+            b"c" | b"v" | b"y" => {
+                curved = true;
+                at = None;
+                let n = if op.is("c") { 3 } else { 2 };
+                let nums: Vec<f64> = op.operands.iter().filter_map(pdfcraft_cos::Object::as_f64).collect();
+                if nums.len() == 2 * n {
+                    let ps: Vec<(f64, f64)> = nums.chunks(2).filter_map(|c| Some(st.ctm.apply(*c.first()?, *c.get(1)?))).collect();
+                    keep(&mut points, &ps);
+                }
+            }
             b"f" | b"F" | b"f*" | b"B" | b"B*" | b"b" | b"b*" | b"S" | b"s" | b"n" => {
                 let paint = op.op.as_slice();
                 let fills = matches!(paint, b"f" | b"F" | b"f*" | b"B" | b"B*" | b"b" | b"b*");
@@ -138,8 +162,13 @@ pub(crate) fn shapes(ops: &[Op]) -> Vec<DrawnShape> {
                     for q in &rects {
                         if let Some(r) = upright(q) {
                             let thin = (r[2] - r[0]).min(r[3] - r[1]) <= RULE_THICKNESS;
-                            out.push(DrawnShape { rect: r, color: clamp(color), rule: thin });
+                            out.push(DrawnShape { rect: r, color: clamp(color), rule: thin, dot: false });
                         }
+                    }
+                    if curved
+                        && let Some(r) = bounds(&points).filter(|r| (r[2] - r[0]).max(r[3] - r[1]) <= DOT && (r[2] - r[0]).min(r[3] - r[1]) >= 0.5)
+                    {
+                        out.push(DrawnShape { rect: r, color: clamp(color), rule: false, dot: true });
                     }
                 }
                 if strokes && let Some(color) = st.stroke {
@@ -149,12 +178,14 @@ pub(crate) fn shapes(ops: &[Op]) -> Vec<DrawnShape> {
                     let edges = rects.iter().flat_map(|q| [(q[0], q[1]), (q[1], q[2]), (q[2], q[3]), (q[3], q[0])]);
                     for (p0, p1) in segments.iter().copied().chain(edges) {
                         if let Some(r) = rule(p0, p1, thick) {
-                            out.push(DrawnShape { rect: r, color: clamp(color), rule: true });
+                            out.push(DrawnShape { rect: r, color: clamp(color), rule: true, dot: false });
                         }
                     }
                 }
                 rects.clear();
                 segments.clear();
+                points.clear();
+                curved = false;
                 (start, at) = (None, None);
             }
             _ => {}
@@ -162,6 +193,21 @@ pub(crate) fn shapes(ops: &[Op]) -> Vec<DrawnShape> {
     }
     out.truncate(MAX_SHAPES);
     out
+}
+
+/// Adds `ps` to a curved path's points, up to [`MAX_CURVE_POINTS`].
+fn keep(points: &mut Vec<(f64, f64)>, ps: &[(f64, f64)]) {
+    for p in ps {
+        if points.len() < MAX_CURVE_POINTS && p.0.is_finite() && p.1.is_finite() {
+            points.push(*p);
+        }
+    }
+}
+
+/// The box around `points`; `None` for none.
+fn bounds(points: &[(f64, f64)]) -> Option<[f64; 4]> {
+    let first = points.first()?;
+    Some(points.iter().fold([first.0, first.1, first.0, first.1], |b, p| [b[0].min(p.0), b[1].min(p.1), b[2].max(p.0), b[3].max(p.1)]))
 }
 
 /// A rectangle whose corners lie along x and y: its box. `None` under a rotation or shear that
@@ -242,16 +288,27 @@ mod tests {
              0 0 1 RG 1 w 300 500 50 40 re S",
         );
         assert_eq!(got.len(), 7, "{got:?}");
-        assert_eq!(got[0], DrawnShape { rect: [100.0, 700.0, 300.0, 720.0], color: [0.12, 0.31, 0.47], rule: false });
+        assert_eq!(got[0], DrawnShape { rect: [100.0, 700.0, 300.0, 720.0], color: [0.12, 0.31, 0.47], rule: false, dot: false });
         assert!(got[1].rule && got[1].color == [0.0; 3], "a 0.75 pt fill is a rule");
-        assert_eq!(got[2], DrawnShape { rect: [50.0, 599.0, 250.0, 601.0], color: [1.0, 0.0, 0.0], rule: true }, "a 2 pt stroke");
+        assert_eq!(got[2], DrawnShape { rect: [50.0, 599.0, 250.0, 601.0], color: [1.0, 0.0, 0.0], rule: true, dot: false }, "a 2 pt stroke");
         assert!(got[3..].iter().all(|s| s.rule && s.color == [0.0, 0.0, 1.0]), "a stroked box is its four sides");
     }
 
     #[test]
     fn the_ctm_places_shapes_and_slanted_ones_are_left_out() {
         let got = read("q 1 0 0 1 10 20 cm 0 g 0 0 100 50 re f Q q 0.7 0.7 -0.7 0.7 0 0 cm 0 0 10 10 re f Q 5 5 m 50 60 l S");
-        assert_eq!(got, vec![DrawnShape { rect: [10.0, 20.0, 110.0, 70.0], color: [0.0; 3], rule: false }]);
+        assert_eq!(got, vec![DrawnShape { rect: [10.0, 20.0, 110.0, 70.0], color: [0.0; 3], rule: false, dot: false }]);
+    }
+
+    #[test]
+    fn a_small_filled_circle_is_a_dot_and_a_large_one_is_nothing() {
+        // A 4 pt disc drawn with four Béziers, as a browser draws a list bullet.
+        let disc =
+            "0 g 102 700 m 102 701.1 101.1 702 100 702 c 98.9 702 98 701.1 98 700 c 98 698.9 98.9 698 100 698 c 101.1 698 102 698.9 102 700 c f";
+        let got = read(disc);
+        assert_eq!(got, vec![DrawnShape { rect: [98.0, 698.0, 102.0, 702.0], color: [0.0; 3], rule: false, dot: true }]);
+        let big = "0 g 200 700 m 200 760 150 800 100 800 c f";
+        assert!(read(big).is_empty(), "a large curve is no dot");
     }
 
     #[test]

@@ -20,7 +20,10 @@ mod as_docx;
 mod as_html;
 mod as_markdown;
 mod as_rtf;
+mod bands;
+mod docx_flow;
 mod layout;
+mod lists;
 mod ruled;
 
 pub use as_docx::docx;
@@ -39,6 +42,7 @@ pub use layout::{Block, Cell, HAlign, Image, Page, Shape, Table, TableBorder};
 #[cfg(test)]
 use layout::{LOOKUP_STEPS, MAX_COLS, body_size};
 pub(crate) use layout::{Run, paragraphs, tables};
+pub use lists::list_items;
 
 #[cfg(test)]
 mod tests;

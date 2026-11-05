@@ -21,6 +21,9 @@ pub struct Block {
     /// The PDF font's name as the source gives it (`ABCDEF+AngsanaNew-Bold`); empty when unknown.
     /// Writers that name fonts turn it into a family with [`family_name`] (Thai edition).
     pub font: String,
+    /// An item of a bulleted list, its bullet left out of `text` ([`crate::list_items`], Thai
+    /// edition).
+    pub bullet: bool,
 }
 
 /// An image of a page.
@@ -59,6 +62,8 @@ pub struct Shape {
     pub color: [f64; 3],
     /// A line (its thin side is its thickness); otherwise a filled area.
     pub rule: bool,
+    /// A small filled dot (a list's bullet), not an area.
+    pub dot: bool,
 }
 
 /// A table's border as the page draws it (Thai edition).
@@ -344,10 +349,15 @@ pub(crate) fn tables(blocks: &[Block]) -> (Vec<Table>, Vec<bool>) {
 
 /// A page's tables (Thai edition): those its rules draw ([`crate::ruled`]), with their grid,
 /// borders and shading, then those found from where the rest of its text sits.
-pub(crate) fn page_tables(p: &Page) -> (Vec<Table>, Vec<bool>) {
-    let (mut ruled, taken) = super::ruled::ruled_tables(&p.blocks, &p.shapes, &[]);
+/// Blocks marked in `skip` (a running header or footer) are in no table, and come back marked
+/// as taken.
+pub(crate) fn page_tables(p: &Page, skip: &[bool]) -> (Vec<Table>, Vec<bool>) {
+    let (mut ruled, mut taken) = super::ruled::ruled_tables(&p.blocks, &p.shapes, skip);
     for t in &mut ruled {
         super::ruled::shade(t, &p.shapes);
+    }
+    for (t, s) in taken.iter_mut().zip(skip) {
+        *t |= *s;
     }
     let (text, mut consumed) = tables_skipping(&p.blocks, &taken);
     for (c, t) in consumed.iter_mut().zip(&taken) {
@@ -576,21 +586,27 @@ pub(crate) fn items(pages: &[Page]) -> Vec<Item<'_>> {
         if i > 0 {
             out.push(Item::PageBreak);
         }
-        let (tables, consumed) = page_tables(p);
-        // Blocks and images by their top edge, top to bottom.
-        // A paragraph sits where its first run does: its other runs follow along the same line.
-        let mut parts: Vec<(f64, f64, Item)> = paragraphs(&p.blocks, &consumed)
-            .into_iter()
-            .filter_map(|runs| {
-                let first = runs.first()?.block;
-                let lvl = para_level(&runs, body);
-                Some((first.rect[3], first.rect[0], Item::Para(runs, lvl)))
-            })
-            .collect();
-        parts.extend(tables.into_iter().map(|t| (t.rect[3], t.rect[0], Item::Table(t))));
-        parts.extend(p.images.iter().map(|im| (im.rect[3], im.rect[0], Item::Img(im))));
-        parts.sort_by(|a, b| b.0.total_cmp(&a.0).then(a.1.total_cmp(&b.1)));
-        out.extend(parts.into_iter().map(|x| x.2));
+        out.extend(page_items(p, &[], body));
     }
     out
+}
+
+/// One page's items, top to bottom, leaving out the blocks marked in `skip` (Thai edition: the
+/// running header and footer, which Word gets as its own); `body` is the body text size.
+pub(crate) fn page_items<'a>(p: &'a Page, skip: &[bool], body: f64) -> Vec<Item<'a>> {
+    let (tables, consumed) = page_tables(p, skip);
+    // Blocks and images by their top edge, top to bottom.
+    // A paragraph sits where its first run does: its other runs follow along the same line.
+    let mut parts: Vec<(f64, f64, Item)> = paragraphs(&p.blocks, &consumed)
+        .into_iter()
+        .filter_map(|runs| {
+            let first = runs.first()?.block;
+            let lvl = para_level(&runs, body);
+            Some((first.rect[3], first.rect[0], Item::Para(runs, lvl)))
+        })
+        .collect();
+    parts.extend(tables.into_iter().map(|t| (t.rect[3], t.rect[0], Item::Table(t))));
+    parts.extend(p.images.iter().map(|im| (im.rect[3], im.rect[0], Item::Img(im))));
+    parts.sort_by(|a, b| b.0.total_cmp(&a.0).then(a.1.total_cmp(&b.1)));
+    parts.into_iter().map(|x| x.2).collect()
 }
