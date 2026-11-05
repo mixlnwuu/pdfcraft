@@ -351,6 +351,31 @@ const SNAP: f32 = 6.0;
 /// Smart guides' colour, as in Photoshop.
 const GUIDE: Color32 = Color32::from_rgb(0xFF, 0x2E, 0xC8);
 
+/// Once a box has snapped to a guide it stays on it until the pointer pulls this far (screen
+/// points) away, so it feels held, as Photoshop's guides do (Thai edition).
+const RELEASE: f32 = 14.0;
+
+/// How long (seconds) without a snapped move before a hold is forgotten: the next drag starts free.
+const HOLD_FORGET: f64 = 0.4;
+
+/// Whether smart guides show and boxes snap to them (View ▸ Smart Guides, Snap to Guides; Thai
+/// edition), for this frame.
+pub(crate) fn set_guide_options(ctx: &egui::Context, show: bool, snap: bool) {
+    ctx.data_mut(|d| d.insert_temp(egui::Id::unique("guide-options"), (show, snap)));
+}
+
+fn guide_options(ctx: &egui::Context) -> (bool, bool) {
+    ctx.data(|d| d.get_temp::<(bool, bool)>(egui::Id::unique("guide-options"))).unwrap_or((true, true))
+}
+
+/// The guide a moving box holds on to along each axis: the guide's position, and which of the
+/// box's lines (left/centre/right or top/middle/bottom) sits on it.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct Hold {
+    pub x: Option<(f32, usize)>,
+    pub y: Option<(f32, usize)>,
+}
+
 /// What else is on `page` (screen boxes) for smart guides to line a moved box up with, kept for
 /// this frame (Thai edition).
 pub(crate) fn set_snap_targets(ctx: &egui::Context, page: Rect, boxes: Vec<Rect>) {
@@ -382,11 +407,18 @@ fn snap_targets(ctx: &egui::Context, page: Rect, from: Rect) -> Vec<Rect> {
 /// one of its edges or its centre lands on another box's edge or centre, or on the page's centre
 /// lines, when it comes within [`SNAP`] of one. Alt held moves freely.
 pub(crate) fn snap_to_centre(ui: &egui::Ui, page: Rect, r: Rect, d: egui::Vec2) -> egui::Vec2 {
-    if ui.input(|i| i.modifiers.alt) {
+    let ctx = ui.ctx();
+    if ui.input(|i| i.modifiers.alt) || !guide_options(ctx).1 {
         return d;
     }
-    let grid = ui.ctx().data(|g| g.get_temp::<Option<f32>>(grid_id(page))).flatten();
-    snap_delta(page, r, d, &snap_targets(ui.ctx(), page, r), grid)
+    let grid = ctx.data(|g| g.get_temp::<Option<f32>>(grid_id(page))).flatten();
+    // The hold of this drag, unless the last snapped move was a while ago (another drag).
+    let id = egui::Id::unique("snap-hold");
+    let now = ui.input(|i| i.time);
+    let mut hold = ctx.data(|g| g.get_temp::<(Hold, f64)>(id)).filter(|(_, at)| now - at <= HOLD_FORGET).map(|(h, _)| h).unwrap_or_default();
+    let out = snap_delta_held(page, r, d, &snap_targets(ctx, page, r), grid, &mut hold);
+    ctx.data_mut(|g| g.insert_temp(id, (hold, now)));
+    out
 }
 
 /// The lines a box lines up on along one axis: its two edges and its centre.
@@ -398,23 +430,44 @@ fn lines_y(r: Rect) -> [f32; 3] {
     [r.top(), r.center().y, r.bottom()]
 }
 
-/// The nearest guide to any of `moving` within [`SNAP`]: how far to shift onto it.
-fn nearest(moving: [f32; 3], guides: impl Iterator<Item = f32>) -> Option<f32> {
-    let mut best: Option<f32> = None;
+/// The nearest guide to any of `moving` within [`SNAP`]: how far to shift onto it, the guide,
+/// and which of `moving` goes onto it.
+fn nearest(moving: [f32; 3], guides: impl Iterator<Item = f32>) -> Option<(f32, f32, usize)> {
+    let mut best: Option<(f32, f32, usize)> = None;
     for g in guides {
-        for m in moving {
+        for (k, m) in moving.into_iter().enumerate() {
             let shift = g - m;
-            if shift.abs() <= SNAP && best.is_none_or(|b| shift.abs() < b.abs()) {
-                best = Some(shift);
+            if shift.abs() <= SNAP && best.is_none_or(|b| shift.abs() < b.0.abs()) {
+                best = Some((shift, g, k));
             }
         }
     }
     best
 }
 
+/// Along one axis: a guide within reach snaps (and is held), else the held guide keeps the box
+/// while its line stays within [`RELEASE`] of it; past that the hold lets go.
+fn snap_axis(moving: [f32; 3], guides: impl Iterator<Item = f32>, held: &mut Option<(f32, usize)>) -> Option<f32> {
+    if let Some((shift, g, k)) = nearest(moving, guides) {
+        *held = Some((g, k));
+        return Some(shift);
+    }
+    let shift = held.and_then(|(g, k)| moving.get(k).map(|m| g - m)).filter(|s| s.abs() <= RELEASE);
+    if shift.is_none() {
+        *held = None;
+    }
+    shift
+}
+
 /// [`snap_to_centre`] without the Alt key, lining up with `others` too, and with the grid lines
 /// `grid` apart from the page's top left when the grid shows.
+#[cfg(test)]
 fn snap_delta(page: Rect, r: Rect, d: egui::Vec2, others: &[Rect], grid: Option<f32>) -> egui::Vec2 {
+    snap_delta_held(page, r, d, others, grid, &mut Hold::default())
+}
+
+/// [`snap_delta`], held on to the guides in `hold` (see [`RELEASE`]) and updating it.
+fn snap_delta_held(page: Rect, r: Rect, d: egui::Vec2, others: &[Rect], grid: Option<f32>, hold: &mut Hold) -> egui::Vec2 {
     let moved = r.translate(d);
     // The grid lines nearest the box's edges.
     let near = |origin: f32, edges: [f32; 2]| -> Vec<f32> {
@@ -423,10 +476,10 @@ fn snap_delta(page: Rect, r: Rect, d: egui::Vec2, others: &[Rect], grid: Option<
     let xs = std::iter::once(page.center().x).chain(others.iter().flat_map(|o| lines_x(*o))).chain(near(page.left(), [moved.left(), moved.right()]));
     let ys = std::iter::once(page.center().y).chain(others.iter().flat_map(|o| lines_y(*o))).chain(near(page.top(), [moved.top(), moved.bottom()]));
     let mut out = d;
-    if let Some(shift) = nearest(lines_x(moved), xs) {
+    if let Some(shift) = snap_axis(lines_x(moved), xs, &mut hold.x) {
         out.x += shift;
     }
-    if let Some(shift) = nearest(lines_y(moved), ys) {
+    if let Some(shift) = snap_axis(lines_y(moved), ys, &mut hold.y) {
         out.y += shift;
     }
     out
@@ -435,6 +488,9 @@ fn snap_delta(page: Rect, r: Rect, d: egui::Vec2, others: &[Rect], grid: Option<
 /// The guides a box moved from `from` to `r` sits on: the page's centre lines across the page,
 /// and a line from it to each other box it lines up with.
 pub(crate) fn paint_guides(painter: &egui::Painter, page: Rect, from: Rect, r: Rect) {
+    if !guide_options(painter.ctx()).0 {
+        return;
+    }
     let stroke = Stroke::new(1.0, GUIDE);
     let on = |a: f32, b: f32| (a - b).abs() < 0.5;
     let pc = page.center();
@@ -461,6 +517,9 @@ pub(crate) fn paint_guides(painter: &egui::Painter, page: Rect, from: Rect, r: R
 /// How far a box has been moved, in points, beside the pointer `at` (screen move `d`), as
 /// Photoshop shows it (Thai edition).
 pub(crate) fn paint_offset(painter: &egui::Painter, xf: &PageXform, at: Pos2, d: egui::Vec2) {
+    if !guide_options(painter.ctx()).0 {
+        return;
+    }
     let ((x0, y0), (x1, y1)) = (xf.screen_to_view(at - d), xf.screen_to_view(at));
     let (dx, dy) = (x1 - x0, y1 - y0);
     if !(dx.is_finite() && dy.is_finite()) || d.length() < 1.0 {
@@ -2323,6 +2382,30 @@ mod snap_tests {
         assert_eq!(r.translate(d).top(), 85.0);
         // Without the grid it moves as dragged.
         assert_eq!(snap_delta(page, r, vec2(35.0, 8.0), &[], None), vec2(35.0, 8.0));
+    }
+
+    /// Thai edition: a box that snapped to a guide is held on it while the drag pulls a little
+    /// past the catch distance, as in Photoshop, and lets go further out.
+    #[test]
+    fn a_snapped_box_is_held_until_pulled_clearly_away() {
+        use super::{Hold, snap_delta_held};
+        let page = Rect::from_min_size(pos2(0.0, 0.0), vec2(1000.0, 1000.0));
+        let other = Rect::from_min_size(pos2(300.0, 100.0), vec2(300.0, 40.0));
+        let r = Rect::from_min_size(pos2(100.0, 400.0), vec2(50.0, 20.0));
+        let mut hold = Hold::default();
+        // Its left edge 4 from the other's left (300): it snaps, and holds the guide.
+        let d = snap_delta_held(page, r, vec2(196.0, 0.0), &[other], None, &mut hold);
+        assert_eq!(r.translate(d).left(), 300.0);
+        assert!(hold.x.is_some());
+        // 10 past it, beyond the catch distance but within the hold: still on the guide.
+        let d = snap_delta_held(page, r, vec2(210.0, 0.0), &[other], None, &mut hold);
+        assert_eq!(r.translate(d).left(), 300.0, "held");
+        // Without the hold the same move snaps to nothing.
+        assert_eq!(snap_delta(page, r, vec2(210.0, 0.0), &[other], None).x, 210.0);
+        // 20 past it: let go, and the hold is gone.
+        let d = snap_delta_held(page, r, vec2(220.0, 0.0), &[other], None, &mut hold);
+        assert_eq!(d.x, 220.0);
+        assert!(hold.x.is_none());
     }
 }
 

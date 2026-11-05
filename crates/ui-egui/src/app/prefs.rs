@@ -158,6 +158,8 @@ impl PdfCraftApp {
         v["show_page_edge_shadows"] = self.show_page_edge_shadows.into();
         v["show_rulers"] = self.show_rulers.into();
         v["show_grid"] = self.show_grid.into();
+        v["show_smart_guides"] = self.show_smart_guides.into();
+        v["snap_to_guides"] = self.snap_to_guides.into();
         v["hotbar"] = serde_json::to_value(&self.hotbar).unwrap_or_default();
         v["comment_tool_pinned"] = serde_json::Value::Bool(self.comment_prefs.pinned);
         v["show_secured_notice"] = serde_json::Value::Bool(self.show_secured_notice);
@@ -327,6 +329,12 @@ impl PdfCraftApp {
         }
         if let Some(show) = v["show_rulers"].as_bool() {
             self.show_rulers = show;
+        }
+        if let Some(show) = v["show_smart_guides"].as_bool() {
+            self.show_smart_guides = show;
+        }
+        if let Some(snap) = v["snap_to_guides"].as_bool() {
+            self.snap_to_guides = snap;
         }
         if let Some(show) = v["show_grid"].as_bool() {
             self.show_grid = show;

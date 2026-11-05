@@ -131,3 +131,55 @@ fn rulers_and_grid_show_from_the_view_menu() {
     h.run_steps(2);
     assert!(!h.state().show_grid);
 }
+
+/// Thai edition: View ▸ Smart Guides and View ▸ Snap to Guides turn the guides and the snapping
+/// off for whoever doesn't want them: the same drag that lined the box up now moves it as
+/// dragged, with no guide drawn; both are remembered.
+#[test]
+fn smart_guides_and_snapping_turn_off_from_the_view_menu() {
+    let mut h = Harness::builder().with_size(egui::vec2(1400.0, 900.0)).build_eframe(|_cc| {
+        let mut app = PdfCraftApp::new();
+        app.set_option("language", "en").unwrap();
+        app.open_bytes("blank.pdf", None, blank()).unwrap();
+        app.set_option("zoom", "200").unwrap();
+        app
+    });
+    crate::support::settle(&mut h);
+    for rect in [[40.0, 200.0, 140.0, 220.0], [60.0, 100.0, 160.0, 120.0]] {
+        let text = pdfcraft_engine::AddedText { text: "Box".into(), rect, size: 12.0, ..Default::default() };
+        assert!(h.state_mut().apply_edit(pdfcraft_engine::Edit::AddText { page: 0, text }));
+    }
+    assert!(h.state().show_smart_guides && h.state().snap_to_guides, "on by default");
+    assert!(h.state_mut().execute("view.smart_guides"));
+    assert!(h.state_mut().execute("view.snap"));
+    assert!(!h.state().show_smart_guides && !h.state().snap_to_guides);
+    let mut restored = PdfCraftApp::new();
+    restored.restore(&h.state().persist());
+    assert!(!restored.show_smart_guides && !restored.snap_to_guides, "remembered");
+    assert!(h.state_mut().execute("edit.edit_text"));
+    crate::support::settle(&mut h);
+    let page = h.state().views[0].page_screen_rect(0).expect("on screen");
+    let k = page.width() / 300.0;
+    let at = |x: f64, y: f64| egui::pos2(page.left() + x as f32 * k, page.top() + (300.0 - y as f32) * k);
+    let before = added_rects(&h)[1];
+    let c = at((before[0] + before[2]) / 2.0, (before[1] + before[3]) / 2.0);
+    h.hover_at(c);
+    h.run_steps(1);
+    h.drag_at(c);
+    h.run_steps(1);
+    h.drop_at(c);
+    h.run_steps(2);
+    let to = c - egui::vec2(18.0 * k, 0.0);
+    h.drag_at(c);
+    h.run_steps(1);
+    for s in 1..=6 {
+        h.hover_at(c + (to - c) * (s as f32 / 6.0));
+        h.run_steps(1);
+    }
+    let guides = h.output().shapes.iter().filter(|s| matches!(&s.shape, egui::Shape::LineSegment { stroke, .. } if stroke.color == GUIDE)).count();
+    assert_eq!(guides, 0, "no guide drawn");
+    h.drop_at(to);
+    h.run_steps(4);
+    let moved = added_rects(&h)[1][0];
+    assert!((moved - (before[0] - 18.0)).abs() < 0.3, "moved as dragged, 2 points short of the other box: {moved}");
+}

@@ -379,6 +379,9 @@ pub struct PdfCraftApp {
     pub show_rulers: bool,
     /// A grid over the pages (Thai edition): drawn on screen only, and moved boxes snap to it.
     pub show_grid: bool,
+    /// Smart guides drawn while a box moves (Thai edition), and whether it snaps to them.
+    pub show_smart_guides: bool,
+    pub snap_to_guides: bool,
     /// The Linux portal is enabled only by the native host, and starts on the first System choice.
     #[cfg(target_os = "linux")]
     desktop_theme: Option<pdfcraft_platform::desktop_theme::DesktopTheme>,

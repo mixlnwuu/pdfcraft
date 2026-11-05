@@ -295,6 +295,8 @@ impl PdfCraftApp {
             }
             "view.rulers" => self.show_rulers = !self.show_rulers,
             "view.grid" => self.show_grid = !self.show_grid,
+            "view.smart_guides" => self.show_smart_guides = !self.show_smart_guides,
+            "view.snap" => self.snap_to_guides = !self.snap_to_guides,
             "view.page_gaps" => {
                 if let Some(view) = active.and_then(|i| self.views.get(i)) {
                     self.set_active_page_gaps(!view.show_page_gaps);

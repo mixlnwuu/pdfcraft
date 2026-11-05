@@ -3955,6 +3955,7 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
     scroll = refine_goto_point(scroll, view, &ScrollGeometry { rects: &rects, y_shift, content_w, content_h, avail, middle_gesture, hand });
     let selection_wheel = view.selection_drag && navigation_enabled && unobstructed && !single_paging && ui.rect_contains_pointer(avail);
     let show_rulers = app.show_rulers;
+    crate::content_ui::set_guide_options(ui.ctx(), app.show_smart_guides, app.snap_to_guides);
     let env = PageEnv {
         added: &added,
         allowed,

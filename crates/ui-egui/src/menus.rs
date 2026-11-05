@@ -344,7 +344,7 @@ impl PdfCraftApp {
             Node::Separator,
         ];
         // Thai edition: rulers and a grid.
-        view.extend(list(&["view.rulers", "view.grid"], &mut used));
+        view.extend(list(&["view.rulers", "view.grid", "view.smart_guides", "view.snap"], &mut used));
         view.push(Node::Separator);
         view.extend(list(PANES, &mut used));
         view.push(Node::submenu(
@@ -500,6 +500,8 @@ impl PdfCraftApp {
             "view.page_gaps" => Some(view.is_some_and(|v| v.show_page_gaps)),
             "view.rulers" => Some(self.show_rulers),
             "view.grid" => Some(self.show_grid),
+            "view.smart_guides" => Some(self.show_smart_guides),
+            "view.snap" => Some(self.snap_to_guides),
             "view.layout.cover" => Some(view.is_some_and(|v| v.cover)),
             "view.full_screen" => Some(self.full_screen),
             "view.read_mode" => Some(self.mode == crate::Mode::Read),

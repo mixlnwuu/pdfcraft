@@ -2956,3 +2956,7 @@ theme	Appearance	ลักษณะที่ปรากฏ
 	bold	ตัวหนา
 	italic	ตัวเอียง
 	{font}, {size} pt	{font}, {size} pt
+@id	view.smart_guides	เส้นช่วยจัดแนว
+@id	view.snap	ดูดเข้าแนว
+	Smart Guides	เส้นช่วยจัดแนว
+	Snap to Guides	ดูดเข้าแนว

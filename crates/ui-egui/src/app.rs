@@ -96,6 +96,8 @@ impl PdfCraftApp {
             show_page_edge_shadows: true,
             show_rulers: false,
             show_grid: false,
+            show_smart_guides: true,
+            snap_to_guides: true,
             #[cfg(target_os = "linux")]
             desktop_theme: None,
             #[cfg(target_os = "linux")]
