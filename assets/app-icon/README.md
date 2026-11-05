@@ -1,6 +1,14 @@
 # PdfCraft app icon
 
-<img src="pdfcraft-small.svg" alt="PdfCraft app icon: an engraved lion's head on red" width="128">
+<img src="pdfcraft-small.svg" alt="PdfCraft Thai edition app icon: a black cat in a grey hoodie on red" width="128">
+
+> **Thai edition.** The edition's icon is its cat (`thai/brand/thai-edition-cat-original.png`, the
+> developer's own, `MIT OR Apache-2.0`) on a rounded red tile (`#E53935`), so it isn't mistaken for
+> the official app. Every file here except the PDF document icon is rendered from the cat by
+> `cargo run --release --manifest-path thai/brand/icons/Cargo.toml` (not by `packaging/icons.sh`);
+> the SVGs wrap a rendered PNG. At 32 px and below the head sits smaller and its greys are lifted so
+> it still reads. After running it, update the sha256 values in `ATTRIBUTION.toml` and run
+> `cargo xtask assets --write`. The upstream lion described below is not used by the edition.
 
 **Creature:** a lion, in a frontal head-and-shoulders portrait, mane running off the bottom of the tile.
 
