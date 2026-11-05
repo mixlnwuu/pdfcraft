@@ -5,8 +5,9 @@
 use super::as_docx::hex;
 use super::layout::{Block, Item, Page, Shape};
 
-/// Space (points) a Word paragraph already leaves after itself (the Normal style).
-const AFTER: f64 = 6.0;
+/// Space (points) a Word paragraph leaves after itself: none, as every paragraph says (Thai
+/// edition), so the space above each one is the page's own.
+const AFTER: f64 = 0.0;
 
 /// The most space put above a paragraph (points), so a page's empty half stays a gap, not a jump.
 const MAX_GAP: f64 = 72.0;
@@ -224,7 +225,13 @@ pub(crate) fn paragraph_props(
         }
         p.push_str(&format!("<w:shd w:val=\"clear\" w:color=\"auto\" w:fill=\"{}\"/>", hex(b.fill).unwrap_or_else(|| "000000".into())));
     }
-    p.push_str(&format!("<w:spacing w:before=\"{before_twips}\"/>"));
+    // Lines as far apart as the page sets them (Thai edition): the block's height over its rows,
+    // never tighter than its font needs; and no space after, which the space above accounts for.
+    let size = if first.size.is_finite() && first.size > 0.0 { first.size } else { 12.0 };
+    let height = first.rect[3] - first.rect[1];
+    let rows = if height.is_finite() { (height / (size * 1.3)).round().max(1.0) } else { 1.0 };
+    let pitch = if height.is_finite() { (height / rows).max(size * 1.15) } else { size * 1.2 };
+    p.push_str(&format!("<w:spacing w:before=\"{before_twips}\" w:after=\"0\" w:line=\"{}\" w:lineRule=\"exact\"/>", twips(pitch)));
     let mid = (x0 + x1) / 2.0;
     let listed = first.bullet || numbered.is_some();
     // A wide line that runs to the right margin is an indented first line of justified text, not
@@ -241,8 +248,13 @@ pub(crate) fn paragraph_props(
         let hang = if hang.is_finite() { hang.clamp(12.0, 72.0) } else { 18.0 };
         let left = (x0 - left_margin).max(0.0) + hang;
         p.push_str(&format!("<w:ind w:left=\"{}\" w:hanging=\"{}\"/>", twips(left), twips(hang)));
-    } else if !centred && !right && x0 - left_margin > 6.0 && shaded.is_none() {
-        p.push_str(&format!("<w:ind w:left=\"{}\"/>", twips(x0 - left_margin)));
+    } else if !centred && !right && shaded.is_none() {
+        // The left edge where the page has it, and a first line set in (Thai edition).
+        let left = (x0 - left_margin > 6.0).then(|| format!(" w:left=\"{}\"", twips(x0 - left_margin)));
+        let first_line = (first.indent > 6.0).then(|| format!(" w:firstLine=\"{}\"", twips(first.indent)));
+        if left.is_some() || first_line.is_some() {
+            p.push_str(&format!("<w:ind{}{}/>", left.unwrap_or_default(), first_line.unwrap_or_default()));
+        }
     }
     if centred {
         p.push_str("<w:jc w:val=\"center\"/>");

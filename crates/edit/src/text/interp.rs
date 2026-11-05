@@ -395,10 +395,26 @@ impl Pen {
         Pen { bt: s.bt, dir, across, end, size: s.size.max(1.0), vertical: s.state.vertical.is_some() }
     }
 
+    /// Thai edition: whether `s` opens with blank glyphs set back over what this pen already drew
+    /// (see [`Pen::continues`]): they stand for no space between the two.
+    pub(super) fn set_back(&self, s: &Shown) -> bool {
+        let (_, start, _, _) = s.span();
+        s.text.starts_with(char::is_whitespace) && start < self.end - self.size * 0.1
+    }
+
     /// Whether `s` could continue the same line on geometry alone: on the same baseline, starting
     /// at most a word gap (`reach` sizes) after it. Also the gap along the baseline.
     pub(super) fn continues(&self, s: &Shown, reach: f64) -> (bool, f64) {
         let (dir, start, _, across) = s.span();
+        // Thai edition: a run that opens with blank glyphs set back from where it draws (Word
+        // starts the rest of a line, "ำนาจ" after "เป็นผู้มีอ", with a space at the line's start)
+        // starts, for joining, where its ink does: on an upright baseline, at its first word.
+        let start = match s.ink.first() {
+            Some(ink) if s.text.starts_with(char::is_whitespace) && dir.0 > 0.999 && ink[0].is_finite() => {
+                start.max(to_frame(dir, (ink[0], s.baseline)).0)
+            }
+            _ => start,
+        };
         let gap = start - self.end;
         let same_dir = (dir.0 - self.dir.0).abs() < 1e-3 && (dir.1 - self.dir.1).abs() < 1e-3;
         // A column continues a column (along which the pen moves), a baseline a baseline.

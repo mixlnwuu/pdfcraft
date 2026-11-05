@@ -10696,3 +10696,43 @@ fn exported_text_has_thai_marks_not_presentation_forms() {
     let html = String::from_utf8(d.export_office(compare::OfficeFormat::Html)).unwrap();
     assert!(html.contains("\u{0E14}\u{0E49}") && !html.contains('\u{F70B}'), "{html}");
 }
+
+/// A one-page PDF with `content` in Helvetica (`/F1`), for the export tests below.
+fn helvetica_pdf(content: &str) -> std::sync::Arc<Vec<u8>> {
+    let objects = [
+        "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".into(),
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 400 500] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>".into(),
+        format!("<< /Length {} >>\nstream\n{content}\nendstream", content.len()),
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".into(),
+    ];
+    let mut pdf = b"%PDF-1.7\n".to_vec();
+    let mut offsets = Vec::new();
+    for (i, o) in objects.iter().enumerate() {
+        offsets.push(pdf.len());
+        pdf.extend_from_slice(format!("{} 0 obj\n{o}\nendobj\n", i + 1).as_bytes());
+    }
+    let xref = pdf.len();
+    pdf.extend_from_slice(format!("xref\n0 {}\n0000000000 65535 f \n", objects.len() + 1).as_bytes());
+    for o in offsets {
+        pdf.extend_from_slice(format!("{o:010} 00000 n \n").as_bytes());
+    }
+    pdf.extend_from_slice(format!("trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n", objects.len() + 1).as_bytes());
+    std::sync::Arc::new(pdf)
+}
+
+/// Thai edition: a form's rows that end in a dotted line keep their line breaks in the export,
+/// and a first line Word set in with a wide space is the block's first-line indent.
+#[test]
+fn exported_forms_keep_dotted_rows_and_first_line_indents() {
+    let mut s = Session::new();
+    let rows = s.open("rows.pdf", None, helvetica_pdf("BT /F1 12 Tf 14 TL 80 300 Td (Name ..........) Tj T* (Road ..........) Tj ET"), None).unwrap();
+    let texts: Vec<String> = s.get(rows).unwrap().export_pages()[0].blocks.iter().map(|b| b.text.clone()).collect();
+    assert_eq!(texts, ["Name ..........\nRoad .........."], "the dotted row ends where it did");
+    let indented = s
+        .open("indent.pdf", None, helvetica_pdf("BT /F1 12 Tf 14 TL 80 300 Td [( ) -2250 (Set in first) ] TJ T* (and the next row) Tj ET"), None)
+        .unwrap();
+    let blocks = s.get(indented).unwrap().export_pages()[0].blocks.clone();
+    assert_eq!(blocks.len(), 1, "{blocks:?}");
+    assert!((blocks[0].indent - 30.3).abs() < 1.0, "the first line's indent: {:?}", blocks[0].indent);
+}

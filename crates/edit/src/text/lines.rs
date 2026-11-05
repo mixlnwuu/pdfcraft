@@ -348,6 +348,10 @@ fn text_lines_in(doc: &Document, p: &pdfcraft_model::Page, actual_text: bool) ->
             if spaced {
                 l.text.push(' ');
             }
+            // Blanks set back over the line drawn so far are no space in its text (Thai edition).
+            if last.is_some_and(|(_, pen)| pen.set_back(&s)) {
+                s.text = s.text.trim_start().to_string();
+            }
             let from = l.text.len();
             l.text.push_str(&s.text);
             join_sara_am(&mut l.text, from);
@@ -448,7 +452,7 @@ fn compatible_word(line: &TextLine, shown: &Shown) -> bool {
 
 /// The line `s` continues, or a new one: `last` is the previous run of the same stream
 /// (`bt`, baseline, end x, size).
-fn add_shown(lines: &mut Vec<TextLine>, last: &mut Option<Pen>, s: Shown, stream: usize) {
+fn add_shown(lines: &mut Vec<TextLine>, last: &mut Option<Pen>, mut s: Shown, stream: usize) {
     let joins = last.is_some_and(|pen| {
         let bt = pen.bt;
         lines.last().is_some_and(|l| l.scope == s.scope && l.paint == s.paint && l.logical_order == s.logical_order)
@@ -469,6 +473,10 @@ fn add_shown(lines: &mut Vec<TextLine>, last: &mut Option<Pen>, s: Shown, stream
         let spaced = gap - s.tracking > l.size * s.state.scale.abs() * 0.2 && !l.text.ends_with(' ') && !s.text.starts_with(' ');
         if spaced {
             l.text.push(' ');
+        }
+        // Blanks set back over the line drawn so far are no space in its text (Thai edition).
+        if last.is_some_and(|pen| pen.set_back(&s)) {
+            s.text = s.text.trim_start().to_string();
         }
         let from = l.text.len();
         l.text.push_str(&s.text);

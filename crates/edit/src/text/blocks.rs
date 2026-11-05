@@ -337,6 +337,10 @@ pub struct ReadingBlocks {
     /// is missing from `blocks`; [`crate::reading_images`] walks the same forms and misses
     /// their images too.
     pub truncated: bool,
+    /// Per block, how far (user-space points) its first row's ink starts right of the block's
+    /// left edge (Thai edition): Word's PDFs draw a first-line indent as a wide space, which the
+    /// block's box includes. 0 when the first row starts at the edge.
+    pub indents: Vec<f64>,
 }
 
 /// [`reading_blocks`], saying whether the limits that bound reading left text out. A page
@@ -344,7 +348,16 @@ pub struct ReadingBlocks {
 /// truncated result.
 pub fn reading_blocks_checked(doc: &Document, page: usize) -> Result<ReadingBlocks, EditError> {
     let (lines, truncated) = reading_lines(doc, page)?;
-    Ok(ReadingBlocks { blocks: regions::group_reading_blocks(&lines), truncated })
+    let blocks = regions::group_reading_blocks(&lines);
+    let indents = blocks
+        .iter()
+        .map(|b| {
+            let first = b.rows.first().map(Vec::as_slice).unwrap_or_default();
+            let ink = first.iter().filter_map(|i| lines.get(*i)).flat_map(|l| l.ink.iter()).map(|r| r[0]).filter(|x| x.is_finite()).reduce(f64::min);
+            ink.map_or(0.0, |x| (x - b.rect[0]).max(0.0))
+        })
+        .collect();
+    Ok(ReadingBlocks { blocks, truncated, indents })
 }
 
 // An ideographic space carries intentional Japanese spacing, including paragraph indentation.

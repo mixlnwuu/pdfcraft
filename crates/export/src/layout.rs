@@ -24,6 +24,9 @@ pub struct Block {
     /// An item of a bulleted list, its bullet left out of `text` ([`crate::list_items`], Thai
     /// edition).
     pub bullet: bool,
+    /// How far its first line is set in from the rest (points; Thai edition): Word's PDFs draw a
+    /// paragraph's indent as a wide space, so the block's box starts at the margin.
+    pub indent: f64,
 }
 
 /// An image of a page.

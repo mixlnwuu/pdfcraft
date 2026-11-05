@@ -14,6 +14,7 @@ fn varied_page(n: usize) -> Page {
             space_around: [false; 2],
             font: String::new(),
             bullet: false,
+            indent: 0.0,
         })
         .collect();
     Page { width: 612.0, height: 792.0, blocks, images: Vec::new(), background: None, shapes: Vec::new() }
@@ -55,6 +56,7 @@ fn page() -> Page {
         space_around: [false; 2],
         font: String::new(),
         bullet: false,
+        indent: 0.0,
     };
     Page {
         width: 612.0,
@@ -192,6 +194,7 @@ fn word_overlap_does_not_consume_invoice_body_space() {
         space_around: [false; 2],
         font: String::new(),
         bullet: false,
+        indent: 0.0,
     });
     p.images = page().images;
     let xml = part(&docx(&[p], "Invoice"), "word/document.xml");
@@ -281,6 +284,7 @@ fn word_opens_text_with_control_characters_and_long_pages() {
         space_around: [false; 2],
         font: String::new(),
         bullet: false,
+        indent: 0.0,
     });
     let xml = part(&docx(&[p.clone()], "Receipt\u{1}"), "word/document.xml");
     assert!(xml.contains(">Total 4.50\tGBP</w:t>"), "{xml}");
@@ -337,6 +341,7 @@ fn rtf_escapes_and_sizes() {
         space_around: [false; 2],
         font: String::new(),
         bullet: false,
+        indent: 0.0,
     });
     let r = rtf(&[p]);
     assert!(r.starts_with("{\\rtf1") && r.ends_with('}'));
@@ -357,6 +362,7 @@ fn table_page() -> Page {
         space_around: [false; 2],
         font: String::new(),
         bullet: false,
+        indent: 0.0,
     };
     Page {
         width: 612.0,
@@ -383,6 +389,7 @@ fn table_page() -> Page {
                 space_around: [false; 2],
                 font: String::new(),
                 bullet: false,
+                indent: 0.0,
             },
         ],
         images: Vec::new(),
@@ -447,6 +454,7 @@ fn a_staircase_of_blocks_is_not_a_huge_table() {
                 space_around: [false; 2],
                 font: String::new(),
                 bullet: false,
+                indent: 0.0,
             }
         })
         .collect();
@@ -477,6 +485,7 @@ fn word_opens_tables_up_to_its_column_limit() {
                         space_around: [false; 2],
                         font: String::new(),
                         bullet: false,
+                        indent: 0.0,
                     }
                 })
             })
@@ -503,6 +512,7 @@ fn block(t: &str, x0: f64, y0: f64, x1: f64, y1: f64) -> Block {
         space_around: [false; 2],
         font: String::new(),
         bullet: false,
+        indent: 0.0,
     }
 }
 
@@ -626,6 +636,7 @@ fn two_column_body_text_is_not_mistaken_for_a_table() {
         space_around: [false; 2],
         font: String::new(),
         bullet: false,
+        indent: 0.0,
     };
     let p = Page {
         width: 612.0,
@@ -867,6 +878,7 @@ fn markdown_escapes_markup_and_keeps_emphasis_and_tables() {
         space_around: [false; 2],
         font: String::new(),
         bullet: false,
+        indent: 0.0,
     };
     let p = Page {
         width: 612.0,
@@ -1153,4 +1165,26 @@ fn an_indented_justified_line_is_not_centred() {
     let props = |t: &str| xml.split(t).next().unwrap_or("").rsplit("<w:p>").next().unwrap_or("").to_string();
     assert!(!props("บรรทัดแรกของย่อหน้า").contains("<w:jc w:val=\"center\"/>"), "{xml}");
     assert!(props("หัวเรื่องกลางหน้า").contains("<w:jc w:val=\"center\"/>"), "a title still is: {xml}");
+}
+
+/// Thai edition: a form exported to Word keeps its layout: margins where the page's text is (so a
+/// long line doesn't wrap sooner), lines as far apart as the page sets them with no extra space
+/// after paragraphs, a first line set in, and a form's dotted rows ending where they did.
+#[test]
+fn a_word_form_keeps_its_margins_spacing_indent_and_rows() {
+    let mut p = Page { width: 595.0, height: 842.0, ..Default::default() };
+    p.blocks.push(Block {
+        indent: 36.0, ..block("โดยหนังสือฉบับนี้ ข้าพเจ้า ....... อายุ ....... ปี", 90.0, 680.0, 527.0, 698.0)
+    });
+    let mut form = block("ชื่อ ..........\nถนน ..........", 90.0, 620.0, 527.0, 662.0);
+    form.size = 16.0;
+    p.blocks.push(form);
+    let xml = part(&docx(&[p], "Form"), "word/document.xml");
+    assert!(
+        xml.contains("<w:pgMar w:top=\"2840\" w:right=\"1200\" w:bottom=\"4210\" w:left=\"1760\""),
+        "margins from the text, at most a quarter of the page: {xml}"
+    );
+    assert!(xml.contains("w:firstLine=\"720\""), "the first line set in: {xml}");
+    assert!(xml.contains("w:after=\"0\" w:line=") && xml.contains("w:lineRule=\"exact\""), "the page's line spacing: {xml}");
+    assert!(xml.contains("ชื่อ ..........</w:t><w:br/><w:t xml:space=\"preserve\">ถนน"), "the dotted row ends where it did: {xml}");
 }

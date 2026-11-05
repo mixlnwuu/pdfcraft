@@ -241,11 +241,20 @@ impl crate::Document {
                 let dots: Vec<[f64; 4]> = shapes.iter().filter(|s| s.dot).map(|s| s.rect).collect();
                 let reading = pdfcraft_edit::reading_blocks_checked(cos, i).unwrap_or_default();
                 let forms_unread = reading.truncated;
+                let indents = reading.indents;
                 let blocks = reading
                     .blocks
                     .into_iter()
-                    .filter(|b| !b.text.trim().is_empty())
-                    .flat_map(|b| {
+                    .enumerate()
+                    .filter(|(_, b)| !b.text.trim().is_empty())
+                    .flat_map(|(k, b)| {
+                        // Thai edition: a first line set in (Word draws the indent as a space), on an
+                        // upright page and baseline.
+                        let indent = indents
+                            .get(k)
+                            .copied()
+                            .filter(|v| v.is_finite() && *v > 1.0 && info.rotation % 360 == 0 && b.rotation.abs() < 0.1)
+                            .map_or(0.0, |v| v * unit);
                         let f = b.base_font.to_ascii_lowercase();
                         // `text` is trimmed; the editor text keeps the source's own spaces.
                         let space_around = [b.editor_text.starts_with(char::is_whitespace), b.editor_text.ends_with(char::is_whitespace)];
@@ -253,9 +262,24 @@ impl crate::Document {
                         // U+F70B) as the Thai they are, which every reader's font can show.
                         let thai = |t: &str| pdfcraft_fonts::thai_text::from_presentation_forms(t).into_owned();
                         let rows: Vec<String> = b.editor_text.split('\n').map(thai).collect();
+                        // A form's rows that end in a dotted line to write on end there in Word too
+                        // (Thai edition): run together, Word wraps them elsewhere ("ถนน" pulled up).
+                        let leader = |r: &str| r.trim_end().ends_with("...") || r.trim_end().ends_with('\u{2026}');
+                        let text = if rows.len() > 1 && rows.iter().take(rows.len() - 1).any(|r| leader(r)) {
+                            let mut text = String::new();
+                            for (k, r) in rows.iter().map(|r| r.trim()).enumerate() {
+                                if k > 0 {
+                                    text.push(if rows.get(k - 1).is_some_and(|p| leader(p)) { '\n' } else { ' ' });
+                                }
+                                text.push_str(r);
+                            }
+                            text
+                        } else {
+                            thai(&b.text)
+                        };
                         let block = pdfcraft_export::Block {
                             space_around,
-                            text: thai(&b.text),
+                            text,
                             rect: visible_rect(b.rect),
                             size: b.size * unit,
                             bold: f.contains("bold") || f.contains("black") || f.contains("heavy"),
@@ -264,6 +288,7 @@ impl crate::Document {
                             rotation: b.rotation - f64::from(info.rotation),
                             font: b.base_font,
                             bullet: false,
+                            indent,
                         };
                         // A paragraph with a bullet before its lines is a list, one item each; lines
                         // set centred stay lines of their own (Thai edition).

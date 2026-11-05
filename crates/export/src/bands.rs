@@ -185,6 +185,7 @@ mod tests {
             space_around: [false; 2],
             font: String::new(),
             bullet: false,
+            indent: 0.0,
         }
     }
 

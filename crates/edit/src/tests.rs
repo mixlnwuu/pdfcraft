@@ -11366,3 +11366,15 @@ fn an_added_copy_on_a_word_page_arranges_to_back_and_front() {
     let images = images::page_images(&doc, 0).unwrap();
     assert!(images.iter().any(|im| im.rect == [200.0, 300.0, 300.0, 400.0]));
 }
+
+/// Thai edition: Word sets the rest of a line ("ำนาจ" after "เป็นผู้มีอ") as a run that opens
+/// with a space back at the line's start. The run continues the line where its ink starts, and
+/// that set-back space is no space in the text: "abc" + "def" reads "abcdef", one line.
+#[test]
+fn a_run_opening_with_a_set_back_space_continues_the_line() {
+    let content = "BT /F1 12 Tf 80 300 Td (abc) Tj ET BT /F1 12 Tf 80 300 Td [( ) -1453 (def)] TJ ET";
+    let doc = image_page_with(content);
+    let lines = crate::text_lines(&doc, 0).unwrap();
+    let texts: Vec<&str> = lines.iter().map(|l| l.text.as_str()).collect();
+    assert_eq!(texts, ["abcdef"], "one line, no space in it: {:?}", lines.iter().map(|l| l.rect).collect::<Vec<_>>());
+}

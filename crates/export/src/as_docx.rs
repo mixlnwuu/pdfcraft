@@ -49,7 +49,9 @@ fn run_xml(text: &str, look: Look<'_>) -> String {
     if text.chars().any(|c| ('\u{0E00}'..='\u{0E7F}').contains(&c)) {
         rpr.push_str("<w:lang w:bidi=\"th-TH\"/>");
     }
-    format!("<w:r><w:rPr>{rpr}</w:rPr><w:t xml:space=\"preserve\">{}</w:t></w:r>", esc(text))
+    // A line the page breaks (Thai edition: a form's dotted line) breaks in Word too.
+    let body = text.split('\n').map(esc).collect::<Vec<_>>().join("</w:t><w:br/><w:t xml:space=\"preserve\">");
+    format!("<w:r><w:rPr>{rpr}</w:rPr><w:t xml:space=\"preserve\">{body}</w:t></w:r>")
 }
 
 /// One Word table: explicit absent borders (alignment alone cannot prove PDF rules), a grid sized
@@ -261,13 +263,44 @@ fn word_page_size(page: &Page) -> (i64, i64) {
     (twips(page.width), twips(page.height))
 }
 
+/// A flowing page's margins in twips, `[left, right, top, bottom]` (Thai edition): where the page's
+/// text and pictures are, so Word's lines are as long as the page's and wrap where they did,
+/// with a little room on the right for Word's own measure of the same font. A page with nothing
+/// on it keeps the default, an eighth of the page and at most an inch.
+pub(crate) fn word_margins(page: &Page) -> [i64; 4] {
+    let (pw, ph) = word_page_size(page);
+    let (dx, dy) = ((pw / 8).min(1440), (ph / 8).min(1440));
+    let boxes = page.blocks.iter().filter(|b| b.rotation.abs() < 0.1).map(|b| b.rect).chain(page.images.iter().map(|im| im.rect));
+    let extent = boxes
+        .filter(|r| r.iter().all(|v| v.is_finite()) && r[2] > r[0] && r[3] > r[1])
+        .reduce(|a, b| [a[0].min(b[0]), a[1].min(b[1]), a[2].max(b[2]), a[3].max(b[3])]);
+    // Content past the page's edges says nothing of its margins.
+    let Some([x0, y0, x1, y1]) = extent.filter(|r| r[0] >= 0.0 && r[1] >= 0.0 && r[2] <= page.width && r[3] <= page.height) else {
+        return [dx, dx, dy, dy];
+    };
+    // At least a quarter inch (less on a page whose default is less), at most a quarter of the
+    // page or the default.
+    let clamp = |pt: f64, default: i64, side: f64| -> i64 {
+        let most = (side * 20.0 * 0.25).max(default as f64);
+        let least = (default as f64).min(360.0);
+        if pt.is_finite() { (pt * 20.0).round().clamp(least, most) as i64 } else { default }
+    };
+    [
+        clamp(x0 - 2.0, dx, page.width),
+        clamp(page.width - x1 - 8.0, dx, page.width),
+        clamp(page.height - y1 - 2.0, dy, page.height),
+        clamp(y0 - 2.0, dy, page.height),
+    ]
+}
+
 fn section(page: &Page, bands: &Bands<'_>) -> String {
     let (pw, ph) = word_page_size(page);
-    let (mx, my) = ((pw / 8).min(1440), (ph / 8).min(1440));
+    let [ml, mr, mt, mb] =
+        if positioned(page) { [(pw / 8).min(1440), (pw / 8).min(1440), (ph / 8).min(1440), (ph / 8).min(1440)] } else { word_margins(page) };
     // The header and footer sit where the page has them (Thai edition), within the margins.
     let twips = |pt: f64| if pt.is_finite() { (pt * 20.0).round().clamp(0.0, 31680.0) as i64 } else { 0 };
-    let header_at = bands.header.first().map_or(my / 2, |b| twips(page.height - b.rect[3]).min(my));
-    let footer_at = bands.footer.last().map_or(my / 2, |b| twips(b.rect[1]).min(my));
+    let header_at = bands.header.first().map_or(mt / 2, |b| twips(page.height - b.rect[3]).min(mt));
+    let footer_at = bands.footer.last().map_or(mb / 2, |b| twips(b.rect[1]).min(mb));
     let mut refs = String::new();
     if !bands.header.is_empty() {
         refs.push_str("<w:headerReference w:type=\"default\" r:id=\"rIdHeader\"/>");
@@ -276,7 +309,7 @@ fn section(page: &Page, bands: &Bands<'_>) -> String {
         refs.push_str("<w:footerReference w:type=\"default\" r:id=\"rIdFooter\"/>");
     }
     format!(
-        "<w:sectPr>{refs}<w:type w:val=\"nextPage\"/><w:pgSz w:w=\"{pw}\" w:h=\"{ph}\"/><w:pgMar w:top=\"{my}\" w:right=\"{mx}\" w:bottom=\"{my}\" w:left=\"{mx}\" w:header=\"{header_at}\" w:footer=\"{footer_at}\" w:gutter=\"0\"/></w:sectPr>"
+        "<w:sectPr>{refs}<w:type w:val=\"nextPage\"/><w:pgSz w:w=\"{pw}\" w:h=\"{ph}\"/><w:pgMar w:top=\"{mt}\" w:right=\"{mr}\" w:bottom=\"{mb}\" w:left=\"{ml}\" w:header=\"{header_at}\" w:footer=\"{footer_at}\" w:gutter=\"0\"/></w:sectPr>"
     )
 }
 
@@ -438,7 +471,8 @@ pub fn docx(pages: &[Page], title: &str) -> Vec<u8> {
     let mut numbering = super::docx_flow::Numbering::default();
     for (page_index, page) in pages.iter().enumerate() {
         let (pw, _) = word_page_size(page);
-        let text_w = (pw - 2 * (pw / 8).min(1440)) as f64 / 20.0;
+        let [ml, mr, mt, _] = word_margins(page);
+        let text_w = (pw - ml - mr).max(1) as f64 / 20.0;
         let skip = bands.skip.get(page_index).map(Vec::as_slice).unwrap_or_default();
         if positioned(page) {
             body.push_str(&positioned_page(page, skip, &mut media, &mut shape_id));
@@ -447,8 +481,7 @@ pub fn docx(pages: &[Page], title: &str) -> Vec<u8> {
             let items = page_items(page, skip, body_size(std::slice::from_ref(page)));
             // What the page draws that the flow keeps: shaded boxes and lines of their own, and
             // where each item sits, for the space above it (Thai edition).
-            let (_, ph) = word_page_size(page);
-            let margin = [f64::from((pw / 8).min(1440) as i32) / 20.0, f64::from((ph / 8).min(1440) as i32) / 20.0];
+            let margin = [ml as f64 / 20.0, mt as f64 / 20.0];
             let table_rects: Vec<[f64; 4]> = items.iter().filter_map(|it| if let Item::Table(t) = it { Some(t.rect) } else { None }).collect();
             let look = super::docx_flow::page_look(page, margin, &table_rects);
             let mut lines = look.lines.iter().peekable();

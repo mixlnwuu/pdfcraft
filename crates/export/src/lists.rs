@@ -65,7 +65,7 @@ pub fn list_items(b: Block, rows: &[String], dots: &[[f64; 4]]) -> Vec<Block> {
     let finish = |item: Option<(Vec<String>, usize, bool)>, end: usize, out: &mut Vec<Block>| {
         if let Some((texts, first, bullet)) = item {
             let rect = [b.rect[0], row_top(end), b.rect[2], row_top(first)];
-            out.push(Block { text: texts.join(" "), rect, bullet, space_around: [false; 2], ..b.clone() });
+            out.push(Block { text: texts.join(" "), rect, bullet, space_around: [false; 2], indent: 0.0, ..b.clone() });
         }
     };
     for (i, row) in rows.iter().enumerate() {
@@ -95,6 +95,9 @@ pub fn centred_lines(b: Block, rows: &[String], page_width: f64) -> Vec<Block> {
         && page_width > 0.0
         && ((x0 + x1) / 2.0 - page_width / 2.0).abs() <= page_width * 0.04
         && x0 > page_width * 0.15
+        // Narrow, as a name or a heading is: a paragraph across the page whose middle happens to
+        // fall near the page's is no centred block.
+        && x1 - x0 < page_width * 0.6
         && b.rotation.abs() <= 0.1
         && !b.bullet;
     if rows.len() < 2 || !centred || !height.is_finite() || height <= 0.0 {
@@ -105,7 +108,7 @@ pub fn centred_lines(b: Block, rows: &[String], page_width: f64) -> Vec<Block> {
         .enumerate()
         .map(|(i, row)| {
             let top = b.rect[3] - row_h * i as f64;
-            Block { text: (*row).to_string(), rect: [x0, top - row_h, x1, top], space_around: [false; 2], ..b.clone() }
+            Block { text: (*row).to_string(), rect: [x0, top - row_h, x1, top], space_around: [false; 2], indent: 0.0, ..b.clone() }
         })
         .collect()
 }
@@ -154,6 +157,7 @@ mod tests {
             space_around: [false; 2],
             font: String::new(),
             bullet: false,
+            indent: 0.0,
         }
     }
 
@@ -200,6 +204,8 @@ mod tests {
         assert!(lines[0].rect[1] >= lines[1].rect[3] - 0.01, "top line first: {lines:?}");
         let body = Block { rect: [72.0, 382.0, 523.0, 414.0], ..para(2) };
         assert_eq!(centred_lines(body, &rows(&["a long line that wraps", "on to the next"]), 595.0).len(), 1, "full width");
+        let wide = Block { rect: [90.0, 576.0, 527.0, 659.0], ..para(4) };
+        assert_eq!(centred_lines(wide, &rows(&["a", "b", "c", "d"]), 595.0).len(), 1, "a paragraph across the page, its middle near the page's");
         let left = Block { rect: [100.0, 382.0, 200.0, 414.0], ..para(2) };
         assert_eq!(centred_lines(left, &rows(&["Name", "Title"]), 595.0).len(), 1, "not centred");
         assert_eq!(centred_lines(Block { rect: [215.0, 382.0, 380.0, 414.0], ..para(1) }, &rows(&["One"]), 595.0).len(), 1);
