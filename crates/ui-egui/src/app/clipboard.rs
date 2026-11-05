@@ -155,7 +155,7 @@ impl PdfCraftApp {
     }
 
     /// ⌘C on the page: what the tools have selected, then the selected text (Thai edition).
-    fn copy_on_canvas(&mut self, i: usize, ctx: &egui::Context) -> bool {
+    pub(crate) fn copy_on_canvas(&mut self, i: usize, ctx: &egui::Context) -> bool {
         let Some(id) = self.views.get(i).map(|v| v.id) else { return false };
         // With Add text or Edit text & images, what those tools selected is copied: a comment
         // selected before switching to them stays selected, and must not be copied instead
@@ -321,6 +321,17 @@ impl PdfCraftApp {
         (target.kind == pdfcraft_engine::ObjectKind::Image).then_some((page, target.index))
     }
 
+    /// Whether objects copied together are what the clipboard holds (Thai edition): the system
+    /// clipboard still has the text put there for them, or, without one, they were copied last.
+    pub(crate) fn objects_on_clipboard(&self) -> bool {
+        let Some(clip) = &self.multi_clip else { return false };
+        #[cfg(not(target_arch = "wasm32"))]
+        if self.system_clipboard {
+            return crate::os_clipboard::with(|c| c.get_text()).is_ok_and(|t| t.replace("\r\n", "\n").trim() == clip.marker.trim());
+        }
+        true
+    }
+
     /// The text put on the clipboard for objects copied together, while they are held to paste
     /// (Thai edition).
     pub fn multi_clip_marker(&self) -> Option<String> {
@@ -395,7 +406,7 @@ impl PdfCraftApp {
     /// how they lay together, a step down and right of the last paste on their own page, where
     /// they were on another; one undo step, and the pasted objects selected. Pictures paste only
     /// into the document they came from (as their own image objects); text boxes anywhere.
-    fn paste_objects(&mut self, i: usize) {
+    pub(crate) fn paste_objects(&mut self, i: usize) {
         use crate::state::MultiItem;
         use pdfcraft_engine::Edit;
         if !self.editing_content() {

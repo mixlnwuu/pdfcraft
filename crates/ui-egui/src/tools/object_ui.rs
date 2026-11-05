@@ -866,16 +866,121 @@ fn merged_text(mut pieces: Vec<pdfcraft_engine::AddedText>) -> Option<pdfcraft_e
     (rect.iter().all(|v| v.is_finite()) && !text.trim().is_empty()).then_some(pdfcraft_engine::AddedText { text, rect, ..first })
 }
 
-/// Merge text boxes in the page's right-click menu (Thai edition), when the selection can be
-/// merged: `true` when it was shown.
-pub(crate) fn merge_menu(ui: &mut egui::Ui, view: &mut DocView, doc: &Document, allowed: bool) -> bool {
-    if view.line_editor.is_some() {
+/// Split into lines (Thai edition): the one text box or paragraph selected, of two lines or more,
+/// becomes a text box per line, each where its line is, in the same look; one undo step. A
+/// paragraph of the page splits by the rows it shows (a first line set in keeps its place); an
+/// added box by the lines it was typed in. The edit, and the boxes expected afterwards (to select
+/// them).
+pub(crate) fn split_edit(view: &DocView, doc: &Document) -> Option<(Edit, usize, Vec<EditableObject>)> {
+    // The one object selected: among the objects, an added item selected with a click, or the
+    // paragraph whose frame is up (unchanged).
+    let (page, target) = view
+        .objects
+        .single_selected()
+        .or_else(|| {
+            view.content.selected.filter(|_| view.content.draft.is_none()).map(|(p, i)| (p, ObjectTarget { kind: ObjectKind::Added, index: i }))
+        })
+        .or_else(|| {
+            view.line_editor.as_ref().filter(|e| !e.has_changes()).map(|e| (e.page, ObjectTarget { kind: ObjectKind::Text, index: e.block }))
+        })?;
+    let xf = view.page_xform(page)?;
+    let info = &doc.info;
+    let mut boxes: Vec<pdfcraft_engine::AddedText> = Vec::new();
+    match target.kind {
+        ObjectKind::Text => {
+            let block = doc.text_blocks(page).get(target.index)?.clone();
+            let lines = doc.text_lines(page);
+            let texts: Vec<&str> = block.editor_text.split('\n').collect();
+            if block.rows.len() < 2 || texts.len() != block.rows.len() {
+                return None;
+            }
+            for (row, text) in block.rows.iter().zip(texts) {
+                if text.trim().is_empty() {
+                    continue;
+                }
+                let rect = row
+                    .iter()
+                    .filter_map(|i| lines.get(*i))
+                    .map(|l| l.rect)
+                    .reduce(|a, b| [a[0].min(b[0]), a[1].min(b[1]), a[2].max(b[2]), a[3].max(b[3])])?;
+                let one = pdfcraft_engine::TextBlock { rect, editor_text: text.to_string(), text: text.to_string(), ..block.clone() };
+                boxes.push(crate::edit_text_ui::paragraph_as_added(&xf, info, page, &one)?);
+            }
+        }
+        ObjectKind::Added => {
+            let added = doc.added().iter().filter(|a| a.page == page).nth(target.index)?;
+            let pdfcraft_engine::AddedContent::Text(t) = &added.content else { return None };
+            let rows: Vec<&str> = t.text.split('\n').collect();
+            if rows.len() < 2 {
+                return None;
+            }
+            let row_h = (t.rect[3] - t.rect[1]) / rows.len() as f64;
+            for (i, row) in rows.iter().enumerate() {
+                if row.trim().is_empty() {
+                    continue;
+                }
+                let top = t.rect[3] - row_h * i as f64;
+                boxes.push(pdfcraft_engine::AddedText { text: (*row).to_string(), rect: [t.rect[0], top - row_h, t.rect[2], top], ..t.clone() });
+            }
+        }
+        ObjectKind::Image => return None,
+    }
+    if boxes.len() < 2 || boxes.iter().any(|b| !b.rect.iter().all(|v| v.is_finite())) {
+        return None;
+    }
+    let width = f64::from(info.pages.get(page)?.width);
+    let mut edits = delete_edits(page, vec![target]);
+    let mut expected = Vec::with_capacity(boxes.len());
+    for b in boxes {
+        let b = pdfcraft_engine::fitted_text(&b, width);
+        // Display space is user space flipped on an upright page; near enough to find each again.
+        expected.push(EditableObject {
+            target: ObjectTarget { kind: ObjectKind::Added, index: 0 },
+            rect: [b.rect[0], b.rect[1], b.rect[2], b.rect[3]],
+            content_type: "text",
+            text: Some(b.text.clone()),
+        });
+        edits.push(Edit::AddText { page, text: b });
+    }
+    Some((Edit::Batch { label: "Split into lines".into(), edits }, page, expected))
+}
+
+/// Split into lines in the page's right-click menu, for the one text box or paragraph selected
+/// (Thai edition): `true` when it was shown.
+pub(crate) fn split_menu(ui: &mut egui::Ui, view: &mut DocView, doc: &Document, allowed: bool) -> bool {
+    if view.line_editor.as_ref().is_some_and(|e| e.has_changes()) || view.objects.count() > 1 {
         return false;
     }
-    let Some((edit, page, index)) = merge_edit(view, doc) else { return false };
-    if ui.add_enabled(allowed, egui::Button::new(tl!("Merge text boxes"))).clicked() {
+    let Some((edit, page, expected)) = split_edit(view, doc) else { return false };
+    if ui.add_enabled(allowed, egui::Button::new(tl!("Split into lines"))).clicked() {
+        view.pending_edit = Some(edit);
+        view.line_editor = None;
+        (view.content.selected, view.content.menu) = (None, None);
+        view.objects.select_after_paste(page, expected);
+        ui.close();
+    }
+    ui.separator();
+    true
+}
+
+/// What the page's right-click menu offers for several objects selected together (Thai edition):
+/// Merge text boxes, when they can be merged, and Delete. `true` when something was shown.
+pub(crate) fn selection_menu(ui: &mut egui::Ui, view: &mut DocView, doc: &Document, allowed: bool) -> bool {
+    if view.line_editor.is_some() || view.objects.count() < 2 {
+        return false;
+    }
+    if let Some((edit, page, index)) = merge_edit(view, doc)
+        && ui.add_enabled(allowed, egui::Button::new(tl!("Merge text boxes"))).clicked()
+    {
         view.pending_edit = Some(edit);
         view.content.select_added = Some((page, index));
+        ui.close();
+    }
+    let delete = egui::Button::new(tl!("Delete")).shortcut_text(crate::i18n::key_name("Delete"));
+    if ui.add_enabled(allowed, delete).clicked()
+        && let Some(page) = view.objects.page
+    {
+        view.pending_edit = delete_edit(page, view.objects.selected.iter().map(|o| o.target).collect());
         ui.close();
     }
     ui.separator();

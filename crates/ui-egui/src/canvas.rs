@@ -2817,6 +2817,10 @@ fn draw_pages(
             ui.close();
             return;
         }
+        // A text box or paragraph of several lines: Split into lines (Thai edition).
+        if tool == QuickTool::EditText {
+            crate::object_ui::split_menu(ui, view, doc, can_modify);
+        }
         // An added text box or image right-clicked: Arrange and Delete (Thai edition).
         if crate::content_ui::page_menu(ui, view, doc) {
             return;
@@ -2824,8 +2828,8 @@ fn draw_pages(
         // A paragraph of the page's text selected in Edit text & images: Arrange (Thai edition).
         if tool == QuickTool::EditText {
             crate::object_ui::arrange_menu(ui, view, can_modify);
-            // Several text boxes selected: Merge text boxes (Thai edition).
-            crate::object_ui::merge_menu(ui, view, doc, can_modify);
+            // Several objects selected: Merge text boxes and Delete (Thai edition).
+            crate::object_ui::selection_menu(ui, view, doc, can_modify);
         }
         // Preparing a form: the selected field's menu.
         if preparing && let Some((name, wi)) = view.prepare.selected.clone() {
@@ -2959,7 +2963,9 @@ fn draw_pages(
             canvas_action = copy_image;
         }
         let (page, at) = view.comments.context_at.unwrap_or((view.current, [0.0, 0.0]));
-        let can_copy_items = can_copy && (view.image_selection.is_some() || view.selected_text().is_some() || has_copy_image);
+        // Several objects selected in Edit text & images copy together too (Thai edition).
+        let several = tool == QuickTool::EditText && view.objects.count() >= 2;
+        let can_copy_items = can_copy && (view.image_selection.is_some() || view.selected_text().is_some() || has_copy_image || several);
         let can_paste = can_paste_image && can_modify;
         let perms = PageMenuPerms {
             can_modify,
@@ -3763,7 +3769,8 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
     let t = Tokens::get(ui.ctx());
     let can_paste_key = egui::Id::unique("can-paste-image");
     let can_paste_image = if ui.input(|i| i.pointer.secondary_pressed()) {
-        let can = app.can_paste_image();
+        // Objects copied together paste from the page's menu too (Thai edition).
+        let can = app.can_paste_image() || app.objects_on_clipboard();
         ui.data_mut(|d| d.insert_temp(can_paste_key, can));
         can
     } else {
@@ -4285,7 +4292,10 @@ fn apply_frame_requests(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui, 
     }
     match page_action {
         Some(PageMenuAction::Copy) => {
-            if let Some(sel) = app.views[index].image_selection.clone() {
+            if app.quick_tool == QuickTool::EditText && app.views[index].objects.count() >= 2 {
+                // Several objects selected together: all of them (Thai edition).
+                app.copy_on_canvas(index, ui.ctx());
+            } else if let Some(sel) = app.views[index].image_selection.clone() {
                 app.copy_page_image(sel.page, sel.index);
             } else if app.views[index].selected_text().is_some() {
                 app.execute("edit.copy");
@@ -4297,7 +4307,13 @@ fn apply_frame_requests(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui, 
             }
         }
         Some(PageMenuAction::Paste(page, at)) => {
-            app.paste_image_at(page, at);
+            // Objects copied together, while the clipboard still holds them (Thai edition).
+            if app.objects_on_clipboard() {
+                app.views[index].current = page;
+                app.paste_objects(index);
+            } else {
+                app.paste_image_at(page, at);
+            }
         }
         Some(PageMenuAction::RotateCCW) => {
             app.views[index].rotate_view(false);

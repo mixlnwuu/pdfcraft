@@ -642,3 +642,149 @@ fn several_selected_objects_copy_and_paste_together() {
     crate::support::settle(&mut h);
     assert_eq!(added_texts(&h).len(), notes);
 }
+
+fn right_click(h: &mut Harness<'static, PdfCraftApp>, p: Pos2) {
+    h.event(egui::Event::PointerButton { pos: p, button: egui::PointerButton::Secondary, pressed: true, modifiers: Modifiers::NONE });
+    h.event(egui::Event::PointerButton { pos: p, button: egui::PointerButton::Secondary, pressed: false, modifiers: Modifiers::NONE });
+    h.run_steps(3);
+}
+
+/// Two added boxes, selected together, for the menu tests: where each one's middle is on screen.
+fn two_boxes_selected(h: &mut Harness<'static, PdfCraftApp>) -> (Pos2, Pos2) {
+    for (text, rect) in [("one", [60.0, 300.0, 90.0, 314.0]), ("two", [100.0, 300.0, 130.0, 314.0])] {
+        let t = AddedText { text: text.into(), rect, size: 12.0, ..Default::default() };
+        assert!(h.state_mut().apply_edit(Edit::AddText { page: 0, text: t }));
+    }
+    crate::support::settle(h);
+    let (a, b) = (at(h, 75.0, 193.0), at(h, 115.0, 193.0));
+    click(h, a, Modifiers::NONE);
+    click(h, b, Modifiers::SHIFT);
+    h.get_by_label("2 objects selected");
+    (a, b)
+}
+
+/// Thai edition: several objects selected together are deleted from the page's right-click menu
+/// too, in one step.
+#[test]
+fn the_right_click_menu_deletes_a_selection() {
+    let mut h = harness();
+    let id = h.state().views[0].id;
+    let before = added_texts(&h).len();
+    let (a, _) = two_boxes_selected(&mut h);
+    right_click(&mut h, a);
+    h.get_by_label("Delete Delete").click();
+    crate::support::settle(&mut h);
+    let after = added_texts(&h);
+    assert_eq!(after.len(), before, "both gone: {after:?}");
+    assert_eq!(h.state().session.get(id).unwrap().can_undo(), Some("Delete content"));
+}
+
+/// Thai edition: Copy and Paste in the page's right-click menu copy and paste several selected
+/// objects together, as Ctrl+C and Ctrl+V do.
+#[test]
+fn the_right_click_menu_copies_and_pastes_a_selection() {
+    let mut h = harness();
+    h.state_mut().system_clipboard = false;
+    let before = added_texts(&h).len();
+    let (a, _) = two_boxes_selected(&mut h);
+    right_click(&mut h, a);
+    h.get_by_label("Copy Ctrl+C").click();
+    h.run_steps(3);
+    assert!(h.state().multi_clip_marker().is_some(), "both copied");
+    let empty = at(&h, 300.0, 250.0);
+    right_click(&mut h, empty);
+    h.get_by_label("Paste Ctrl+V").click();
+    crate::support::settle(&mut h);
+    let after = added_texts(&h);
+    assert_eq!(after.len(), before + 4, "both pasted: {after:?}");
+    assert!(after.iter().any(|(t, r)| t == "one" && (r[0] - 72.0).abs() < 0.01), "a step right of where it was: {after:?}");
+}
+
+/// Thai edition: Edit text & images is a row of the Edit PDF panel again, for whoever doesn't use
+/// Ctrl+E or the floating toolbar.
+#[test]
+fn edit_text_and_images_is_a_row_of_the_edit_panel() {
+    let mut h = harness();
+    h.state_mut().quick_tool = pdfcraft_ui_egui::QuickTool::Select;
+    h.run_steps(3);
+    h.get_by_label("Edit text & images").click();
+    h.run_steps(3);
+    assert_eq!(h.state().quick_tool, pdfcraft_ui_egui::QuickTool::EditText);
+}
+
+/// Thai edition: an added text box of three lines splits into a box per line from the page's
+/// right-click menu, each where its line was, in one undo step.
+#[test]
+fn an_added_box_splits_into_its_lines() {
+    let mut h = harness();
+    let id = h.state().views[0].id;
+    let t = AddedText { text: "one\ntwo\nthree".into(), rect: [60.0, 260.0, 140.0, 314.0], size: 12.0, ..Default::default() };
+    assert!(h.state_mut().apply_edit(Edit::AddText { page: 0, text: t }));
+    crate::support::settle(&mut h);
+    let before = added_texts(&h).len();
+    let r = added_texts(&h).into_iter().find(|(t, _)| t.starts_with("one")).unwrap().1;
+    let p = at(&h, 80.0, (500.0 - r[3] + 6.0) as f32);
+    click(&mut h, p, Modifiers::NONE);
+    right_click(&mut h, p);
+    h.get_by_label("Split into lines").click();
+    crate::support::settle(&mut h);
+    let after = added_texts(&h);
+    assert_eq!(after.len(), before + 2, "{after:?}");
+    let tops: Vec<f64> = ["one", "two", "three"].iter().map(|w| after.iter().find(|(t, _)| t == w).expect(w).1[3]).collect();
+    assert!(tops[0] > tops[1] && tops[1] > tops[2], "top to bottom where they were: {tops:?}");
+    assert!((tops[0] - r[3]).abs() < 0.5, "the first line keeps its top");
+    assert_eq!(h.state().session.get(id).unwrap().can_undo(), Some("Split into lines"));
+}
+
+/// Thai edition: a paragraph of the page splits by the rows it shows, each row's box where the
+/// row is.
+#[test]
+fn a_page_paragraph_splits_by_its_rows() {
+    let content = "BT /F1 12 Tf 14 TL 80 300 Td (Row one here) Tj T* (Row two here) Tj T* (Row three here) Tj ET";
+    let stream = format!("<< /Length {} >>\nstream\n{content}\nendstream", content.len());
+    let objects = [
+        "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".into(),
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 400 500] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>".into(),
+        stream,
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".into(),
+    ];
+    let mut pdf = b"%PDF-1.7\n".to_vec();
+    let mut offsets = Vec::new();
+    for (i, o) in objects.iter().enumerate() {
+        offsets.push(pdf.len());
+        pdf.extend_from_slice(format!("{} 0 obj\n{o}\nendobj\n", i + 1).as_bytes());
+    }
+    let xref = pdf.len();
+    pdf.extend_from_slice(format!("xref\n0 {}\n0000000000 65535 f \n", objects.len() + 1).as_bytes());
+    for o in offsets {
+        pdf.extend_from_slice(format!("{o:010} 00000 n \n").as_bytes());
+    }
+    pdf.extend_from_slice(format!("trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n", objects.len() + 1).as_bytes());
+    let mut h = Harness::builder().with_size(egui::vec2(1400.0, 900.0)).build_eframe(move |_cc| {
+        let mut app = PdfCraftApp::new();
+        app.set_option("language", "en").unwrap();
+        app.open_bytes("rows.pdf", None, pdf.clone()).unwrap();
+        app.set_option("zoom", "100").unwrap();
+        assert!(app.execute("edit.edit_text"));
+        app
+    });
+    crate::support::settle(&mut h);
+    let block = objects_of(&h).into_iter().find(|o| o.text.as_deref().is_some_and(|t| t.contains("Row one"))).expect("one paragraph");
+    let p = at(&h, 120.0, 500.0 - 304.0);
+    click(&mut h, p, Modifiers::NONE);
+    right_click(&mut h, p);
+    h.get_by_label("Split into lines").click();
+    crate::support::settle(&mut h);
+    let after = added_texts(&h);
+    assert_eq!(after.len(), 3, "a box per row: {after:?}");
+    let tops: Vec<f64> =
+        ["Row one here", "Row two here", "Row three here"].iter().map(|w| after.iter().find(|(t, _)| t == w).expect(w).1[3]).collect();
+    assert!(tops[0] > tops[1] && tops[1] > tops[2], "each where its row was: {tops:?}");
+    assert!(after.iter().all(|(_, r)| (r[0] - 80.0).abs() < 1.0), "at the paragraph's left: {after:?}");
+    assert!(objects_of(&h).iter().all(|o| o.target.kind != pdfcraft_engine::ObjectKind::Text), "the paragraph left the page's text: {block:?}");
+}
+
+fn objects_of(h: &Harness<'static, PdfCraftApp>) -> Vec<EditableObject> {
+    objects(h)
+}

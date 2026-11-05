@@ -17,7 +17,8 @@ const EDIT_OTHER_TOOLS: [&str; 3] = ["combine", "redact", "form"];
 /// Edit a PDF, laid out as Acrobat's Edit panel: the title with Preferences and Close; Format text
 /// while text is being edited or added; Modify page as a row of icon buttons and Organize pages;
 /// Add content with the rarer items under More; and Other options, the neighbouring tools.
-/// Edit text & images itself is on the floating toolbar, and on from the moment Edit opens.
+/// Edit text & images itself is on the floating toolbar, and on from the moment Edit opens (Thai
+/// edition: and a row of its own at the top of Modify page).
 /// Every item comes from the catalogue, so its label, icon and availability have one source.
 pub(super) fn edit_panel(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens, g: &'static ToolGroup) {
     let items = || g.sections.iter().flat_map(|s| s.items.iter());
@@ -58,6 +59,17 @@ pub(super) fn edit_panel(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens, g
     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
         super::tools::clear_of_scrollbar(ui);
         widgets::section_title(ui, tl!("Modify page"));
+        // Thai edition: Edit text & images as a row too, for whoever doesn't use its shortcut
+        // (Ctrl+E) or the floating toolbar.
+        if let Some(i) = item("edit.edit_text") {
+            let resp = edit_row(ui, t, i.icon, tl!(i.label), i.availability);
+            let keys = crate::commands::command_shortcut_label(ui.ctx(), i.command);
+            let resp = if keys.is_empty() { resp } else { resp.tip(format!("{} ({keys})", tl!(i.label))) };
+            if resp.clicked() && app.quick_tool != crate::QuickTool::EditText {
+                run = Some(i.command);
+            }
+            ui.add_space(2.0);
+        }
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
             for i in EDIT_PAGE_BUTTONS.iter().filter_map(|c| item(c)) {
