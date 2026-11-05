@@ -14,20 +14,40 @@ pub(crate) fn hex(c: [f64; 3]) -> Option<String> {
     (r | g | b != 0).then(|| format!("{r:02X}{g:02X}{b:02X}"))
 }
 
-/// A formatted text run (shared by paragraphs and table cells).
-fn run_xml(text: &str, size: f64, bold: bool, italic: bool, color: [f64; 3]) -> String {
+/// How a run looks: its source font, size, weight, slant and colour.
+#[derive(Clone, Copy)]
+pub(crate) struct Look<'a> {
+    pub font: &'a str,
+    pub size: f64,
+    pub bold: bool,
+    pub italic: bool,
+    pub color: [f64; 3],
+}
+
+/// A formatted text run (shared by paragraphs and table cells). Word sets Thai (a complex script)
+/// in the `cs` font at `szCs` with `bCs`/`iCs`, so each is given too (Thai edition): with `sz` and
+/// `b` alone, Thai came out at Word's default size and never bold.
+fn run_xml(text: &str, look: Look<'_>) -> String {
     let mut rpr = String::new();
-    if bold {
-        rpr.push_str("<w:b/>");
+    let family = super::layout::family_name(look.font);
+    if !family.is_empty() {
+        let f = esc(&family);
+        rpr.push_str(&format!("<w:rFonts w:ascii=\"{f}\" w:hAnsi=\"{f}\" w:cs=\"{f}\" w:eastAsia=\"{f}\"/>"));
     }
-    if italic {
-        rpr.push_str("<w:i/>");
+    if look.bold {
+        rpr.push_str("<w:b/><w:bCs/>");
     }
-    if let Some(h) = hex(color) {
+    if look.italic {
+        rpr.push_str("<w:i/><w:iCs/>");
+    }
+    if let Some(h) = hex(look.color) {
         rpr.push_str(&format!("<w:color w:val=\"{h}\"/>"));
     }
-    let half_points = if size.is_finite() { (size * 2.0).round().clamp(2.0, 3276.0) as i64 } else { 24 };
-    rpr.push_str(&format!("<w:sz w:val=\"{half_points}\"/>"));
+    let half_points = if look.size.is_finite() { (look.size * 2.0).round().clamp(2.0, 3276.0) as i64 } else { 24 };
+    rpr.push_str(&format!("<w:sz w:val=\"{half_points}\"/><w:szCs w:val=\"{half_points}\"/>"));
+    if text.chars().any(|c| ('\u{0E00}'..='\u{0E7F}').contains(&c)) {
+        rpr.push_str("<w:lang w:bidi=\"th-TH\"/>");
+    }
     format!("<w:r><w:rPr>{rpr}</w:rPr><w:t xml:space=\"preserve\">{}</w:t></w:r>", esc(text))
 }
 
@@ -38,23 +58,53 @@ pub(crate) fn docx_table(t: &Table) -> String {
     edges.push(t.rect[2]);
     let widths: Vec<i64> = edges.windows(2).map(|w| ((w[1] - w[0]).max(20.0) * 20.0).round().clamp(60.0, 31680.0) as i64).collect();
     let mut s = String::from("<w:tbl><w:tblPr><w:tblW w:w=\"0\" w:type=\"auto\"/><w:tblBorders>");
+    // A ruled table (Thai edition) has the border the page draws, in eighths of a point.
+    let border = t.borders.map(|b| {
+        let eighths = if b.width.is_finite() { (b.width * 8.0).round().clamp(2.0, 96.0) as i64 } else { 4 };
+        format!("w:val=\"single\" w:sz=\"{eighths}\" w:space=\"0\" w:color=\"{}\"", hex(b.color).unwrap_or_else(|| "000000".into()))
+    });
     for edge in ["top", "left", "bottom", "right", "insideH", "insideV"] {
-        s.push_str(&format!("<w:{edge} w:val=\"nil\"/>"));
+        match &border {
+            Some(b) => s.push_str(&format!("<w:{edge} {b}/>")),
+            None => s.push_str(&format!("<w:{edge} w:val=\"nil\"/>")),
+        }
     }
-    s.push_str("</w:tblBorders></w:tblPr><w:tblGrid>");
+    s.push_str("</w:tblBorders>");
+    if border.is_some() {
+        // Its columns as the page draws them, and its text close to the rules.
+        s.push_str(
+            "<w:tblLayout w:type=\"fixed\"/><w:tblCellMar><w:left w:w=\"60\" w:type=\"dxa\"/><w:right w:w=\"60\" w:type=\"dxa\"/></w:tblCellMar>",
+        );
+    }
+    s.push_str("</w:tblPr><w:tblGrid>");
     for w in &widths {
         s.push_str(&format!("<w:gridCol w:w=\"{w}\"/>"));
     }
     s.push_str("</w:tblGrid>");
-    for row in &t.rows {
+    for (r, row) in t.rows.iter().enumerate() {
         s.push_str("<w:tr>");
+        // A ruled row is at least as tall as the page draws it (Thai edition).
+        if let Some(h) = t.row_heights.get(r).filter(|h| h.is_finite() && **h > 0.0) {
+            s.push_str(&format!("<w:trPr><w:trHeight w:val=\"{}\" w:hRule=\"atLeast\"/></w:trPr>", (h * 20.0).round().clamp(1.0, 31680.0) as i64));
+        }
         let mut column = 0usize;
         for c in row {
             let span = if c.span > 1 { format!("<w:gridSpan w:val=\"{}\"/>", c.span) } else { String::new() };
             let w: i64 = widths.iter().skip(column).take(c.span).sum();
+            // Its shading, its text centred down a ruled row, and across it as the page shows.
+            let shade = c.fill.and_then(hex).map_or_else(
+                || c.fill.map(|_| "<w:shd w:val=\"clear\" w:color=\"auto\" w:fill=\"000000\"/>".to_string()).unwrap_or_default(),
+                |h| format!("<w:shd w:val=\"clear\" w:color=\"auto\" w:fill=\"{h}\"/>"),
+            );
+            let valign = if t.borders.is_some() { "<w:vAlign w:val=\"center\"/>" } else { "" };
+            let jc = match c.align {
+                Some(super::layout::HAlign::Center) => "<w:pPr><w:jc w:val=\"center\"/></w:pPr>",
+                Some(super::layout::HAlign::Right) => "<w:pPr><w:jc w:val=\"right\"/></w:pPr>",
+                _ => "",
+            };
             s.push_str(&format!(
-                "<w:tc><w:tcPr><w:tcW w:w=\"{w}\" w:type=\"dxa\"/>{span}</w:tcPr><w:p>{}</w:p></w:tc>",
-                run_xml(&c.text, c.size, c.bold, c.italic, c.color)
+                "<w:tc><w:tcPr><w:tcW w:w=\"{w}\" w:type=\"dxa\"/>{span}{shade}{valign}</w:tcPr><w:p>{jc}{}</w:p></w:tc>",
+                run_xml(&c.text, Look { font: &c.font, size: c.size, bold: c.bold, italic: c.italic, color: c.color })
             ));
             column = column.saturating_add(c.span);
         }
@@ -171,7 +221,7 @@ fn positioned_page<'a>(page: &'a Page, media: &mut Vec<(String, &'a Image)>, sha
         );
         s.push_str(&format!(
             "<w:r><w:pict><v:rect id=\"Text{}\" style=\"{style}\" filled=\"f\" stroked=\"f\"><v:textbox inset=\"0,0,0,0\" style=\"mso-fit-shape-to-text:t\"><w:txbxContent><w:p><w:pPr><w:spacing w:before=\"0\" w:after=\"0\"/></w:pPr>{}</w:p></w:txbxContent></v:textbox><w10:wrap type=\"none\"/></v:rect></w:pict></w:r>",
-            shape_id, run_xml(&b.text, b.size, b.bold, b.italic, b.color)
+            shape_id, run_xml(&b.text, Look { font: &b.font, size: b.size, bold: b.bold, italic: b.italic, color: b.color })
         ));
     }
     for im in &page.images {
@@ -254,7 +304,10 @@ pub fn docx(pages: &[Page], title: &str) -> Vec<u8> {
                         body.push_str("<w:p>");
                         body.push_str(style);
                         for r in runs {
-                            body.push_str(&run_xml(&r.text, r.block.size, r.block.bold, r.block.italic, r.block.color));
+                            body.push_str(&run_xml(
+                                &r.text,
+                                Look { font: &r.block.font, size: r.block.size, bold: r.block.bold, italic: r.block.italic, color: r.block.color },
+                            ));
                         }
                         body.push_str("</w:p>");
                     }

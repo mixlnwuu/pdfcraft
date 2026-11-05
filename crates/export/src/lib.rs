@@ -21,6 +21,7 @@ mod as_html;
 mod as_markdown;
 mod as_rtf;
 mod layout;
+mod ruled;
 
 pub use as_docx::docx;
 pub(crate) use as_docx::hex;
@@ -34,7 +35,7 @@ pub use as_markdown::markdown;
 #[cfg(test)]
 use as_markdown::{emphasis, paragraph};
 pub use as_rtf::rtf;
-pub use layout::{Block, Cell, Image, Page, Table};
+pub use layout::{Block, Cell, HAlign, Image, Page, Shape, Table, TableBorder};
 #[cfg(test)]
 use layout::{LOOKUP_STEPS, MAX_COLS, body_size};
 pub(crate) use layout::{Run, paragraphs, tables};

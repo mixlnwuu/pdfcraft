@@ -12,9 +12,10 @@ fn varied_page(n: usize) -> Page {
             color: [(i % 256) as f64 / 255.0, (i / 256 % 256) as f64 / 255.0, 0.5],
             rotation: 0.0,
             space_around: [false; 2],
+            font: String::new(),
         })
         .collect();
-    Page { width: 612.0, height: 792.0, blocks, images: Vec::new(), background: None }
+    Page { width: 612.0, height: 792.0, blocks, images: Vec::new(), background: None, shapes: Vec::new() }
 }
 
 fn lookup_steps(f: impl FnOnce()) -> usize {
@@ -51,6 +52,7 @@ fn page() -> Page {
         color: [0.0; 3],
         rotation: 0.0,
         space_around: [false; 2],
+        font: String::new(),
     };
     Page {
         width: 612.0,
@@ -69,6 +71,7 @@ fn page() -> Page {
             rotation: 0.0,
         }],
         background: None,
+        shapes: Vec::new(),
     }
 }
 
@@ -125,7 +128,17 @@ fn word_does_not_invent_borders_for_aligned_invoice_fields() {
 
 #[test]
 fn word_table_cell_widths_follow_the_columns_they_span() {
-    let cell = |text: &str, span| Cell { text: text.into(), size: 11.0, bold: false, italic: false, color: [0.0; 3], span };
+    let cell = |text: &str, span| Cell {
+        text: text.into(),
+        size: 11.0,
+        bold: false,
+        italic: false,
+        color: [0.0; 3],
+        span,
+        font: String::new(),
+        fill: None,
+        align: None,
+    };
     let table = Table {
         rect: [0.0, 0.0, 300.0, 100.0],
         cols: vec![0.0, 50.0, 150.0],
@@ -136,6 +149,8 @@ fn word_table_cell_widths_follow_the_columns_they_span() {
             vec![cell("All", 3)],
             vec![cell("First", 1)],
         ],
+        borders: None,
+        row_heights: Vec::new(),
     };
     let xml = docx_table(&table);
     assert!(xml.contains("<w:gridCol w:w=\"1000\"/><w:gridCol w:w=\"2000\"/><w:gridCol w:w=\"3000\"/>"), "{xml}");
@@ -173,6 +188,7 @@ fn word_overlap_does_not_consume_invoice_body_space() {
         color: [0.8; 3],
         rotation: 0.0,
         space_around: [false; 2],
+        font: String::new(),
     });
     p.images = page().images;
     let xml = part(&docx(&[p], "Invoice"), "word/document.xml");
@@ -208,18 +224,18 @@ fn word_rotated_pages_keep_separate_page_sizes_and_unique_shapes() {
 /// (with the setting that makes Word show it); differing or white backgrounds don't.
 #[test]
 fn docx_keeps_a_shared_page_background() {
-    let teal = Page { background: Some([0.0, 0.5, 0.5]), ..page() };
+    let teal = Page { background: Some([0.0, 0.5, 0.5]), shapes: Vec::new(), ..page() };
     let zip = docx(&[teal.clone(), teal.clone()], "Teal");
     let xml = part(&zip, "word/document.xml");
     assert!(xml.contains("<w:background w:color=\"008080\"/><w:body>"), "{xml}");
     assert!(part(&zip, "word/settings.xml").contains("<w:displayBackgroundShape/>"));
     assert!(part(&zip, "[Content_Types].xml").contains("/word/settings.xml"));
     assert!(part(&zip, "word/_rels/document.xml.rels").contains("Target=\"settings.xml\""));
-    let other = Page { background: Some([1.0, 0.0, 0.0]), ..page() };
+    let other = Page { background: Some([1.0, 0.0, 0.0]), shapes: Vec::new(), ..page() };
     for (pages, why) in [
         (vec![teal.clone(), other], "different colours"),
         (vec![teal.clone(), page()], "a page without one"),
-        (vec![Page { background: Some([1.0; 3]), ..page() }], "white"),
+        (vec![Page { background: Some([1.0; 3]), shapes: Vec::new(), ..page() }], "white"),
         (vec![page()], "none"),
     ] {
         let zip = docx(&pages, "Plain");
@@ -260,6 +276,7 @@ fn word_opens_text_with_control_characters_and_long_pages() {
         color: [0.0; 3],
         rotation: 0.0,
         space_around: [false; 2],
+        font: String::new(),
     });
     let xml = part(&docx(&[p.clone()], "Receipt\u{1}"), "word/document.xml");
     assert!(xml.contains(">Total 4.50\tGBP</w:t>"), "{xml}");
@@ -314,6 +331,7 @@ fn rtf_escapes_and_sizes() {
         color: [0.0; 3],
         rotation: 0.0,
         space_around: [false; 2],
+        font: String::new(),
     });
     let r = rtf(&[p]);
     assert!(r.starts_with("{\\rtf1") && r.ends_with('}'));
@@ -332,6 +350,7 @@ fn table_page() -> Page {
         color: [0.0; 3],
         rotation: 0.0,
         space_around: [false; 2],
+        font: String::new(),
     };
     Page {
         width: 612.0,
@@ -356,10 +375,12 @@ fn table_page() -> Page {
                 color: [0.0; 3],
                 rotation: 0.0,
                 space_around: [false; 2],
+                font: String::new(),
             },
         ],
         images: Vec::new(),
         background: None,
+        shapes: Vec::new(),
     }
 }
 
@@ -417,6 +438,7 @@ fn a_staircase_of_blocks_is_not_a_huge_table() {
                 color: [0.0; 3],
                 rotation: 0.0,
                 space_around: [false; 2],
+                font: String::new(),
             }
         })
         .collect();
@@ -445,12 +467,14 @@ fn word_opens_tables_up_to_its_column_limit() {
                         color: [0.0; 3],
                         rotation: 0.0,
                         space_around: [false; 2],
+                        font: String::new(),
                     }
                 })
             })
             .collect(),
         images: Vec::new(),
         background: None,
+        shapes: Vec::new(),
     };
     let grid_cols = |p: &Page| part(&docx(std::slice::from_ref(p), "Grid"), "word/document.xml").matches("<w:gridCol ").count();
     assert_eq!(grid_cols(&grid(63)), 63, "63 columns is still a table");
@@ -459,7 +483,17 @@ fn word_opens_tables_up_to_its_column_limit() {
 }
 
 fn block(t: &str, x0: f64, y0: f64, x1: f64, y1: f64) -> Block {
-    Block { text: t.into(), rect: [x0, y0, x1, y1], size: 12.0, bold: false, italic: false, color: [0.0; 3], rotation: 0.0, space_around: [false; 2] }
+    Block {
+        text: t.into(),
+        rect: [x0, y0, x1, y1],
+        size: 12.0,
+        bold: false,
+        italic: false,
+        color: [0.0; 3],
+        rotation: 0.0,
+        space_around: [false; 2],
+        font: String::new(),
+    }
 }
 
 /// #2806: a sentence whose link is set in another colour or font runs on as separate blocks
@@ -486,6 +520,7 @@ fn a_link_inside_a_sentence_is_not_a_table_column() {
         ],
         images: Vec::new(),
         background: None,
+        shapes: Vec::new(),
     };
     let h = html(std::slice::from_ref(&p), "Regulations");
     assert!(!h.contains("<table>"), "running text became a table: {h}");
@@ -507,7 +542,7 @@ fn sentences_that_run_on_into_links_are_not_a_table() {
         blocks.push(block(lead, 72.0, y, 211.0, y + 12.0));
         blocks.push(blue("https://example.org/event", 212.5, y, 360.0, y + 12.0));
     }
-    let p = Page { width: 612.0, height: 792.0, blocks, images: Vec::new(), background: None };
+    let p = Page { width: 612.0, height: 792.0, blocks, images: Vec::new(), background: None, shapes: Vec::new() };
     let h = html(std::slice::from_ref(&p), "Event");
     assert!(!h.contains("<table>"), "sentences became a table: {h}");
     assert_eq!(h.matches("https://example.org/event").count(), 3, "{h}");
@@ -558,7 +593,7 @@ fn a_superscript_beside_a_number_keeps_its_table() {
         blocks.push(Block { size: 8.0, ..block(sup, 106.0, y + 5.0, 113.0, y + 13.0) });
         blocks.push(block(&format!("{},000", 30 - 5 * n), 300.0, y, 340.0, y + 12.0));
     }
-    let p = Page { width: 612.0, height: 792.0, blocks, images: Vec::new(), background: None };
+    let p = Page { width: 612.0, height: 792.0, blocks, images: Vec::new(), background: None, shapes: Vec::new() };
     let h = html(std::slice::from_ref(&p), "Prizes");
     assert!(h.contains("<table>"), "the prize table was lost: {h}");
     assert!(h.contains("30,000") && h.contains("15,000"), "{h}");
@@ -579,6 +614,7 @@ fn two_column_body_text_is_not_mistaken_for_a_table() {
         color: [0.0; 3],
         rotation: 0.0,
         space_around: [false; 2],
+        font: String::new(),
     };
     let p = Page {
         width: 612.0,
@@ -591,6 +627,7 @@ fn two_column_body_text_is_not_mistaken_for_a_table() {
         ],
         images: Vec::new(),
         background: None,
+        shapes: Vec::new(),
     };
     let h = html(&[p], "Paper");
     assert!(!h.contains("<table>"), "tall two-column text must stay paragraphs: {h}");
@@ -675,7 +712,7 @@ fn italic_sentence() -> Vec<Block> {
 fn an_italic_word_stays_in_its_sentence() {
     let mut blocks = italic_sentence();
     blocks.push(block("The next line is a paragraph of its own.", 72.0, 684.0, 300.0, 696.0));
-    let p = Page { width: 612.0, height: 792.0, blocks, images: Vec::new(), background: None };
+    let p = Page { width: 612.0, height: 792.0, blocks, images: Vec::new(), background: None, shapes: Vec::new() };
     let xml = part(&docx(std::slice::from_ref(&p), "Opinion"), "word/document.xml");
     assert_eq!(
         word_paragraphs(&xml),
@@ -700,7 +737,7 @@ fn an_italic_word_stays_in_its_sentence() {
 fn a_sentence_keeps_its_reading_order() {
     let mut blocks = vec![block("Then the next line.", 72.0, 684.0, 200.0, 696.0)];
     blocks.extend(italic_sentence().into_iter().rev());
-    let p = Page { width: 612.0, height: 792.0, blocks, images: Vec::new(), background: None };
+    let p = Page { width: 612.0, height: 792.0, blocks, images: Vec::new(), background: None, shapes: Vec::new() };
     let xml = part(&docx(std::slice::from_ref(&p), "Opinion"), "word/document.xml");
     assert_eq!(
         word_paragraphs(&xml),
@@ -721,7 +758,7 @@ fn runs_keep_the_spaces_the_source_had_between_them() {
         block("E = mc", 72.0, 660.0, 110.0, 672.0),
         Block { size: 8.0, ..block("2", 110.0, 665.0, 115.0, 673.0) },
     ];
-    let p = Page { width: 612.0, height: 792.0, blocks, images: Vec::new(), background: None };
+    let p = Page { width: 612.0, height: 792.0, blocks, images: Vec::new(), background: None, shapes: Vec::new() };
     let xml = part(&docx(std::slice::from_ref(&p), "Spaces"), "word/document.xml");
     assert_eq!(
         word_paragraphs(&xml),
@@ -733,7 +770,7 @@ fn runs_keep_the_spaces_the_source_had_between_them() {
 #[test]
 fn turned_text_is_not_a_run_of_the_line_beside_it() {
     let blocks = vec![block("Before", 72.0, 700.0, 110.0, 712.0), Block { rotation: 90.0, ..block("SIDE", 111.0, 690.0, 123.0, 720.0) }];
-    let p = Page { width: 612.0, height: 792.0, blocks, images: Vec::new(), background: None };
+    let p = Page { width: 612.0, height: 792.0, blocks, images: Vec::new(), background: None, shapes: Vec::new() };
     let h = html(std::slice::from_ref(&p), "Turned");
     assert!(h.contains("<p>Before</p>") && h.contains("<p>SIDE</p>"), "{h}");
 }
@@ -744,7 +781,7 @@ fn a_block_on_the_next_line_starts_a_paragraph() {
         block("The first line ends here", 72.0, 700.0, 190.0, 712.0),
         Block { italic: true, ..block("and the next starts there.", 190.5, 690.0, 320.0, 702.0) },
     ];
-    let p = Page { width: 612.0, height: 792.0, blocks, images: Vec::new(), background: None };
+    let p = Page { width: 612.0, height: 792.0, blocks, images: Vec::new(), background: None, shapes: Vec::new() };
     let xml = part(&docx(std::slice::from_ref(&p), "Lines"), "word/document.xml");
     assert_eq!(word_paragraphs(&xml), vec![runs(&[("The first line ends here", false)]), runs(&[("and the next starts there.", true)])], "{xml}");
 }
@@ -761,7 +798,7 @@ fn table_cells_are_not_runs_of_a_paragraph() {
         blocks.push(block(&format!("{},000", 30 - 5 * n), 300.0, y, 340.0, y + 12.0));
     }
     blocks.extend(italic_sentence().into_iter().map(|b| Block { rect: [b.rect[0], b.rect[1] - 200.0, b.rect[2], b.rect[3] - 200.0], ..b }));
-    let p = Page { width: 612.0, height: 792.0, blocks, images: Vec::new(), background: None };
+    let p = Page { width: 612.0, height: 792.0, blocks, images: Vec::new(), background: None, shapes: Vec::new() };
     let xml = part(&docx(std::slice::from_ref(&p), "Prizes"), "word/document.xml");
     assert_eq!(xml.matches("<w:tbl>").count(), 1, "{xml}");
     for cell in ["st", "nd", "rd", "30,000"] {
@@ -781,7 +818,7 @@ fn a_paragraph_is_a_heading_only_when_its_text_is() {
         Block { bold: true, ..block("Summary", 72.0, 700.0, 125.0, 712.0) },
         block("the year closed with more members than it opened with, and fewer debts.", 128.0, 700.0, 540.0, 712.0),
     ];
-    let p = Page { width: 612.0, height: 792.0, blocks, images: Vec::new(), background: None };
+    let p = Page { width: 612.0, height: 792.0, blocks, images: Vec::new(), background: None, shapes: Vec::new() };
     let xml = part(&docx(std::slice::from_ref(&p), "Report"), "word/document.xml");
     assert_eq!(xml.matches("<w:pStyle w:val=\"Heading1\"/>").count(), 1, "{xml}");
     assert!(!xml.contains("Heading2"), "the lead-in made its paragraph a heading: {xml}");
@@ -817,6 +854,7 @@ fn markdown_escapes_markup_and_keeps_emphasis_and_tables() {
         color: [0.0; 3],
         rotation: 0.0,
         space_around: [false; 2],
+        font: String::new(),
     };
     let p = Page {
         width: 612.0,
@@ -830,6 +868,7 @@ fn markdown_escapes_markup_and_keeps_emphasis_and_tables() {
         ],
         images: Vec::new(),
         background: None,
+        shapes: Vec::new(),
     };
     let md = markdown(&[p]);
     assert!(md.contains("\\- not a list item"), "{md}");
@@ -858,4 +897,90 @@ fn markdown_escapes_markup_and_keeps_emphasis_and_tables() {
     assert_eq!(rows.get(1), Some(&"| --- | --- | --- |"), "{md}");
     assert!(rows.contains(&"| A1 | kWh | 37414.00 |"), "{md}");
     assert!(rows.iter().all(|r| r.matches(" | ").count() == 2), "every row has the header's three cells: {md}");
+}
+
+/// Thai edition: Word knows a PDF font by its family (`ABCDEF+THSarabunNew-Bold` is
+/// `TH Sarabun New`), and the standard 14 fonts by the faces Windows has.
+#[test]
+fn pdf_fonts_are_named_as_word_knows_them() {
+    use super::layout::family_name;
+    assert_eq!(family_name("ABCDEF+THSarabunNew-Bold"), "TH Sarabun New");
+    assert_eq!(family_name("WJFYRV+AngsanaNew-Bold"), "Angsana New");
+    assert_eq!(family_name("CKENXJ+CordiaNew"), "Cordia New");
+    assert_eq!(family_name("TimesNewRomanPSMT"), "Times New Roman");
+    assert_eq!(family_name("ArialMT"), "Arial");
+    assert_eq!(family_name("Helvetica-Bold"), "Arial");
+    assert_eq!(family_name("MicrosoftSansSerif-Regular"), "Microsoft Sans Serif");
+    assert_eq!(family_name("TH Sarabun PSK,Bold"), "TH Sarabun PSK");
+    assert_eq!(family_name("PCEdHelveticaBold"), "", "PdfCraft's own resources name no family");
+    assert_eq!(family_name(""), "");
+}
+
+/// Thai edition: Word sets Thai in a run's complex-script properties, so a Thai run carries its
+/// size, weight, slant and font there too, and says it is Thai; with `sz` and `b` alone Word
+/// showed Thai at its default size and never bold.
+#[test]
+fn thai_runs_carry_their_size_weight_and_font_for_word() {
+    let mut p = Page { width: 595.0, height: 842.0, ..Default::default() };
+    p.blocks.push(Block {
+        text: "รายงานผลการตรวจ".into(),
+        size: 16.0,
+        bold: true,
+        italic: true,
+        font: "ABCDEF+THSarabunNew-BoldItalic".into(),
+        ..block("x", 72.0, 700.0, 300.0, 716.0)
+    });
+    let xml = part(&docx(&[p], "Thai"), "word/document.xml");
+    for want in [
+        "<w:rFonts w:ascii=\"TH Sarabun New\" w:hAnsi=\"TH Sarabun New\" w:cs=\"TH Sarabun New\"",
+        "<w:b/><w:bCs/>",
+        "<w:i/><w:iCs/>",
+        "<w:sz w:val=\"32\"/><w:szCs w:val=\"32\"/>",
+        "<w:lang w:bidi=\"th-TH\"/>",
+    ] {
+        assert!(xml.contains(want), "{want} in {xml}");
+    }
+}
+
+/// Thai edition: a table the page draws (a grid of rules, a dark header row) comes out as that
+/// table: its header row too (centred labels that line up with no body column), with the page's
+/// borders, the header's shading, centred header labels and the drawn row heights.
+#[test]
+fn a_ruled_table_keeps_its_header_borders_and_shading() {
+    let (top, row, xs) = (700.0, 20.0, [72.0, 132.0, 272.0, 400.0, 520.0]);
+    let mut p = Page { width: 595.0, height: 842.0, ..Default::default() };
+    let rule = |rect: [f64; 4]| Shape { rect, color: [0.0; 3], rule: true };
+    // The header's fill, then four horizontal and five vertical rules.
+    p.shapes.push(Shape { rect: [xs[0], top - row, xs[4], top], color: [0.12, 0.31, 0.47], rule: false });
+    for r in 0..4 {
+        let y = top - row * r as f64;
+        p.shapes.push(rule([xs[0], y - 0.375, xs[4], y + 0.375]));
+    }
+    for x in xs {
+        p.shapes.push(rule([x - 0.375, top - 3.0 * row, x + 0.375, top]));
+    }
+    // Header labels centred in their cells, white; body text at each cell's left.
+    let header = ["No.", "Item", "Result", "Note"];
+    for (c, label) in header.iter().enumerate() {
+        let mid = (xs[c] + xs[c + 1]) / 2.0;
+        let w = label.len() as f64 * 5.0;
+        p.blocks.push(Block { color: [1.0; 3], bold: true, ..block(label, mid - w / 2.0, top - 15.0, mid + w / 2.0, top - 4.0) });
+    }
+    for (r, cells) in [["1", "Screen", "OK", "No scratches"], ["2", "Keyboard", "OK", "All keys"]].iter().enumerate() {
+        let y = top - row * (r as f64 + 1.0);
+        for (c, text) in cells.iter().enumerate() {
+            p.blocks.push(block(text, xs[c] + 4.0, y - 15.0, xs[c] + 4.0 + text.len() as f64 * 5.0, y - 4.0));
+        }
+    }
+    let xml = part(&docx(&[p], "Ruled"), "word/document.xml");
+    let table = xml.split("<w:tbl>").nth(1).and_then(|t| t.split("</w:tbl>").next()).expect("a table");
+    assert!(xml.matches("<w:tbl>").count() == 1, "one table: {xml}");
+    for label in header {
+        assert!(table.contains(&format!(">{label}</w:t>")), "{label} is in the table: {xml}");
+    }
+    assert!(table.contains("<w:top w:val=\"single\" w:sz=\"6\""), "the page's 0.75 pt border: {table}");
+    assert_eq!(table.matches("w:fill=\"1F4F78\"").count(), 4, "the header row's shading: {table}");
+    assert!(table.matches("<w:jc w:val=\"center\"/>").count() >= 4, "header labels centred: {table}");
+    assert_eq!(table.matches("<w:trHeight w:val=\"400\"").count(), 3, "20 pt rows: {table}");
+    assert!(!xml.split("<w:tbl>").next().unwrap_or("").contains("No.</w:t>"), "no header label is left above the table");
 }

@@ -250,6 +250,7 @@ impl crate::Document {
                             italic: f.contains("italic") || f.contains("oblique"),
                             color: b.color,
                             rotation: b.rotation - f64::from(info.rotation),
+                            font: b.base_font,
                         }
                     })
                     .collect();
@@ -282,7 +283,14 @@ impl crate::Document {
                 }
                 // The page colour (Edit a PDF ▸ Background, a producer's page fill) for formats that keep one.
                 let background = pdfcraft_edit::page_background(cos, i).ok().flatten();
-                pdfcraft_export::Page { width: info.width as f64, height: info.height as f64, blocks, images, background }
+                // What the page draws (Thai edition): rules and filled boxes, for ruled tables,
+                // shaded boxes and lines.
+                let shapes = pdfcraft_edit::reading_shapes(cos, i)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|s| pdfcraft_export::Shape { rect: visible_rect(s.rect), color: s.color, rule: s.rule })
+                    .collect();
+                pdfcraft_export::Page { width: info.width as f64, height: info.height as f64, blocks, images, background, shapes }
             })
             .collect();
         (pages, truncated)
