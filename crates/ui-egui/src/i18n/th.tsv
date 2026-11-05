@@ -2906,3 +2906,53 @@ theme	Appearance	ลักษณะที่ปรากฏ
 	Vertical, turned 90°	แนวตั้ง หมุน 90°
 	Rulers	ไม้บรรทัด
 	Grid	เส้นตาราง
+
+# Thai edition, 0.18.1-th.1: strings v0.18.0 and v0.18.1 added that craft-i18n's Thai lacks.
+@id	comment.freehand_highlight	ไฮไลต์แบบวาดอิสระ
+@id	bookmark.from_text_styles	สร้างบุ๊กมาร์กจากรูปแบบข้อความ…
+@id	page.properties	คุณสมบัติหน้า…
+@id	ui.dock.reset	รีเซ็ตแผงด้านข้าง
+@id	view.tools_pane	แสดงหรือซ่อนแผงเครื่องมือ
+@id	view.side_panel	แสดงหรือซ่อนแผงด้านข้าง
+	Settings…	การตั้งค่า…
+	1 line	1 บรรทัด
+	{n} lines	{n} บรรทัด
+	Add Tools to Hotbar	เพิ่มเครื่องมือในแถบเครื่องมือด่วน
+	Close menu	ปิดเมนู
+	Custom scale	มาตราส่วนกำหนดเอง
+	Dock navigation rail on Left	ย้ายแถบนำทางไปไว้ทางซ้าย
+	Dock navigation rail on Right	ย้ายแถบนำทางไปไว้ทางขวา
+	Drag hotbar	ลากแถบเครื่องมือด่วน
+	Every line set in the style chosen for a level becomes a bookmark of that level, under a new first bookmark.	ทุกบรรทัดที่ใช้รูปแบบที่เลือกไว้ให้ระดับใด จะกลายเป็นบุ๊กมาร์กของระดับนั้น อยู่ใต้บุ๊กมาร์กแรกที่สร้างขึ้นใหม่
+	Export value	ค่าที่ส่งออก
+	Extend the docked toolbar along the entire side. Choose a side above to enable.	ขยายแถบเครื่องมือที่ติดขอบให้ยาวตลอดด้าน ต้องเลือกด้านด้านบนก่อนจึงจะใช้ได้
+	Float	ลอยอิสระ
+	Full-side strip	แถบยาวตลอดด้าน
+	General & Interface	ทั่วไปและหน้าจอ
+	Hotbar settings	ตั้งค่าแถบเครื่องมือด่วน
+	Hotbar settings / add tools	ตั้งค่าแถบเครื่องมือด่วน / เพิ่มเครื่องมือ
+	Hotbar tools	เครื่องมือในแถบด่วน
+	Invert middle-button drag	กลับทิศการลากด้วยปุ่มกลาง
+	Layout & Sizing	การจัดวางและขนาด
+	Level {n}	ระดับ {n}
+	Navigation rail side	ด้านของแถบนำทาง
+	New bookmarks from text styles	สร้างบุ๊กมาร์กจากรูปแบบข้อความ
+	New bookmarks from text styles…	สร้างบุ๊กมาร์กจากรูปแบบข้อความ…
+	Page Properties	คุณสมบัติหน้า
+	Panning or auto-scrolling with the middle (wheel) button moves the page the other way.	เลื่อนหน้าหรือเลื่อนอัตโนมัติด้วยปุ่มกลาง (ลูกกลิ้ง) จะเลื่อนหน้าไปทางตรงข้าม
+	Remove from hotbar	เอาออกจากแถบเครื่องมือด่วน
+	Search all tools…	ค้นหาเครื่องมือทั้งหมด…
+	Search settings…	ค้นหาการตั้งค่า…
+	Show Page Edge Shadows	แสดงเงาที่ขอบหน้ากระดาษ
+	Stick to a side:	ติดกับด้าน:
+	Tab Order	ลำดับการกด Tab
+	This document has no text to make bookmarks from.	เอกสารนี้ไม่มีข้อความที่ใช้สร้างบุ๊กมาร์กได้
+	Toolbar size	ขนาดแถบเครื่องมือ
+	Unspecified	ไม่ระบุ
+	Use Column Order	เรียงตามคอลัมน์
+	Use Document Structure	เรียงตามโครงสร้างเอกสาร
+	Use Row Order	เรียงตามแถว
+	Vertical layout	จัดเรียงแนวตั้ง
+	bold	ตัวหนา
+	italic	ตัวเอียง
+	{font}, {size} pt	{font}, {size} pt
