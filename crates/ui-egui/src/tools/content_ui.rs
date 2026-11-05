@@ -1990,6 +1990,7 @@ impl crate::PdfCraftApp {
             self.last_copied_image = Some((w, h, rgba));
             Ok((w, h))
         });
+        self.page_image_clip = copied.is_ok().then(|| self.page_image_clip_of(id, page, index)).flatten();
         match copied {
             Ok((w, h)) => {
                 self.notify_fmt("The image has been copied ({w} × {h} pixels)", &[("w", &w.to_string()), ("h", &h.to_string())]);
@@ -2000,6 +2001,76 @@ impl crate::PdfCraftApp {
                 false
             }
         }
+    }
+
+    /// What to remember of the page's picture `index` on `page` when it is copied: its whole box
+    /// in display space (Thai edition).
+    fn page_image_clip_of(&self, doc: pdfcraft_engine::DocId, page: usize, index: usize) -> Option<crate::state::PageImageClip> {
+        let d = self.session.get(doc)?;
+        let image = d.page_images(page).into_iter().nth(index)?;
+        let info = d.info.pages.get(page)?;
+        let [x0, y0, x1, y1] = image.rect;
+        let corners = [(x0, y0), (x1, y1), (x0, y1), (x1, y0)].map(|(x, y)| {
+            let v = info.user_to_view(x as f32, y as f32);
+            [f64::from(v[0]), f64::from(info.height) - f64::from(v[1])]
+        });
+        let xs = corners.map(|c| c[0]);
+        let ys = corners.map(|c| c[1]);
+        let rect = [
+            xs.iter().copied().fold(f64::INFINITY, f64::min),
+            ys.iter().copied().fold(f64::INFINITY, f64::min),
+            xs.iter().copied().fold(f64::NEG_INFINITY, f64::max),
+            ys.iter().copied().fold(f64::NEG_INFINITY, f64::max),
+        ];
+        (rect.iter().all(|v| v.is_finite()) && rect[2] > rect[0] && rect[3] > rect[1]).then_some(crate::state::PageImageClip {
+            doc,
+            page,
+            index,
+            object: image.object,
+            rect,
+            pastes: 0,
+        })
+    }
+
+    /// Paste the copied page picture (Thai edition) onto `page`: the same picture at the same size,
+    /// a step down and right on its own page, where it was on another, or centred at `at`. While
+    /// the picture is still there it is copied as it is (its image object, as Ctrl+drag does);
+    /// after a cut, or into another document, its pixels go in at its size. `false` when there is
+    /// nothing of it to paste (the caller pastes the pixels as before).
+    fn paste_page_image_clip(&mut self, id: pdfcraft_engine::DocId, page: usize, at: Option<[f64; 2]>, bytes: &[u8], name: &str) -> bool {
+        let Some(clip) = self.page_image_clip.clone() else { return false };
+        let Some(doc) = self.session.get(id) else { return false };
+        let Some(info) = doc.info.pages.get(page) else { return false };
+        let [x0, y0, x1, y1] = clip.rect;
+        let (w, h) = (x1 - x0, y1 - y0);
+        let rect = if let Some(at) = at {
+            let v = info.user_to_view(at[0] as f32, at[1] as f32).map(f64::from);
+            let c = [v[0], f64::from(info.height) - v[1]];
+            [c[0] - w / 2.0, c[1] - h / 2.0, c[0] + w / 2.0, c[1] + h / 2.0]
+        } else {
+            let same_page = clip.doc == id && clip.page == page;
+            let steps = if same_page { clip.pastes.saturating_add(1) } else { clip.pastes };
+            let shift = crate::state::PASTE_STEP * f64::from(steps.min(40));
+            [x0 + shift, y0 - shift, x1 + shift, y1 - shift]
+        };
+        if !rect.iter().all(|v| v.is_finite()) {
+            return false;
+        }
+        let still_there = clip.doc == id
+            && clip.object.is_some()
+            && doc.page_images(clip.page).into_iter().nth(clip.index).is_some_and(|im| im.object == clip.object);
+        let edit = if still_there {
+            Edit::MovePageImageToPage { page: clip.page, index: clip.index, to_page: page, rect, copy: true }
+        } else {
+            Edit::AddImage { page, rect: Some(rect), name: name.to_string(), bytes: std::sync::Arc::new(bytes.to_vec()) }
+        };
+        let Some((i, _)) = self.active_ids() else { return false };
+        if self.paste_image_edit(i, id, page, edit)
+            && let Some(c) = self.page_image_clip.as_mut()
+        {
+            c.pastes = c.pastes.saturating_add(1);
+        }
+        true
     }
 
     /// The picture's visible box on its page, in user space.
@@ -2174,14 +2245,19 @@ impl crate::PdfCraftApp {
             return false;
         }
 
+        // Whether what is pasted is the picture last copied here (Thai edition: a page picture copied
+        // pastes at its size, `page_image_clip`).
+        let mut copied_here = false;
         let image_data: Option<(String, Vec<u8>)> = match clipboard {
             Some(crate::create_ui::Clip::Image { width, height, rgba }) => {
                 let is_same = self
                     .last_copied_image
                     .as_ref()
                     .is_some_and(|(w, h, bytes)| *w as usize == width && *h as usize == height && bytes.as_slice() == rgba.as_slice());
+                copied_here = is_same && self.last_copied_file.is_none();
                 if !is_same {
                     self.last_copied_file = None;
+                    self.page_image_clip = None;
                     self.last_copied_image = Some((width as u32, height as u32, rgba.clone()));
                 }
                 crate::create_ui::png_from_rgba(width, height, &rgba).ok().map(|b| ("pasted_image.png".to_string(), b))
@@ -2191,6 +2267,7 @@ impl crate::PdfCraftApp {
                 if matches!(system, Some(crate::create_ui::Clip::Text(_))) || (system_authoritative && system.is_none()) {
                     self.last_copied_image = None;
                     self.last_copied_file = None;
+                    self.page_image_clip = None;
                     self.notify_tr("No image on clipboard to paste");
                     return false;
                 }
@@ -2207,16 +2284,19 @@ impl crate::PdfCraftApp {
                     if is_same_as_last && let Some((name, bytes)) = self.last_copied_file.clone() {
                         Some((name, bytes))
                     } else if is_same_as_last && let Some((w, h, rgba)) = self.last_copied_image.clone() {
+                        copied_here = true;
                         crate::create_ui::png_from_rgba(w as usize, h as usize, &rgba).ok().map(|b| ("pasted_image.png".to_string(), b))
                     } else {
                         // System clipboard has a newer / external image!
                         self.last_copied_file = None;
+                        self.page_image_clip = None;
                         self.last_copied_image = Some((img_width as u32, img_height as u32, img_bytes.clone()));
                         crate::create_ui::png_from_rgba(img_width, img_height, &img_bytes).ok().map(|b| ("clipboard_image.png".to_string(), b))
                     }
                 } else if let Some((name, bytes)) = self.last_copied_file.clone() {
                     Some((name, bytes))
                 } else if let Some((w, h, rgba)) = self.last_copied_image.clone() {
+                    copied_here = true;
                     crate::create_ui::png_from_rgba(w as usize, h as usize, &rgba).ok().map(|b| ("pasted_image.png".to_string(), b))
                 } else {
                     None
@@ -2228,6 +2308,9 @@ impl crate::PdfCraftApp {
             self.notify_tr("No image on clipboard to paste");
             return false;
         };
+        if copied_here && rect.is_none() && self.paste_page_image_clip(id, page, at, &bytes, &name) {
+            return true;
+        }
 
         let target_rect = if let Some(r) = rect {
             Some(r)
@@ -2253,32 +2336,36 @@ impl crate::PdfCraftApp {
             None
         };
 
+        self.paste_image_edit(i, id, page, pdfcraft_engine::Edit::AddImage { page, rect: target_rect, name, bytes: std::sync::Arc::new(bytes) })
+    }
+
+    /// Apply `edit`, which pastes a picture onto `page` as an added one, then select what it
+    /// added in Edit text & images.
+    fn paste_image_edit(&mut self, i: usize, id: pdfcraft_engine::DocId, page: usize, edit: Edit) -> bool {
         let added_before: std::collections::HashSet<_> =
             self.session.get(id).into_iter().flat_map(|doc| doc.added()).filter(|item| item.page == page).map(|item| item.obj).collect();
-        if self.apply_edit(pdfcraft_engine::Edit::AddImage { page, rect: target_rect, name, bytes: std::sync::Arc::new(bytes) }) {
-            let selection = self.session.get(id).and_then(|doc| {
-                let mut inserted =
-                    doc.added().iter().filter(|item| item.page == page).enumerate().filter(|(_, item)| !added_before.contains(&item.obj));
-                let (added_idx, item) = inserted.next()?;
-                if inserted.next().is_some() {
-                    return None;
-                }
-                let AddedContent::Image(image) = &item.content else { return None };
-                let pasted_idx = doc.page_images(page).iter().rposition(|placed| placed.object == Some(image.image))?;
-                Some((added_idx, pasted_idx))
-            });
-            if let Some(v) = self.views.get_mut(i) {
-                v.current = page;
-                v.content.selected = selection.map(|(added, _)| (page, added));
-                v.content.select_added = v.content.selected;
-                v.image_selection = selection.map(|(_, image)| crate::edit_text_ui::ImageSelection::at(page, image));
-            }
-            self.quick_tool = crate::QuickTool::EditText;
-            self.notify_tr("Image pasted");
-            true
-        } else {
-            false
+        if !self.apply_edit(edit) {
+            return false;
         }
+        let selection = self.session.get(id).and_then(|doc| {
+            let mut inserted = doc.added().iter().filter(|item| item.page == page).enumerate().filter(|(_, item)| !added_before.contains(&item.obj));
+            let (added_idx, item) = inserted.next()?;
+            if inserted.next().is_some() {
+                return None;
+            }
+            let AddedContent::Image(image) = &item.content else { return None };
+            let pasted_idx = doc.page_images(page).iter().rposition(|placed| placed.object == Some(image.image))?;
+            Some((added_idx, pasted_idx))
+        });
+        if let Some(v) = self.views.get_mut(i) {
+            v.current = page;
+            v.content.selected = selection.map(|(added, _)| (page, added));
+            v.content.select_added = v.content.selected;
+            v.image_selection = selection.map(|(_, image)| crate::edit_text_ui::ImageSelection::at(page, image));
+        }
+        self.quick_tool = crate::QuickTool::EditText;
+        self.notify_tr("Image pasted");
+        true
     }
 }
 

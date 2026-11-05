@@ -9323,10 +9323,13 @@ fn copy_pasted_image_discards_coordinates_and_moves_without_offset() {
     let images_after_paste = h.state().session.get(id).unwrap().page_images(0);
     assert_eq!(images_after_paste.len(), 2, "second image pasted");
 
-    // The pasted image should be centered on the page, not offset by (+20, -20) from the first image
+    // Thai edition: a page picture pasted on its own page is the same picture at the same size, one
+    // paste step (12 pt) down and right of it, as pasted text boxes and added pictures are, so the
+    // copy shows instead of hiding exactly on top.
     let img1 = &images_after_paste[0];
     let img2 = &images_after_paste[1];
-    assert_eq!(img1.rect, img2.rect, "pasted image placed using natural page centering");
+    let [x0, y0, x1, y1] = img1.rect;
+    assert_eq!(img2.rect, [x0 + 12.0, y0 - 12.0, x1 + 12.0, y1 - 12.0], "pasted at its size, a step down and right");
 
     // 4. Move the pasted image by an explicit Move change
     let target = [50.0, 50.0, 110.0, 110.0];

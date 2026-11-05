@@ -493,3 +493,40 @@ fn screen_contains(h: &Harness<'static, PdfCraftApp>, o: &EditableObject, p: Pos
     );
     r.expand(2.0).contains(p)
 }
+
+/// Thai edition: a paragraph copied with ⌘C and pasted with ⌘V comes out the same box as a
+/// Ctrl+drag copy of it: same size, font, size and look, only moved.
+#[test]
+fn a_pasted_paragraph_keeps_the_size_and_look_of_a_dragged_copy() {
+    let mut h = harness();
+    let p = at(&h, 55.0, 70.0);
+    let added = |h: &Harness<'static, PdfCraftApp>| {
+        let app = h.state();
+        app.session
+            .get(app.views[0].id)
+            .unwrap()
+            .added()
+            .iter()
+            .filter_map(|a| match &a.content {
+                pdfcraft_engine::AddedContent::Text(t) => Some(t.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    let notes = added(&h).len();
+    drag_with(&mut h, p, p + egui::vec2(0.0, 160.0), Modifiers::COMMAND);
+    let dragged = added(&h).last().cloned().expect("the dragged copy");
+    click(&mut h, p, Modifiers::NONE);
+    h.event(egui::Event::Copy);
+    h.run_steps(2);
+    h.event(egui::Event::Paste(dragged.text.clone()));
+    h.run_steps(4);
+    let all = added(&h);
+    assert_eq!(all.len(), notes + 2, "pasted once");
+    let pasted = all.last().unwrap();
+    let size = |r: [f64; 4]| (r[2] - r[0], r[3] - r[1]);
+    let ((w0, h0), (w1, h1)) = (size(dragged.rect), size(pasted.rect));
+    assert!((w0 - w1).abs() < 0.01 && (h0 - h1).abs() < 0.01, "same box: {:?} vs {:?}", dragged.rect, pasted.rect);
+    let look = |t: &pdfcraft_engine::AddedText| pdfcraft_engine::AddedText { rect: [0.0; 4], ..t.clone() };
+    assert_eq!(look(pasted), look(&dragged), "same text, font and look");
+}

@@ -178,3 +178,81 @@ fn a_page_picture_ctrl_dragged_on_its_own_page_is_copied_there() {
     assert!(doc.added().iter().all(|a| a.page == 0), "nothing went to page 2");
     assert_eq!(doc.can_undo(), Some("Copy object"), "one step, named as a copy");
 }
+
+/// A key pressed with Ctrl (⌘ on a Mac) and released.
+fn command_key(h: &mut Harness<'static, PdfCraftApp>, key: egui::Key) {
+    let m = egui::Modifiers::COMMAND;
+    h.event(egui::Event::Key { key, physical_key: None, pressed: true, repeat: false, modifiers: m });
+    h.event(egui::Event::Key { key, physical_key: None, pressed: false, repeat: false, modifiers: m });
+    h.run_steps(3);
+}
+
+/// Width and height of a box.
+fn size(r: [f64; 4]) -> (f64, f64) {
+    (r[2] - r[0], r[3] - r[1])
+}
+
+/// Thai edition: a page's own picture copied with Ctrl+C and pasted with Ctrl+V (or Paste in the
+/// page's menu) comes back the same picture at the same size, not a new one sized by its pixels;
+/// after Ctrl+X too.
+#[test]
+fn a_page_picture_copied_and_pasted_keeps_its_size() {
+    let mut h = two_pages();
+    h.state_mut().system_clipboard = false;
+    let id = h.state().views[0].id;
+    let c = h.state().views[0].page_screen_rect(0).expect("page 1 on screen").center();
+    let original = h.state().session.get(id).unwrap().page_images(0)[0].clone();
+    h.drag_at(c);
+    h.run_steps(1);
+    h.drop_at(c);
+    h.run_steps(2);
+    assert!(h.state().views[0].image_selection.is_some(), "selected");
+    command_key(&mut h, egui::Key::C);
+    command_key(&mut h, egui::Key::V);
+    let doc = h.state().session.get(id).unwrap();
+    let images = doc.page_images(0);
+    assert_eq!(images.len(), 2, "pasted once");
+    let pasted = images.iter().find(|im| im.rect != original.rect).expect("the paste");
+    let ((w0, h0), (w1, h1)) = (size(original.rect), size(pasted.rect));
+    assert!((w1 - w0).abs() < 0.01 && (h1 - h0).abs() < 0.01, "same size: {:?} vs {:?}", original.rect, pasted.rect);
+    assert!((pasted.rect[0] - original.rect[0] - 12.0).abs() < 0.01, "a step right of it: {:?}", pasted.rect);
+    assert_eq!(pasted.object, original.object, "the same picture, not a re-encoded copy");
+    assert_eq!(h.state().quick_tool, pdfcraft_ui_egui::QuickTool::EditText, "still in Edit text & images");
+    assert!(h.state().views[0].image_selection.is_some(), "with the paste selected");
+
+    // Cut, then paste: the picture is gone from the page, so its pixels go back in, at its size.
+    // Pressed by its top-left corner, which the paste (a step down and right) leaves uncovered.
+    let c = {
+        let doc = h.state().session.get(id).unwrap();
+        let (page, im) = (&doc.info.pages[0], &doc.page_images(0)[0]);
+        let screen = h.state().views[0].page_screen_rect(0).unwrap();
+        let k = screen.width() as f64 / page.width as f64;
+        egui::pos2(screen.left() + ((im.rect[0] + 4.0) * k) as f32, screen.top() + ((page.height as f64 - im.rect[3] + 4.0) * k) as f32)
+    };
+    let cut = h.state().session.get(id).unwrap().page_images(0)[0].rect;
+    h.hover_at(c);
+    h.run_steps(1);
+    h.drag_at(c);
+    h.run_steps(1);
+    h.drop_at(c);
+    h.run_steps(2);
+    command_key(&mut h, egui::Key::X);
+    assert_eq!(h.state().session.get(id).unwrap().page_images(0).len(), 1, "cut");
+    command_key(&mut h, egui::Key::V);
+    let images = h.state().session.get(id).unwrap().page_images(0);
+    assert_eq!(images.len(), 2, "pasted back");
+    let (wc, hc) = size(cut);
+    assert!(
+        images.iter().all(|im| (size(im.rect).0 - wc).abs() < 0.01 && (size(im.rect).1 - hc).abs() < 0.01),
+        "at its size: {:?}",
+        images.iter().map(|i| i.rect).collect::<Vec<_>>()
+    );
+
+    // Paste in the page's menu: centred where it was asked, at the same size.
+    assert!(h.state_mut().paste_image_at(1, [40.0, 30.0]));
+    h.run_steps(2);
+    let on_two = h.state().session.get(id).unwrap().page_images(1);
+    let r = on_two.first().expect("pasted on page 2").rect;
+    let (w2, h2) = size(r);
+    assert!((w2 - w0).abs() < 0.01 && (h2 - h0).abs() < 0.01, "same size on page 2: {r:?}");
+}

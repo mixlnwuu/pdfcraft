@@ -655,6 +655,9 @@ pub struct PdfCraftApp {
     pub comment_clip: Option<CommentClip>,
     /// An added picture copied with ⌘C, ready to paste (Thai edition).
     pub image_clip: Option<ImageClip>,
+    /// A picture of the page itself copied, pasted at its size while the clipboard still holds its
+    /// pixels (Thai edition).
+    pub(crate) page_image_clip: Option<state::PageImageClip>,
     /// Files dropped on the page grid, waiting for the pointer to say which gap they go to.
     grid_drop: Option<GridDrop>,
     /// The last snapshot (width, height, RGBA); `system_clipboard` also puts it on the

@@ -256,6 +256,22 @@ pub struct TextClip {
 /// How far each paste of a copied text box is offset from the last, in points.
 pub(crate) const PASTE_STEP: f64 = 12.0;
 
+/// A picture of the page itself copied (⌘C, ⌘X, or Copy / Cut in its menu; Thai edition): where it
+/// is and its whole box (display space), so that pasting it, while the clipboard still holds the
+/// pixels copied with it, gives the same picture at the same size instead of a new one sized by its
+/// pixels.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PageImageClip {
+    pub doc: pdfcraft_engine::DocId,
+    pub page: usize,
+    pub index: usize,
+    /// The image object it draws, to tell that `index` still is this picture.
+    pub object: Option<pdfcraft_cos::ObjRef>,
+    pub rect: [f64; 4],
+    /// How many times it was pasted: each paste on its own page lands a step further down and right.
+    pub pastes: u32,
+}
+
 /// An added picture copied with ⌘C in Edit a PDF (Thai edition), with the text put on the system
 /// clipboard for it, by which ⌘V knows the clipboard still holds it.
 #[derive(Clone, Debug, PartialEq)]
