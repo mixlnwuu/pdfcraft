@@ -11206,3 +11206,43 @@ fn arrange_to_front_and_back_past_word_style_interleaved_scopes() {
     assert!(s.find("/Im0 Do").unwrap() < s.find("(Cell)").unwrap(), "painted first: {s}");
     assert_eq!(images::page_images(&doc, 0).unwrap()[0].rect, [50.0, 50.0, 150.0, 150.0]);
 }
+
+/// Thai edition: a copy of a Word page's picture pasted as an added picture (Ctrl+C / Ctrl+V,
+/// Ctrl+drag) can be sent to the back and brought to the front too. Its own stream is tagged as
+/// an added item around the picture, which Arrange refused as "a nested marked-content sequence".
+#[test]
+fn an_added_copy_on_a_word_page_arranges_to_back_and_front() {
+    let content = "/P <</MCID 3>> BDC BT /F1 12 Tf 72 700 Td (First) Tj ET EMC \
+                   /P <</MCID 0>> BDC q 100 0 0 100 50 50 cm /Im0 Do Q EMC \
+                   /P <</MCID 1>> BDC q 0 0 100 100 re W n BT /F1 12 Tf 20 60 Td (Cell) Tj ET EMC \
+                   /P <</MCID 2>> BDC BT /F1 12 Tf 72 80 Td (Last) Tj ET Q EMC";
+    let mut doc = image_page_with(content);
+    let object = images::page_images(&doc, 0).unwrap()[0].object.unwrap();
+    crate::add_content(&mut doc, 0, &crate::Content::Image(crate::AddedImage::new([200.0, 300.0, 300.0, 400.0], object))).unwrap();
+    let doc0 = reopen(&doc);
+    let copy = images::page_images(&doc0, 0).unwrap().iter().position(|im| im.rect[0] > 150.0).expect("the copy");
+    // The original, now inside the page's content as PdfCraft wrapped it to add the copy on top.
+    let mut wrapped = doc0.clone();
+    let original = images::page_images(&wrapped, 0).unwrap().iter().position(|im| im.rect[0] < 150.0).unwrap();
+    arrange(&mut wrapped, 0, original, images::ArrangeOrder::SendToBack).unwrap();
+    let wrapped = reopen(&wrapped);
+    let s = String::from_utf8_lossy(&page_content_bytes(&wrapped, 0)).into_owned();
+    assert!(s.find("/Im0 Do").unwrap() < s.find("(First)").unwrap(), "the original goes to the back: {s}");
+    assert!(marked_sequence(&s, 0).contains("/Im0 Do"), "in its own tagged sequence: {s}");
+    assert_eq!(images::page_images(&wrapped, 0).unwrap().len(), 2);
+    let mut doc = doc0;
+    arrange(&mut doc, 0, copy, images::ArrangeOrder::SendToBack).unwrap();
+    let doc = reopen(&doc);
+    let s = String::from_utf8_lossy(&page_content_bytes(&doc, 0)).into_owned();
+    let images = images::page_images(&doc, 0).unwrap();
+    assert_eq!(images.len(), 2, "{s}");
+    let first_do = s.find(" Do").unwrap();
+    assert!(first_do < s.find("(First)").unwrap(), "the copy is painted first: {s}");
+    let copy = images.iter().position(|im| im.rect[0] > 150.0).expect("the copy is still there");
+    assert_eq!(images[copy].rect, [200.0, 300.0, 300.0, 400.0]);
+    let mut doc = doc;
+    arrange(&mut doc, 0, copy, images::ArrangeOrder::BringToFront).unwrap();
+    let doc = reopen(&doc);
+    let images = images::page_images(&doc, 0).unwrap();
+    assert!(images.iter().any(|im| im.rect == [200.0, 300.0, 300.0, 400.0]));
+}

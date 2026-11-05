@@ -1023,6 +1023,26 @@ fn target_destination_unit<'a>(
     dest.map(|u| (u, forward)).ok_or_else(refused)
 }
 
+/// The ops Arrange looks among for `target`'s unit, inside the `q %PdfCraft … Q` that PdfCraft
+/// wraps a page's content in before it adds an item on top (`place::WRAP_OPEN`; Thai edition):
+/// the wrapper only isolates that content's graphics state, so the page's own units are inside
+/// it, and the whole wrapper is no unit to move (nor one that nests the image in marked content).
+/// `data`: the bytes the ops' spans index. At most a few wrappers deep.
+fn inside_own_wrappers(ops: &[Op], data: &[u8], target: usize, mut start: usize, mut end: usize) -> (usize, usize) {
+    for _ in 0..8 {
+        let units = content_units(ops, start, end);
+        let Some(u) = units.iter().find(|u| u.contains(&target)) else { break };
+        let opens =
+            ops.get(u.start).filter(|o| o.is("q")).and_then(|o| data.get(o.span.start..)).is_some_and(|d| d.starts_with(crate::place::WRAP_OPEN));
+        let closes = u.end.checked_sub(1).and_then(|i| ops.get(i)).is_some_and(|o| o.is("Q"));
+        if !opens || !closes || u.end <= u.start.saturating_add(2) {
+            break;
+        }
+        (start, end) = (u.start.saturating_add(1), u.end.saturating_sub(1));
+    }
+    (start, end)
+}
+
 /// Thai edition: Word interleaves `q … Q` with marked content (a `q` opened in one tagged sequence
 /// and closed in a later one), so the first or last unit may not be balanced. Bring to Front / Send
 /// to Back don't need it: the image then goes in a content stream of its own after (`Some(true)`)
@@ -1224,6 +1244,7 @@ fn arrange_image(
 
     let is_wrapped = is_entire_page_wrapped(&ops);
     let (scan_start, scan_end) = if is_wrapped { (1, ops.len().saturating_sub(1)) } else { (0, ops.len()) };
+    let (scan_start, scan_end) = inside_own_wrappers(&ops, pieces.data(), target, scan_start, scan_end);
     let units = content_units(&ops, scan_start, scan_end);
     let Some((target_idx, target_unit)) = units.iter().enumerate().find(|(_, u)| u.contains(&target)) else {
         return Err(EditError::Invalid("the image content unit could not be located".into()));
