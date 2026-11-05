@@ -21,6 +21,46 @@ pub(crate) struct Bands<'a> {
     pub width: f64,
     /// Per page, per block: a header or footer block.
     pub skip: Vec<Vec<bool>>,
+    /// The rule drawn under the header, and over the footer, at the same place on every page: its
+    /// colour and thickness (Thai edition).
+    pub header_rule: Option<([f64; 3], f64)>,
+    pub footer_rule: Option<([f64; 3], f64)>,
+}
+
+/// How far (points) below the header's last line, or above the footer's first, its rule may be.
+const RULE_GAP: f64 = 24.0;
+
+/// The rule every page draws across most of its width in the band, just under (`top`) the header's
+/// lowest line at `edge`, or just over the footer's highest one, at the same height on every page.
+fn band_rule(pages: &[Page], top: bool, edge: f64) -> Option<([f64; 3], f64)> {
+    let first = pages.first()?;
+    let band = (first.height * BAND).max(BAND_MIN);
+    let rule_at = |p: &Page, near: Option<f64>| {
+        p.shapes
+            .iter()
+            .find(|s| {
+                let r = s.rect;
+                let (w, h) = (r[2] - r[0], r[3] - r[1]);
+                let y = (r[1] + r[3]) / 2.0;
+                let placed = if top {
+                    y < edge && y >= edge - RULE_GAP && y >= p.height - band - RULE_GAP
+                } else {
+                    y > edge && y <= edge + RULE_GAP && y <= band + RULE_GAP
+                };
+                s.rule
+                    && r.iter().all(|v| v.is_finite())
+                    && w >= p.width * 0.4
+                    && h <= w
+                    && placed
+                    && near.is_none_or(|n| (y - n).abs() <= SAME_PLACE)
+            })
+            .map(|s| (s.color, (s.rect[3] - s.rect[1]).max(0.25), (s.rect[1] + s.rect[3]) / 2.0))
+    };
+    let (color, thick, y) = rule_at(first, None)?;
+    if !pages.iter().skip(1).all(|p| rule_at(p, Some(y)).is_some()) {
+        return None;
+    }
+    Some((color, thick))
 }
 
 /// A block's text with its digits as `#`: "Page 1 of 2" and "Page 2 of 2" are the same footer.
@@ -87,7 +127,9 @@ pub(crate) fn bands(pages: &[Page]) -> Bands<'_> {
     for list in [&mut header, &mut footer] {
         list.sort_by(|a, b| b.rect[3].total_cmp(&a.rect[3]).then(a.rect[0].total_cmp(&b.rect[0])));
     }
-    Bands { header, footer, width: pages.first().map_or(0.0, |p| p.width), skip }
+    let header_rule = header.iter().map(|b| b.rect[1]).reduce(f64::min).and_then(|edge| band_rule(pages, true, edge));
+    let footer_rule = footer.iter().map(|b| b.rect[3]).reduce(f64::max).and_then(|edge| band_rule(pages, false, edge));
+    Bands { header, footer, width: pages.first().map_or(0.0, |p| p.width), skip, header_rule, footer_rule }
 }
 
 /// A footer's text in pieces: plain text, the page number (`Some(true)`) and the page count

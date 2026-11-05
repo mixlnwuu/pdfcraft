@@ -552,7 +552,11 @@ fn tables_skipping(blocks: &[Block], skip: &[bool]) -> (Vec<Table>, Vec<bool>) {
             let mut cs: Vec<usize> = cells.iter().map(|(c, _)| *c).collect();
             cs.sort_unstable();
             cs.dedup();
-            apart && cs.len() >= 2
+            // A number alone before a line ("1.", "๒)") is a numbered item, not a table's first
+            // column (Thai edition: Word numbers its lists so).
+            let leftmost = cells.iter().filter_map(|(_, bi)| blocks.get(*bi)).min_by(|a, b| a.rect[0].total_cmp(&b.rect[0]));
+            let numbered = cs.len() == 2 && leftmost.is_some_and(|b| crate::lists::number_prefix(&b.text).is_some_and(|n| n.3.is_empty()));
+            apart && cs.len() >= 2 && !numbered
         })
         .collect();
     let mut i = 0;

@@ -83,6 +83,61 @@ pub fn list_items(b: Block, rows: &[String], dots: &[[f64; 4]]) -> Vec<Block> {
     out
 }
 
+/// Lines set centred on the page, one under another (a name and a job title under a signature
+/// line, a two-line heading), are the lines of `b` (its visual `rows`, top to bottom) on a page
+/// `page_width` wide: one block each, so that each stays a centred line in Word instead of one
+/// paragraph that runs them together (Thai edition). `b` alone otherwise.
+pub fn centred_lines(b: Block, rows: &[String], page_width: f64) -> Vec<Block> {
+    let rows: Vec<&str> = rows.iter().map(|r| r.trim()).filter(|r| !r.is_empty()).collect();
+    let (x0, x1) = (b.rect[0], b.rect[2]);
+    let height = b.rect[3] - b.rect[1];
+    let centred = page_width.is_finite()
+        && page_width > 0.0
+        && ((x0 + x1) / 2.0 - page_width / 2.0).abs() <= page_width * 0.04
+        && x0 > page_width * 0.15
+        && b.rotation.abs() <= 0.1
+        && !b.bullet;
+    if rows.len() < 2 || !centred || !height.is_finite() || height <= 0.0 {
+        return vec![b];
+    }
+    let row_h = height / rows.len() as f64;
+    rows.iter()
+        .enumerate()
+        .map(|(i, row)| {
+            let top = b.rect[3] - row_h * i as f64;
+            Block { text: (*row).to_string(), rect: [x0, top - row_h, x1, top], space_around: [false; 2], ..b.clone() }
+        })
+        .collect()
+}
+
+/// A numbered item's number at the start of `text` (Thai edition): "1.", "12)" or "๑." followed
+/// by a space or nothing more. The number, whether in Thai digits, whether closed by ")", and the
+/// text after it.
+pub(crate) fn number_prefix(text: &str) -> Option<(u32, bool, bool, &str)> {
+    let t = text.trim_start();
+    let digits: String = t.chars().take_while(|c| c.is_ascii_digit() || ('\u{0E50}'..='\u{0E59}').contains(c)).collect();
+    if digits.is_empty() || digits.chars().count() > 3 {
+        return None;
+    }
+    let thai = digits.chars().all(|c| ('\u{0E50}'..='\u{0E59}').contains(&c));
+    if !thai && !digits.chars().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    let value = digits.chars().try_fold(0u32, |n, c| {
+        let d = if thai { u32::from(c).checked_sub(0x0E50)? } else { c.to_digit(10)? };
+        n.checked_mul(10)?.checked_add(d)
+    })?;
+    let rest = t.get(digits.len()..)?;
+    let mut chars = rest.chars();
+    let paren = match chars.next()? {
+        '.' => false,
+        ')' => true,
+        _ => return None,
+    };
+    let after = chars.as_str();
+    (value > 0 && (after.is_empty() || after.starts_with(char::is_whitespace))).then(|| (value, thai, paren, after.trim_start()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -133,5 +188,34 @@ mod tests {
         assert!(!plain[0].bullet);
         let far = list_items(para(1), &rows(&["Text"]), &[[10.0, 608.0, 14.0, 612.0]]);
         assert!(!far[0].bullet, "a dot far to the left is not this line's bullet");
+    }
+
+    /// Thai edition: a centred block's lines stay lines; a body paragraph (left, full width) and a
+    /// one-line block are left alone.
+    #[test]
+    fn centred_lines_split_only_a_centred_block() {
+        let named = Block { rect: [215.0, 382.0, 380.0, 414.0], ..para(2) };
+        let lines = centred_lines(named, &rows(&["(นายสมชาย ใจดี)", "ผู้จัดการฝ่าย"]), 595.0);
+        assert_eq!(lines.iter().map(|b| b.text.as_str()).collect::<Vec<_>>(), ["(นายสมชาย ใจดี)", "ผู้จัดการฝ่าย"]);
+        assert!(lines[0].rect[1] >= lines[1].rect[3] - 0.01, "top line first: {lines:?}");
+        let body = Block { rect: [72.0, 382.0, 523.0, 414.0], ..para(2) };
+        assert_eq!(centred_lines(body, &rows(&["a long line that wraps", "on to the next"]), 595.0).len(), 1, "full width");
+        let left = Block { rect: [100.0, 382.0, 200.0, 414.0], ..para(2) };
+        assert_eq!(centred_lines(left, &rows(&["Name", "Title"]), 595.0).len(), 1, "not centred");
+        assert_eq!(centred_lines(Block { rect: [215.0, 382.0, 380.0, 414.0], ..para(1) }, &rows(&["One"]), 595.0).len(), 1);
+    }
+
+    #[test]
+    fn number_prefixes() {
+        assert_eq!(number_prefix("1. ใช้งานระบบ"), Some((1, false, false, "ใช้งานระบบ")));
+        assert_eq!(number_prefix("  12) Twelve"), Some((12, false, true, "Twelve")));
+        assert_eq!(number_prefix("๓. สาม"), Some((3, true, false, "สาม")));
+        assert_eq!(number_prefix("2."), Some((2, false, false, "")));
+        assert_eq!(number_prefix("1.5 kg"), None, "a decimal number");
+        assert_eq!(number_prefix("2024. Year"), None, "four digits");
+        assert_eq!(number_prefix("0. Zero"), None);
+        assert_eq!(number_prefix("19/03/2024"), None);
+        assert_eq!(number_prefix("Text 1."), None);
+        assert_eq!(number_prefix("1๒. mixed"), None);
     }
 }

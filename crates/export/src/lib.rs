@@ -42,7 +42,7 @@ pub use layout::{Block, Cell, HAlign, Image, Page, Shape, Table, TableBorder};
 #[cfg(test)]
 use layout::{LOOKUP_STEPS, MAX_COLS, body_size};
 pub(crate) use layout::{Run, paragraphs, tables};
-pub use lists::list_items;
+pub use lists::{centred_lines, list_items};
 
 #[cfg(test)]
 mod tests;

@@ -262,8 +262,13 @@ impl crate::Document {
                             font: b.base_font,
                             bullet: false,
                         };
-                        // A paragraph with a bullet before its lines is a list, one item each.
-                        pdfcraft_export::list_items(block, &rows, &dots)
+                        // A paragraph with a bullet before its lines is a list, one item each; lines
+                        // set centred stay lines of their own (Thai edition).
+                        let items = pdfcraft_export::list_items(block, &rows, &dots);
+                        match <[pdfcraft_export::Block; 1]>::try_from(items) {
+                            Ok([one]) => pdfcraft_export::centred_lines(one, &rows, f64::from(info.width)),
+                            Err(items) => items,
+                        }
                     })
                     .collect();
                 let placed = if images { pdfcraft_edit::reading_images(cos, i).unwrap_or_default() } else { Vec::new() };

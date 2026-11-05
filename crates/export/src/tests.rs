@@ -1056,3 +1056,101 @@ fn bullets_boxes_lines_and_centring_keep_their_look() {
     assert!(title.rsplit("<w:p>").next().unwrap_or("").contains("<w:jc w:val=\"center\"/>"), "the title is centred: {xml}");
     assert!(part(&zip, "word/_rels/document.xml.rels").contains("Target=\"numbering.xml\""));
 }
+
+/// Thai edition: two centred lines under a signature line (the name, then the job title) stay two
+/// centred lines in Word, not one paragraph that runs them together.
+#[test]
+fn two_centred_lines_stay_two_centred_lines() {
+    let mut p = Page { width: 595.0, height: 842.0, ..Default::default() };
+    p.blocks.push(block("เนื้อหาย่อหน้าแรกของหน้า ยาวพอให้ชิดซ้าย", 72.0, 700.0, 400.0, 714.0));
+    p.blocks.push(block("(นายสมชาย ใจดี)", 245.0, 400.0, 350.0, 414.0));
+    p.blocks.push(block("ผู้จัดการฝ่ายเทคโนโลยีสารสนเทศ", 215.0, 382.0, 380.0, 396.0));
+    let zip = docx(&[p], "Names");
+    let xml = part(&zip, "word/document.xml");
+    let paras = word_paragraphs(&xml);
+    let with = |t: &str| xml.split(t).next().unwrap_or("").rsplit("<w:p>").next().unwrap_or("").to_string();
+    assert!(with("(นายสมชาย ใจดี)").contains("<w:jc w:val=\"center\"/>"), "the name is centred: {xml}");
+    let name_para = paras.iter().position(|p| p.iter().any(|(t, _)| t.contains("สมชาย"))).expect("the name");
+    let title_para = paras.iter().position(|p| p.iter().any(|(t, _)| t.contains("ผู้จัดการ"))).expect("the title");
+    assert!(name_para != title_para || xml.contains("<w:br/>"), "on lines of their own: {paras:?}");
+    assert!(with("ผู้จัดการฝ่าย").contains("<w:jc w:val=\"center\"/>") || name_para == title_para, "the title is centred too: {xml}");
+}
+
+/// Thai edition: the rule a running header draws under itself on every page is the header's own
+/// border in Word, not lost and not a line in the body.
+#[test]
+fn a_header_rule_stays_under_the_header() {
+    let page_n = |n: usize| Page {
+        width: 595.0,
+        height: 842.0,
+        blocks: vec![block("บริษัท ตัวอย่าง จำกัด", 72.0, 805.0, 260.0, 817.0), block(&format!("Body of page {n}"), 72.0, 700.0, 200.0, 712.0)],
+        shapes: vec![Shape { rect: [72.0, 795.0, 523.0, 796.0], color: [0.0, 0.3, 0.6], rule: true, dot: false }],
+        ..Default::default()
+    };
+    let zip = docx(&[page_n(1), page_n(2)], "Rule");
+    let header = part(&zip, "word/header1.xml");
+    assert!(header.contains("<w:pBdr><w:bottom w:val=\"single\" w:sz=\"8\" w:space=\"4\" w:color=\"004D99\"/></w:pBdr>"), "{header}");
+    let doc = part(&zip, "word/document.xml");
+    assert!(!doc.contains("<w:tcBorders><w:bottom"), "not a line in the body: {doc}");
+    // A rule on the first page only is no header rule.
+    let mut other = page_n(2);
+    other.shapes.clear();
+    let zip = docx(&[page_n(1), other], "Rule");
+    assert!(!part(&zip, "word/header1.xml").contains("w:pBdr"));
+}
+
+/// Thai edition: numbered items ("1." before the text, in a block of its own or in the text,
+/// Thai digits too) are Word's own numbered list: the numbers leave the text, each list starts at
+/// its first number, and a list that starts again at 1 is a list of its own.
+#[test]
+fn numbered_items_become_words_numbered_list() {
+    let mut p = Page { width: 595.0, height: 842.0, ..Default::default() };
+    p.blocks.push(block("1.", 100.0, 700.0, 110.0, 712.0));
+    p.blocks.push(block("ใช้งานระบบเฉพาะงานของบริษัท", 125.0, 700.0, 400.0, 712.0));
+    // The number a hair lower than its line, as Word's PDFs often set it.
+    p.blocks.push(block("2.", 100.0, 679.0, 110.0, 691.0));
+    p.blocks.push(block("ไม่เปิดเผยข้อมูลขององค์กร", 125.0, 680.0, 380.0, 692.0));
+    p.blocks.push(block("ข้อความคั่นกลาง ยาวพอให้เป็นย่อหน้าธรรมดา", 72.0, 640.0, 400.0, 652.0));
+    p.blocks.push(block("๑. ข้อแรกเลขไทย", 100.0, 600.0, 300.0, 612.0));
+    p.blocks.push(block("๒. ข้อสองเลขไทย", 100.0, 580.0, 300.0, 592.0));
+    let zip = docx(&[p], "Numbers");
+    let xml = part(&zip, "word/document.xml");
+    let numbering = part(&zip, "word/numbering.xml");
+    assert_eq!(xml.matches("<w:numId w:val=\"2\"/>").count(), 2, "the first list: {xml}");
+    assert_eq!(xml.matches("<w:numId w:val=\"3\"/>").count(), 2, "the Thai-digit list: {xml}");
+    assert!(!xml.contains(">1.<") && !xml.contains(">2.<") && !xml.contains("๑.") && !xml.contains("๒."), "the numbers left the text: {xml}");
+    assert!(xml.contains(">ใช้งานระบบเฉพาะงานของบริษัท<") && xml.contains(">ข้อแรกเลขไทย<"), "{xml}");
+    assert!(numbering.contains("w:numFmt w:val=\"decimal\"") && numbering.contains("w:numFmt w:val=\"thaiNumbers\""), "{numbering}");
+    assert!(
+        numbering.contains("<w:num w:numId=\"2\"><w:abstractNumId w:val=\"1\"/><w:lvlOverride w:ilvl=\"0\"><w:startOverride w:val=\"1\"/>"),
+        "{numbering}"
+    );
+    assert!(numbering.contains("<w:num w:numId=\"3\"><w:abstractNumId w:val=\"3\"/>"), "{numbering}");
+    assert!(part(&zip, "word/_rels/document.xml.rels").contains("Target=\"numbering.xml\""));
+    // A number on a line of its own, with nothing after it, stays text: no empty numbered item.
+    let mut p = Page { width: 595.0, height: 842.0, ..Default::default() };
+    p.blocks.push(block("3.", 100.0, 700.0, 110.0, 712.0));
+    p.blocks.push(block("ข้อความบรรทัดถัดไป", 125.0, 660.0, 300.0, 672.0));
+    let zip = docx(&[p], "Alone");
+    assert!(part(&zip, "word/document.xml").contains(">3.<"), "kept as text");
+    // Text that only starts with a number ("1.5 kg") stays text.
+    let mut p = Page { width: 595.0, height: 842.0, ..Default::default() };
+    p.blocks.push(block("1.5 kg of rice", 72.0, 700.0, 200.0, 712.0));
+    let zip = docx(&[p], "Plain");
+    assert!(part(&zip, "word/document.xml").contains(">1.5 kg of rice<"));
+    assert!(!zip.windows(b"word/numbering.xml".len()).any(|w| w == b"word/numbering.xml"), "no numbering part");
+}
+
+/// Thai edition: the indented first line of a justified paragraph, which runs to the right margin,
+/// is not taken for a centred line although its middle is near the page's.
+#[test]
+fn an_indented_justified_line_is_not_centred() {
+    let mut p = Page { width: 595.0, height: 842.0, ..Default::default() };
+    p.blocks.push(block("บรรทัดแรกของย่อหน้าที่เยื้องเข้าและยาวจนชนขอบขวาของหน้า", 108.0, 700.0, 523.0, 712.0));
+    p.blocks.push(block("หัวเรื่องกลางหน้า", 230.0, 760.0, 365.0, 776.0));
+    let zip = docx(&[p], "Indent");
+    let xml = part(&zip, "word/document.xml");
+    let props = |t: &str| xml.split(t).next().unwrap_or("").rsplit("<w:p>").next().unwrap_or("").to_string();
+    assert!(!props("บรรทัดแรกของย่อหน้า").contains("<w:jc w:val=\"center\"/>"), "{xml}");
+    assert!(props("หัวเรื่องกลางหน้า").contains("<w:jc w:val=\"center\"/>"), "a title still is: {xml}");
+}

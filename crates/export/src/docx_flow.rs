@@ -121,9 +121,83 @@ pub(crate) fn before(look: &PageLook<'_>, above: Option<f64>, top: f64) -> i64 {
     twips((from - top - AFTER).clamp(0.0, MAX_GAP))
 }
 
-/// A flowing paragraph's properties: its heading style, list bullet, box, the space above it,
-/// its indent and alignment, as `<w:pPr>…</w:pPr>`.
-pub(crate) fn paragraph_props(look: &PageLook<'_>, first: &Block, last_right: f64, level: u8, before_twips: i64) -> String {
+/// A numbered list's look (Thai edition): Thai digits, and ")" after the number instead of ".".
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct NumberStyle {
+    pub thai: bool,
+    pub paren: bool,
+}
+
+/// The numbered lists of a Word document (Thai edition): each its own numbering instance (numId 2
+/// on; 1 is the bullet), starting at its first item's number. An item continues the last list when
+/// it has the same style and the next number; otherwise it starts a list.
+#[derive(Default)]
+pub(crate) struct Numbering {
+    lists: Vec<(NumberStyle, u32)>,
+    last: Option<(NumberStyle, u32, u32)>,
+    pub bullets: bool,
+}
+
+impl Numbering {
+    /// The numId for item `n` in `style`.
+    pub(crate) fn item(&mut self, style: NumberStyle, n: u32) -> u32 {
+        if let Some((s, last, id)) = self.last
+            && s == style
+            && last.checked_add(1) == Some(n)
+        {
+            self.last = Some((style, n, id));
+            return id;
+        }
+        self.lists.push((style, n));
+        let id = u32::try_from(self.lists.len()).unwrap_or(u32::MAX).saturating_add(1);
+        self.last = Some((style, n, id));
+        id
+    }
+
+    pub(crate) fn is_used(&self) -> bool {
+        self.bullets || !self.lists.is_empty()
+    }
+
+    /// The numbering part: the bullet (numId 1), and an instance per numbered list over one
+    /// abstract numbering per style.
+    pub(crate) fn part(&self) -> String {
+        let mut s = String::from(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<w:numbering xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">",
+        );
+        s.push_str(BULLET_ABSTRACT);
+        let styles = [(false, false), (false, true), (true, false), (true, true)];
+        for (k, (thai, paren)) in styles.iter().enumerate() {
+            let fmt = if *thai { "thaiNumbers" } else { "decimal" };
+            let text = if *paren { "%1)" } else { "%1." };
+            s.push_str(&format!(
+                "<w:abstractNum w:abstractNumId=\"{}\"><w:multiLevelType w:val=\"singleLevel\"/><w:lvl w:ilvl=\"0\"><w:start w:val=\"1\"/><w:numFmt w:val=\"{fmt}\"/><w:lvlText w:val=\"{text}\"/><w:lvlJc w:val=\"left\"/><w:pPr><w:ind w:left=\"360\" w:hanging=\"360\"/></w:pPr></w:lvl></w:abstractNum>",
+                k + 1
+            ));
+        }
+        s.push_str("<w:num w:numId=\"1\"><w:abstractNumId w:val=\"0\"/></w:num>");
+        for (i, (style, start)) in self.lists.iter().enumerate() {
+            let abstract_id = 1 + usize::from(style.thai) * 2 + usize::from(style.paren);
+            s.push_str(&format!(
+                "<w:num w:numId=\"{}\"><w:abstractNumId w:val=\"{abstract_id}\"/><w:lvlOverride w:ilvl=\"0\"><w:startOverride w:val=\"{start}\"/></w:lvlOverride></w:num>",
+                i + 2
+            ));
+        }
+        s.push_str("</w:numbering>");
+        s
+    }
+}
+
+/// A flowing paragraph's properties: its heading style, list bullet or number (`numbered`: its
+/// numId, and how far the text starts right of the number, points), box, the space above it, its
+/// indent and alignment, as `<w:pPr>…</w:pPr>`.
+pub(crate) fn paragraph_props(
+    look: &PageLook<'_>,
+    first: &Block,
+    last_right: f64,
+    level: u8,
+    before_twips: i64,
+    numbered: Option<(u32, f64)>,
+) -> String {
     let mut p = String::from("<w:pPr>");
     match level {
         1 => p.push_str("<w:pStyle w:val=\"Heading1\"/>"),
@@ -132,6 +206,8 @@ pub(crate) fn paragraph_props(look: &PageLook<'_>, first: &Block, last_right: f6
     }
     if first.bullet {
         p.push_str("<w:numPr><w:ilvl w:val=\"0\"/><w:numId w:val=\"1\"/></w:numPr>");
+    } else if let Some((id, _)) = numbered {
+        p.push_str(&format!("<w:numPr><w:ilvl w:val=\"0\"/><w:numId w:val=\"{id}\"/></w:numPr>"));
     }
     let [left_margin, _] = look.margin;
     let (x0, x1, width) = (first.rect[0], last_right, look.page.width);
@@ -150,11 +226,21 @@ pub(crate) fn paragraph_props(look: &PageLook<'_>, first: &Block, last_right: f6
     }
     p.push_str(&format!("<w:spacing w:before=\"{before_twips}\"/>"));
     let mid = (x0 + x1) / 2.0;
-    let centred = !first.bullet && shaded.is_none() && (mid - width / 2.0).abs() <= width * 0.04 && x0 - left_margin > 12.0;
-    let right = !first.bullet && !centred && x0 > width * 0.45 && x1 >= width - left_margin - 8.0;
+    let listed = first.bullet || numbered.is_some();
+    // A wide line that runs to the right margin is an indented first line of justified text, not
+    // a centred one, even when its middle falls near the page's (Thai edition).
+    let text_width = (width - 2.0 * left_margin).max(1.0);
+    let justified = x1 >= width - left_margin - 4.0 && x1 - x0 > text_width * 0.6;
+    let centred = !listed && !justified && shaded.is_none() && (mid - width / 2.0).abs() <= width * 0.04 && x0 - left_margin > 12.0;
+    let right = !listed && !centred && x0 > width * 0.45 && x1 >= width - left_margin - 8.0;
     if first.bullet {
         let left = (x0 - left_margin).max(18.0);
         p.push_str(&format!("<w:ind w:left=\"{}\" w:hanging=\"{}\"/>", twips(left), twips(14.0)));
+    } else if let Some((_, hang)) = numbered {
+        // The number where the page has it, the text where the page starts it.
+        let hang = if hang.is_finite() { hang.clamp(12.0, 72.0) } else { 18.0 };
+        let left = (x0 - left_margin).max(0.0) + hang;
+        p.push_str(&format!("<w:ind w:left=\"{}\" w:hanging=\"{}\"/>", twips(left), twips(hang)));
     } else if !centred && !right && x0 - left_margin > 6.0 && shaded.is_none() {
         p.push_str(&format!("<w:ind w:left=\"{}\"/>", twips(x0 - left_margin)));
     }
@@ -179,8 +265,6 @@ pub(crate) fn line_xml(look: &PageLook<'_>, l: &Line) -> String {
     )
 }
 
-/// The numbering part a bulleted list refers to (numId 1): a bullet, hanging before the text.
-pub(crate) const NUMBERING: &str = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<w:numbering xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
-<w:abstractNum w:abstractNumId=\"0\"><w:multiLevelType w:val=\"singleLevel\"/><w:lvl w:ilvl=\"0\"><w:start w:val=\"1\"/><w:numFmt w:val=\"bullet\"/><w:lvlText w:val=\"\u{2022}\"/><w:lvlJc w:val=\"left\"/>\
-<w:pPr><w:ind w:left=\"360\" w:hanging=\"280\"/></w:pPr><w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:cs=\"Arial\"/></w:rPr></w:lvl></w:abstractNum>\
-<w:num w:numId=\"1\"><w:abstractNumId w:val=\"0\"/></w:num></w:numbering>";
+/// The bullet a bulleted list refers to (numId 1): a bullet, hanging before the text.
+const BULLET_ABSTRACT: &str = "<w:abstractNum w:abstractNumId=\"0\"><w:multiLevelType w:val=\"singleLevel\"/><w:lvl w:ilvl=\"0\"><w:start w:val=\"1\"/><w:numFmt w:val=\"bullet\"/><w:lvlText w:val=\"\u{2022}\"/><w:lvlJc w:val=\"left\"/>\
+<w:pPr><w:ind w:left=\"360\" w:hanging=\"280\"/></w:pPr><w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:cs=\"Arial\"/></w:rPr></w:lvl></w:abstractNum>";

@@ -280,13 +280,116 @@ fn section(page: &Page, bands: &Bands<'_>) -> String {
     )
 }
 
+/// A flowing paragraph, its runs from left to right (Thai edition: a number before the text,
+/// "1." or "๒)", is Word's own numbering: the number leaves the text, and a run that was only the
+/// number goes; only with text after it, so a number on a line of its own stays text).
+fn para_xml(
+    look: &super::docx_flow::PageLook<'_>,
+    runs: &[super::layout::Run<'_>],
+    lvl: u8,
+    gap: i64,
+    numbering: &mut super::docx_flow::Numbering,
+) -> String {
+    let (Some(first), Some(last)) = (runs.first(), runs.last()) else { return String::new() };
+    numbering.bullets |= first.block.bullet;
+    let number = (!first.block.bullet && lvl == 0)
+        .then(|| super::lists::number_prefix(&first.text))
+        .flatten()
+        .filter(|n| !n.3.is_empty() || runs.iter().skip(1).any(|r| !r.text.trim().is_empty()));
+    let numbered = number.map(|(n, thai, paren, rest)| {
+        let id = numbering.item(super::docx_flow::NumberStyle { thai, paren }, n);
+        let text_x = if rest.is_empty() { runs.get(1).map_or(first.block.rect[0] + 18.0, |r| r.block.rect[0]) } else { first.block.rect[0] + 18.0 };
+        (id, text_x - first.block.rect[0], rest.to_string(), rest.is_empty())
+    });
+    let mut s = String::from("<w:p>");
+    s.push_str(&super::docx_flow::paragraph_props(
+        look,
+        first.block,
+        last.block.rect[2],
+        lvl,
+        gap,
+        numbered.as_ref().map(|(id, hang, ..)| (*id, *hang)),
+    ));
+    for (k, r) in runs.iter().enumerate() {
+        let text = match &numbered {
+            Some((_, _, rest, _)) if k == 0 => rest.as_str(),
+            Some((.., true)) if k == 1 => r.text.trim_start(),
+            _ => r.text.as_str(),
+        };
+        if !text.is_empty() {
+            s.push_str(&run_xml(
+                text,
+                Look { font: &r.block.font, size: r.block.size, bold: r.block.bold, italic: r.block.italic, color: r.block.color },
+            ));
+        }
+    }
+    s.push_str("</w:p>");
+    s
+}
+
+/// A number alone ("1.") that the page sets before a line of text, which the flow made a paragraph
+/// of its own, joins the paragraph on its right on the same line, so that the two become one
+/// numbered item (Thai edition).
+fn join_numbers(items: Vec<Item<'_>>) -> Vec<Item<'_>> {
+    let mut out: Vec<Item<'_>> = Vec::with_capacity(items.len());
+    for it in items {
+        if let Item::Para(runs, lvl) = it {
+            let joins = match out.last() {
+                Some(Item::Para(prev, 0)) => match (prev.as_slice(), runs.first()) {
+                    ([number], Some(next)) => {
+                        super::lists::number_prefix(&number.text).is_some_and(|n| n.3.is_empty())
+                            && (number.block.rect[3] - next.block.rect[3]).abs() <= 3.0
+                            && next.block.rect[0] >= number.block.rect[2] - 1.0
+                    }
+                    _ => false,
+                },
+                _ => false,
+            };
+            if joins && let Some(Item::Para(prev, _)) = out.last_mut() {
+                prev.extend(runs);
+                continue;
+            }
+            // The number set a hair lower than its line comes after it: it goes in front.
+            let lone_number = lvl == 0 && matches!(runs.as_slice(), [n] if super::lists::number_prefix(&n.text).is_some_and(|p| p.3.is_empty()));
+            let before_line = match (out.last(), runs.first()) {
+                (Some(Item::Para(prev, 0)), Some(number)) => prev
+                    .first()
+                    .is_some_and(|line| (number.block.rect[3] - line.block.rect[3]).abs() <= 3.0 && line.block.rect[0] >= number.block.rect[2] - 1.0),
+                _ => false,
+            };
+            if lone_number
+                && before_line
+                && let Some(Item::Para(prev, _)) = out.last_mut()
+            {
+                let mut joined = runs;
+                joined.append(prev);
+                *prev = joined;
+                continue;
+            }
+            out.push(Item::Para(runs, lvl));
+        } else {
+            out.push(it);
+        }
+    }
+    out
+}
+
 /// A header or footer part (Thai edition): one paragraph per block, placed across the page as
-/// the page has it, the page number and page count as fields.
-fn band_part(tag: &str, blocks: &[&Block], width: f64, pages: usize) -> String {
+/// the page has it, the page number and page count as fields, and the rule the page draws under
+/// the header (over the footer) as its last (first) paragraph's border.
+fn band_part(tag: &str, blocks: &[&Block], width: f64, pages: usize, rule: Option<([f64; 3], f64)>) -> String {
     let mut s = format!(
         "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<w:{tag} xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">"
     );
-    for b in blocks {
+    let header = tag == "hdr";
+    let ruled = rule.map(|(color, thick)| {
+        let c = hex(color).unwrap_or_else(|| "000000".into());
+        let sz = if thick.is_finite() { (thick * 8.0).round().clamp(2.0, 96.0) as i64 } else { 4 };
+        let side = if header { "bottom" } else { "top" };
+        format!("<w:pBdr><w:{side} w:val=\"single\" w:sz=\"{sz}\" w:space=\"4\" w:color=\"{c}\"/></w:pBdr>")
+    });
+    let edge = if header { blocks.len().saturating_sub(1) } else { 0 };
+    for (k, b) in blocks.iter().enumerate() {
         let mid = (b.rect[0] + b.rect[2]) / 2.0;
         let jc = if (mid - width / 2.0).abs() <= width * 0.08 {
             "center"
@@ -295,7 +398,8 @@ fn band_part(tag: &str, blocks: &[&Block], width: f64, pages: usize) -> String {
         } else {
             "left"
         };
-        s.push_str(&format!("<w:p><w:pPr><w:spacing w:before=\"0\" w:after=\"0\"/><w:jc w:val=\"{jc}\"/></w:pPr>"));
+        let border = if k == edge { ruled.as_deref().unwrap_or_default() } else { "" };
+        s.push_str(&format!("<w:p><w:pPr>{border}<w:spacing w:before=\"0\" w:after=\"0\"/><w:jc w:val=\"{jc}\"/></w:pPr>"));
         let look = Look { font: &b.font, size: b.size, bold: b.bold, italic: b.italic, color: b.color };
         for (piece, field) in super::bands::fields(b.text.trim(), 1, pages) {
             match field {
@@ -330,8 +434,8 @@ pub fn docx(pages: &[Page], title: &str) -> Vec<u8> {
     // Word needs a paragraph between adjacent tables and after the last one in the body.
     let mut after_table = false;
     let mut shape_id = 0usize;
-    // A bulleted list's numbering part is written when a paragraph uses it (Thai edition).
-    let mut bullets = false;
+    // The numbering part is written when a paragraph uses a bullet or a number (Thai edition).
+    let mut numbering = super::docx_flow::Numbering::default();
     for (page_index, page) in pages.iter().enumerate() {
         let (pw, _) = word_page_size(page);
         let text_w = (pw - 2 * (pw / 8).min(1440)) as f64 / 20.0;
@@ -349,7 +453,7 @@ pub fn docx(pages: &[Page], title: &str) -> Vec<u8> {
             let look = super::docx_flow::page_look(page, margin, &table_rects);
             let mut lines = look.lines.iter().peekable();
             let mut above: Option<f64> = None;
-            for it in items {
+            for it in join_numbers(items) {
                 let span = super::docx_flow::span(&it);
                 // Lines drawn above this item come first.
                 while let Some(l) = lines.next_if(|l| span.is_none_or(|(top, _)| l.y > top)) {
@@ -366,18 +470,8 @@ pub fn docx(pages: &[Page], title: &str) -> Vec<u8> {
                 }
                 match &it {
                     Item::Para(runs, lvl) => {
-                        let (Some(first), Some(last)) = (runs.first(), runs.last()) else { continue };
                         let gap = span.map_or(0, |(top, _)| super::docx_flow::before(&look, above, top));
-                        bullets |= first.block.bullet;
-                        body.push_str("<w:p>");
-                        body.push_str(&super::docx_flow::paragraph_props(&look, first.block, last.block.rect[2], *lvl, gap));
-                        for r in runs {
-                            body.push_str(&run_xml(
-                                &r.text,
-                                Look { font: &r.block.font, size: r.block.size, bold: r.block.bold, italic: r.block.italic, color: r.block.color },
-                            ));
-                        }
-                        body.push_str("</w:p>");
+                        body.push_str(&para_xml(&look, runs, *lvl, gap, &mut numbering));
                     }
                     Item::Table(t) => {
                         if after_table {
@@ -456,7 +550,7 @@ xmlns:wp=\"http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawin
             "<Override PartName=\"/word/settings.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml\"/>",
         );
     }
-    if bullets {
+    if numbering.is_used() {
         types.push_str("<Override PartName=\"/word/numbering.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml\"/>");
     }
     if !bands.header.is_empty() {
@@ -486,7 +580,7 @@ xmlns:wp=\"http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawin
     if page_colour.is_some() {
         doc_rels.push_str("<Relationship Id=\"rIdSettings\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings\" Target=\"settings.xml\"/>");
     }
-    if bullets {
+    if numbering.is_used() {
         doc_rels.push_str("<Relationship Id=\"rIdNumbering\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering\" Target=\"numbering.xml\"/>");
     }
     if !bands.header.is_empty() {
@@ -515,14 +609,14 @@ xmlns:wp=\"http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawin
     if page_colour.is_some() {
         z.add("word/settings.xml", b"<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<w:settings xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:displayBackgroundShape/></w:settings>", true);
     }
-    if bullets {
-        z.add("word/numbering.xml", super::docx_flow::NUMBERING.as_bytes(), true);
+    if numbering.is_used() {
+        z.add("word/numbering.xml", numbering.part().as_bytes(), true);
     }
     if !bands.header.is_empty() {
-        z.add("word/header1.xml", band_part("hdr", &bands.header, bands.width, pages.len()).as_bytes(), true);
+        z.add("word/header1.xml", band_part("hdr", &bands.header, bands.width, pages.len(), bands.header_rule).as_bytes(), true);
     }
     if !bands.footer.is_empty() {
-        z.add("word/footer1.xml", band_part("ftr", &bands.footer, bands.width, pages.len()).as_bytes(), true);
+        z.add("word/footer1.xml", band_part("ftr", &bands.footer, bands.width, pages.len(), bands.footer_rule).as_bytes(), true);
     }
     for (name, im) in &media {
         z.add(&format!("word/media/{name}"), &im.bytes, false);
