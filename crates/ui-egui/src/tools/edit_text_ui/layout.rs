@@ -50,7 +50,9 @@ pub(crate) fn paragraph_as_added(xf: &PageXform, info: &DocInfo, page: usize, b:
     let ((x0, y0), (x1, y1)) = (xf.screen_to_view(r.left_bottom()), xf.screen_to_view(r.right_top()));
     let ph = f64::from(p.height);
     let text = pdfcraft_engine::AddedText {
-        text: b.editor_text.clone(),
+        // Thai edition: the Windows Thai fonts' private-use glyph variants as the Thai they are,
+        // or the box's own font can't draw them.
+        text: pdfcraft_fonts::thai_text::from_presentation_forms(&b.editor_text).into_owned(),
         rect: [f64::from(x0), ph - f64::from(y0), f64::from(x1), ph - f64::from(y1)],
         ..look_of(b)
     };

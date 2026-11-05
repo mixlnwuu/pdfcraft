@@ -788,3 +788,48 @@ fn a_page_paragraph_splits_by_its_rows() {
 fn objects_of(h: &Harness<'static, PdfCraftApp>) -> Vec<EditableObject> {
     objects(h)
 }
+
+/// Thai edition: a paragraph set in a Windows Thai font whose PDF maps a tone mark to the font's
+/// private-use variant ("ได้" as "ได" + U+F70B) splits into lines too: the new boxes hold the
+/// Thai it is, which their font can draw. It failed with "the standard fonts can't draw U+F70B".
+#[test]
+fn a_paragraph_with_thai_presentation_forms_splits() {
+    let content = "BT /F1 12 Tf 14 TL 80 300 Td (ab) Tj T* (ab) Tj ET";
+    let cmap = "/CIDInit /ProcSet findresource begin 12 dict begin begincmap /CMapName /T def 1 begincodespacerange <00> <FF> endcodespacerange 2 beginbfchar <61> <0E14> <62> <F70B> endbfchar endcmap CMapName currentdict /CMap defineresource pop end end";
+    let objects = [
+        "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".into(),
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 400 500] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>".into(),
+        format!("<< /Length {} >>\nstream\n{content}\nendstream", content.len()),
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /ToUnicode 6 0 R >>".into(),
+        format!("<< /Length {} >>\nstream\n{cmap}\nendstream", cmap.len()),
+    ];
+    let mut pdf = b"%PDF-1.7\n".to_vec();
+    let mut offsets = Vec::new();
+    for (i, o) in objects.iter().enumerate() {
+        offsets.push(pdf.len());
+        pdf.extend_from_slice(format!("{} 0 obj\n{o}\nendobj\n", i + 1).as_bytes());
+    }
+    let xref = pdf.len();
+    pdf.extend_from_slice(format!("xref\n0 {}\n0000000000 65535 f \n", objects.len() + 1).as_bytes());
+    for o in offsets {
+        pdf.extend_from_slice(format!("{o:010} 00000 n \n").as_bytes());
+    }
+    pdf.extend_from_slice(format!("trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n", objects.len() + 1).as_bytes());
+    let mut h = Harness::builder().with_size(egui::vec2(1400.0, 900.0)).build_eframe(move |_cc| {
+        let mut app = PdfCraftApp::new();
+        app.set_option("language", "en").unwrap();
+        app.open_bytes("pua.pdf", None, pdf.clone()).unwrap();
+        app.set_option("zoom", "100").unwrap();
+        assert!(app.execute("edit.edit_text"));
+        app
+    });
+    crate::support::settle(&mut h);
+    let p = at(&h, 85.0, 500.0 - 304.0);
+    click(&mut h, p, Modifiers::NONE);
+    right_click(&mut h, p);
+    h.get_by_label("Split into lines").click();
+    crate::support::settle(&mut h);
+    let after = added_texts(&h);
+    assert_eq!(after.iter().map(|(t, _)| t.as_str()).collect::<Vec<_>>(), ["\u{0E14}\u{0E49}", "\u{0E14}\u{0E49}"], "the Thai tone mark, not U+F70B");
+}
