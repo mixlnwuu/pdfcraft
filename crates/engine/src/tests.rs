@@ -10660,3 +10660,39 @@ fn imported_bookmarks_undo_in_one_step() {
     assert!(err.to_string().contains("no bookmark"), "{err}");
     assert!(s.get(id).unwrap().info.outline.is_empty());
 }
+
+/// Thai edition: text a PDF maps to the Windows Thai fonts' private-use glyph variants ("ได" +
+/// U+F70B, as Angsana New sets "ได้") goes to Word, HTML and the rest as the Thai it is: Word
+/// showed a box for each of those characters.
+#[test]
+fn exported_text_has_thai_marks_not_presentation_forms() {
+    let content = "BT /F1 12 Tf 80 300 Td (ab) Tj ET";
+    let cmap = "/CIDInit /ProcSet findresource begin 12 dict begin begincmap /CMapName /T def 1 begincodespacerange <00> <FF> endcodespacerange 2 beginbfchar <61> <0E14> <62> <F70B> endbfchar endcmap CMapName currentdict /CMap defineresource pop end end";
+    let objects = [
+        "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".into(),
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 400 500] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>".into(),
+        format!("<< /Length {} >>\nstream\n{content}\nendstream", content.len()),
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /ToUnicode 6 0 R >>".into(),
+        format!("<< /Length {} >>\nstream\n{cmap}\nendstream", cmap.len()),
+    ];
+    let mut pdf = b"%PDF-1.7\n".to_vec();
+    let mut offsets = Vec::new();
+    for (i, o) in objects.iter().enumerate() {
+        offsets.push(pdf.len());
+        pdf.extend_from_slice(format!("{} 0 obj\n{o}\nendobj\n", i + 1).as_bytes());
+    }
+    let xref = pdf.len();
+    pdf.extend_from_slice(format!("xref\n0 {}\n0000000000 65535 f \n", objects.len() + 1).as_bytes());
+    for o in offsets {
+        pdf.extend_from_slice(format!("{o:010} 00000 n \n").as_bytes());
+    }
+    pdf.extend_from_slice(format!("trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n", objects.len() + 1).as_bytes());
+    let mut s = Session::new();
+    let id = s.open("pua.pdf", None, std::sync::Arc::new(pdf), None).unwrap();
+    let d = s.get(id).unwrap();
+    let texts: Vec<String> = d.export_pages()[0].blocks.iter().map(|b| b.text.clone()).collect();
+    assert_eq!(texts, ["\u{0E14}\u{0E49}"], "the Thai tone mark, not U+F70B");
+    let html = String::from_utf8(d.export_office(compare::OfficeFormat::Html)).unwrap();
+    assert!(html.contains("\u{0E14}\u{0E49}") && !html.contains('\u{F70B}'), "{html}");
+}

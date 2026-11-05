@@ -249,10 +249,13 @@ impl crate::Document {
                         let f = b.base_font.to_ascii_lowercase();
                         // `text` is trimmed; the editor text keeps the source's own spaces.
                         let space_around = [b.editor_text.starts_with(char::is_whitespace), b.editor_text.ends_with(char::is_whitespace)];
-                        let rows: Vec<String> = b.editor_text.split('\n').map(str::to_string).collect();
+                        // Thai edition: the Windows Thai fonts' private-use glyph variants ("ได" +
+                        // U+F70B) as the Thai they are, which every reader's font can show.
+                        let thai = |t: &str| pdfcraft_fonts::thai_text::from_presentation_forms(t).into_owned();
+                        let rows: Vec<String> = b.editor_text.split('\n').map(thai).collect();
                         let block = pdfcraft_export::Block {
                             space_around,
-                            text: b.text,
+                            text: thai(&b.text),
                             rect: visible_rect(b.rect),
                             size: b.size * unit,
                             bold: f.contains("bold") || f.contains("black") || f.contains("heavy"),
