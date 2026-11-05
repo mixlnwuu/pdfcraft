@@ -426,6 +426,11 @@ pub struct PdfCraftApp {
     pub update_attempt: Option<String>,
     /// Preferences: ask for a newer release at start, kept across launches (Thai edition).
     pub check_updates_at_start: bool,
+    /// Thai edition: the editing tips (Ctrl+E / Ctrl+T) have been shown once, kept across launches.
+    pub editing_tips_shown: bool,
+    /// Thai edition: show the editing tips with the first document until they have been shown. The
+    /// desktop app sets it; tests and embedders start without it.
+    pub offer_editing_tips: bool,
     pub(crate) updates: updates::Updates,
     /// Lists the Print dialog's printers in the background (the desktop app sets it; see
     /// [`PrinterSource`]).

@@ -92,6 +92,7 @@ fn dialogs(app: &mut PdfCraftApp, ctx: &egui::Context) {
     remote_link_prompt(app, ctx);
     full_screen_prompt(app, ctx);
     crate::updates::dialog(app, ctx);
+    offer_editing_tips(app, ctx);
     if app.dialog != Some(Dialog::WordCount) {
         app.word_count_draft.cancel();
     }
@@ -447,6 +448,10 @@ fn dialog_body(ui: &mut egui::Ui, app: &mut PdfCraftApp, dialog: Dialog, req: &m
             if !dialog_shortcuts(ui) {
                 return false;
             }
+        }
+        Dialog::EditingTips => {
+            req.close = editing_tips_body(ui);
+            return false;
         }
         Dialog::About => {
             if !dialog_about(ui, req) {
@@ -1484,6 +1489,54 @@ fn dialog_recovery(ui: &mut egui::Ui, app: &mut PdfCraftApp) -> bool {
         }
     });
     true
+}
+
+/// Thai edition: opens the editing tips once, the first time a document shows and nothing else
+/// is asking the user anything (no dialog of ours, no other modal from the last frame).
+fn offer_editing_tips(app: &mut PdfCraftApp, ctx: &egui::Context) {
+    if !app.offer_editing_tips || app.editing_tips_shown || app.dialog.is_some() || app.active_ids().is_none() {
+        return;
+    }
+    if ctx.memory(|m| m.top_modal_layer().is_some()) {
+        return;
+    }
+    app.editing_tips_shown = true;
+    app.dialog = Some(Dialog::EditingTips);
+}
+
+/// Thai edition: `Dialog::EditingTips` content, the two tools for text with their keys read from
+/// the command registry (so a rebinding shows). Returns whether it was dismissed.
+fn editing_tips_body(ui: &mut egui::Ui) -> bool {
+    let t = Tokens::get(ui.ctx());
+    ui.label(egui::RichText::new(tl!("Tips for editing text")).font(theme::semibold(18.0)));
+    ui.add_space(10.0);
+    let tips = [
+        ("edit.edit_text", tl!("Change the text and pictures already on the page: click a paragraph to select it, double-click it to type.")),
+        ("edit.text", tl!("Add a new text box: click where it should go and start typing.")),
+    ];
+    egui::Grid::new("editing_tips").num_columns(2).spacing([16.0, 12.0]).show(ui, |ui| {
+        for (id, what) in tips {
+            let key = crate::commands::command_shortcut_label(ui.ctx(), id);
+            ui.label(egui::RichText::new(key).font(egui::FontId::monospace(14.0)).strong());
+            ui.vertical(|ui| {
+                let name = pdfcraft_engine::commands::command(id).map(|c| tl!(c.label)).unwrap_or_default();
+                ui.label(egui::RichText::new(name).font(theme::semibold(14.0)));
+                ui.add(egui::Label::new(what).wrap());
+            });
+            ui.end_row();
+        }
+    });
+    ui.add_space(12.0);
+    let again = crate::i18n::fmt(tl!("You can open these tips again from {menu} › {item}."), &[("menu", tl!("Help")), ("item", tl!("Editing tips"))]);
+    ui.add(egui::Label::new(egui::RichText::new(again).color(t.text_muted)).wrap());
+    ui.add_space(16.0);
+    let mut done = false;
+    ui.horizontal(|ui| {
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            done = widgets::pill_button(ui, tl!("Got it"), true).clicked();
+        });
+    });
+    done
 }
 
 /// `Dialog::Shortcuts` content. Returns `false` when it has its own buttons and no footer is wanted.

@@ -2960,3 +2960,9 @@ theme	Appearance	ลักษณะที่ปรากฏ
 @id	view.snap	ดูดเข้าแนว
 	Smart Guides	เส้นช่วยจัดแนว
 	Snap to Guides	ดูดเข้าแนว
+	Editing tips	เคล็ดลับการแก้ไขข้อความ
+	Tips for editing text	เคล็ดลับการแก้ไขข้อความ
+	Change the text and pictures already on the page: click a paragraph to select it, double-click it to type.	แก้ข้อความและรูปภาพที่มีอยู่แล้วในหน้า: คลิกหนึ่งครั้งเพื่อเลือกย่อหน้า ดับเบิลคลิกเพื่อพิมพ์แก้
+	Add a new text box: click where it should go and start typing.	เพิ่มกล่องข้อความใหม่: คลิกตรงที่ต้องการแล้วพิมพ์ได้เลย
+	You can open these tips again from {menu} › {item}.	เปิดคำแนะนำนี้อีกครั้งได้จากเมนู {menu} › {item}
+	Got it	เข้าใจแล้ว

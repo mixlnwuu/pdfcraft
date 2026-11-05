@@ -160,6 +160,7 @@ impl PdfCraftApp {
         v["show_grid"] = self.show_grid.into();
         v["show_smart_guides"] = self.show_smart_guides.into();
         v["snap_to_guides"] = self.snap_to_guides.into();
+        v["editing_tips_shown"] = self.editing_tips_shown.into();
         v["hotbar"] = serde_json::to_value(&self.hotbar).unwrap_or_default();
         v["comment_tool_pinned"] = serde_json::Value::Bool(self.comment_prefs.pinned);
         v["show_secured_notice"] = serde_json::Value::Bool(self.show_secured_notice);
@@ -311,6 +312,9 @@ impl PdfCraftApp {
         }
         if let Some(on) = v["check_updates_at_start"].as_bool() {
             self.check_updates_at_start = on;
+        }
+        if let Some(shown) = v["editing_tips_shown"].as_bool() {
+            self.editing_tips_shown = shown;
         }
         self.update_attempt = v["update_attempt"].as_str().filter(|s| s.len() <= 64).map(str::to_owned);
         self.update_asked_on = v["update_asked_on"].as_str().filter(|s| s.len() <= 16).unwrap_or_default().to_owned();

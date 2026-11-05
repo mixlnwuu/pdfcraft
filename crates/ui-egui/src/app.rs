@@ -123,6 +123,8 @@ impl PdfCraftApp {
             update_asked_on: String::new(),
             update_skipped: None,
             check_updates_at_start: true,
+            editing_tips_shown: false,
+            offer_editing_tips: false,
             updates: updates::Updates::default(),
             printer_source: None,
             options_source: None,

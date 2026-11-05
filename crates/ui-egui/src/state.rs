@@ -106,6 +106,8 @@ pub enum Dialog {
     Properties(PropsTab),
     About,
     Shortcuts,
+    /// Thai edition: Help › Editing tips (Ctrl+E / Ctrl+T), also shown once with a first document.
+    EditingTips,
     Split,
     /// Pages ▸ Number pages… (page labels).
     NumberPages,
