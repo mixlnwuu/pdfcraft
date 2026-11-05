@@ -657,6 +657,7 @@ impl Metrics {
             Codes::Ranges(r) => r.last().map_or(2, |x| x.0),
         };
         m.unicode = unicode_map(doc, font, m.composite);
+        repair_word_sara_am(&mut m);
         if m.std14.is_some() {
             embedded_widths(doc, font, &mut m);
         }
@@ -897,7 +898,15 @@ impl Metrics {
     pub fn encode(&self, text: &str) -> Option<Vec<u8>> {
         // The lowest code showing each wanted character. Explicit entries and the encoding are
         // checked one by one; each range is asked for the wanted characters it can show.
-        let wanted: HashSet<char> = text.chars().collect();
+        // Sara Am (ำ) can be drawn as Nikhahit then Sara Aa (Thai edition, see
+        // `repair_word_sara_am`), so those two are wanted too.
+        let wanted: HashSet<char> = text
+            .chars()
+            .flat_map(|c| {
+                let parts: &[char] = if c == '\u{0E33}' { &['\u{0E4D}', '\u{0E32}'] } else { &[] };
+                std::iter::once(c).chain(parts.iter().copied())
+            })
+            .collect();
         let mut reverse: HashMap<char, u32> = HashMap::new();
         for &ch in &wanted {
             if let Some(&code) = self.explicit_reverse.get(&ch) {
@@ -912,12 +921,59 @@ impl Metrics {
             }
         }
         let mut out = Vec::with_capacity(text.len() * self.code_len);
+        let width = self.code_len.clamp(1, 4);
+        let mut push = |code: u32| out.extend_from_slice(code.to_be_bytes().get(4 - width..).unwrap_or_default());
         for ch in text.chars() {
-            let code = *reverse.get(&ch)?;
-            let bytes = code.to_be_bytes();
-            out.extend_from_slice(&bytes[4 - self.code_len.clamp(1, 4)..]);
+            match reverse.get(&ch) {
+                Some(&code) => push(code),
+                None if ch == '\u{0E33}' => {
+                    push(*reverse.get(&'\u{0E4D}')?);
+                    push(*reverse.get(&'\u{0E32}')?);
+                }
+                None => return None,
+            }
         }
         Some(out)
+    }
+}
+
+/// Thai edition: Word's PDF export of some Thai fonts (AngsanaUPC seen) draws Sara Am (ำ) as two
+/// glyphs, Nikhahit (ํ, no width) then Sara Aa (า), and its ToUnicode labels the Sara Aa glyph ำ
+/// and the Nikhahit a space, with no code labelled า at all. Read as written, every า shows as ำ
+/// and every ำ as a space and an ำ, so editing such text changed it. In a Thai font with no า, a
+/// code labelled ำ that has a width is า, and a code labelled as a space with no width is ํ; the
+/// text then joins ํา back into ำ (and writing splits ำ the same way, [`Metrics::encode`]).
+fn repair_word_sara_am(m: &mut Metrics) {
+    const AA: char = '\u{0E32}';
+    const AM: char = '\u{0E33}';
+    let thai = |t: &str| t.chars().any(|c| ('\u{0E01}'..='\u{0E5B}').contains(&c));
+    if !m.unicode.explicit.values().any(|(_, t)| thai(t)) {
+        return;
+    }
+    let has_aa = m.unicode.explicit.values().any(|(_, t)| t.contains(AA))
+        || m.unicode.encoding.values().any(|t| t.contains(AA))
+        || m.unicode.ranges.iter().any(|r| r.units.contains(&(AA as u16)));
+    if has_aa {
+        return;
+    }
+    let mut marks = Vec::new();
+    let mut aas = Vec::new();
+    for (&code, (_, text)) in &m.unicode.explicit {
+        if text == " " && m.width(code) == 0.0 {
+            marks.push(code);
+        } else if text.chars().eq(std::iter::once(AM)) && m.width(code) > 0.0 {
+            aas.push(code);
+        }
+    }
+    if marks.is_empty() || aas.is_empty() {
+        return;
+    }
+    for (codes, ch) in [(marks, '\u{0E4D}'), (aas, AA)] {
+        for code in codes {
+            if let Some((_, text)) = m.unicode.explicit.get_mut(&code) {
+                *text = ch.to_string();
+            }
+        }
     }
 }
 

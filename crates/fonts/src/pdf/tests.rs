@@ -795,3 +795,44 @@ fn low_codes_resolve_to_the_covering_range() {
     assert_eq!(covered, [5, 6, 7, 100, 101]);
     assert_eq!((u.covering(0xFFFF).is_some(), u.covering(0x1_0001).is_some(), u.covering(0x1_0002).is_none()), (true, true, true));
 }
+
+/// Thai edition: Word's export of AngsanaUPC labels the Sara Aa glyph ำ and the Nikhahit glyph (no
+/// width) a space, with no า anywhere. Read back, า is า, the two glyphs of ำ are ํ then า, and
+/// writing ำ uses them again, so the font is kept.
+#[test]
+fn words_mislabelled_sara_am_reads_and_writes_as_thai() {
+    let mut doc = Document::new_empty();
+    // CID 0x9C ก (380), 0xB5 the Sara Aa glyph labelled ำ (285), 0xCE the Nikhahit labelled a
+    // space (no width), 0x03 a real space (165).
+    let w = vec![
+        Object::Int(3),
+        Object::Array(vec![Object::Int(165)]),
+        Object::Int(0x9C),
+        Object::Array(vec![Object::Int(380)]),
+        Object::Int(0xB5),
+        Object::Array(vec![Object::Int(285)]),
+        Object::Int(0xCE),
+        Object::Array(vec![Object::Int(0)]),
+    ];
+    let tu = "begincmap\n4 beginbfchar\n<0003> <0020>\n<009C> <0E01>\n<00B5> <0E33>\n<00CE> <0020>\nendbfchar\nendcmap";
+    let f = composite(&mut doc, "", w, tu);
+    let m = Metrics::from_dict(&doc, &f);
+    // กา, then กำ (ก, Nikhahit, Sara Aa), then a real space.
+    assert_eq!(m.decode(&[0, 0x9C, 0, 0xB5]), "\u{0E01}\u{0E32}", "Sara Aa is า");
+    assert_eq!(m.decode(&[0, 0x9C, 0, 0xCE, 0, 0xB5]), "\u{0E01}\u{0E4D}\u{0E32}", "the two glyphs of ำ");
+    assert_eq!(m.decode(&[0, 3]), " ", "a space with a width stays a space");
+    assert_eq!(m.encode("\u{0E01}\u{0E33}"), Some(vec![0, 0x9C, 0, 0xCE, 0, 0xB5]), "ำ is written as Word drew it");
+    assert_eq!(m.encode("\u{0E01}\u{0E32}"), Some(vec![0, 0x9C, 0, 0xB5]));
+}
+
+/// A Thai font that labels its glyphs right is left as it is.
+#[test]
+fn a_thai_font_with_sara_aa_keeps_its_sara_am() {
+    let mut doc = Document::new_empty();
+    let w = vec![Object::Int(0x9C), Object::Array(vec![Object::Int(380), Object::Int(285), Object::Int(300), Object::Int(0)])];
+    let tu = "begincmap\n4 beginbfchar\n<009C> <0E01>\n<009D> <0E32>\n<009E> <0E33>\n<009F> <0020>\nendbfchar\nendcmap";
+    let f = composite(&mut doc, "", w, tu);
+    let m = Metrics::from_dict(&doc, &f);
+    assert_eq!(m.decode(&[0, 0x9C, 0, 0x9E]), "\u{0E01}\u{0E33}");
+    assert_eq!(m.decode(&[0, 0x9F]), " ");
+}

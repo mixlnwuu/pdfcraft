@@ -618,7 +618,9 @@ fn show_text(op: &Op, i: usize, state: &mut TextRunState<'_>) -> Result<(), Edit
                                 .text_left
                                 .checked_sub(t.len())
                                 .ok_or_else(|| EditError::Invalid("the page's text is too large to read".into()))?;
+                            let from = text.len();
                             text.push_str(&t);
+                            super::lines::join_sara_am(&mut text, from);
                         }
                         None => decodable = false,
                     }
