@@ -183,3 +183,64 @@ fn smart_guides_and_snapping_turn_off_from_the_view_menu() {
     let moved = added_rects(&h)[1][0];
     assert!((moved - (before[0] - 18.0)).abs() < 0.3, "moved as dragged, 2 points short of the other box: {moved}");
 }
+
+/// Thai edition: resizing snaps too. A text box's corner dragged to 2 points short of another
+/// box's right edge lands on it and shows a guide; with Alt it resizes as dragged.
+#[test]
+fn a_box_resized_by_a_corner_snaps_its_edge_to_another_box() {
+    let mut h = Harness::builder().with_size(egui::vec2(1400.0, 900.0)).build_eframe(|_cc| {
+        let mut app = PdfCraftApp::new();
+        app.set_option("language", "en").unwrap();
+        app.open_bytes("blank.pdf", None, blank()).unwrap();
+        app.set_option("zoom", "200").unwrap();
+        app
+    });
+    crate::support::settle(&mut h);
+    for rect in [[40.0, 200.0, 140.0, 220.0], [60.0, 100.0, 160.0, 120.0]] {
+        let text = pdfcraft_engine::AddedText { text: "Box".into(), rect, size: 12.0, ..Default::default() };
+        assert!(h.state_mut().apply_edit(pdfcraft_engine::Edit::AddText { page: 0, text }));
+    }
+    assert!(h.state_mut().execute("edit.edit_text"));
+    crate::support::settle(&mut h);
+    let page = h.state().views[0].page_screen_rect(0).expect("on screen");
+    let k = page.width() / 300.0;
+    let at = |x: f64, y: f64| egui::pos2(page.left() + x as f32 * k, page.top() + (300.0 - y as f32) * k);
+    let resize = |h: &mut Harness<'static, PdfCraftApp>, by: f32, modifiers: egui::Modifiers| -> Vec<[f64; 4]> {
+        let [b0, b1, b2, b3] = added_rects(h)[1];
+        // Select the lower box with a click, then drag its bottom-right corner left.
+        let c = at((b0 + b2) / 2.0, (b1 + b3) / 2.0);
+        h.hover_at(c);
+        h.run_steps(1);
+        h.drag_at(c);
+        h.run_steps(1);
+        h.drop_at(c);
+        h.run_steps(2);
+        let corner = at(b2, b1);
+        let to = corner - egui::vec2(by * k, 0.0);
+        h.event(egui::Event::ModifiersChanged(modifiers));
+        h.hover_at(corner);
+        h.run_steps(1);
+        h.event(egui::Event::PointerButton { pos: corner, button: egui::PointerButton::Primary, pressed: true, modifiers });
+        h.run_steps(1);
+        for s in 1..=6 {
+            h.hover_at(corner + (to - corner) * (s as f32 / 6.0));
+            h.run_steps(1);
+        }
+        let guides =
+            h.output().shapes.iter().filter(|s| matches!(&s.shape, egui::Shape::LineSegment { stroke, .. } if stroke.color == GUIDE)).count();
+        h.event(egui::Event::PointerButton { pos: to, button: egui::PointerButton::Primary, pressed: false, modifiers });
+        h.run_steps(1);
+        h.event(egui::Event::ModifiersChanged(egui::Modifiers::NONE));
+        h.run_steps(4);
+        let rects = added_rects(h);
+        assert_eq!(guides > 0, modifiers.is_none(), "a guide shows while snapping, none with Alt: {guides}");
+        rects
+    };
+    // The right edge, 160, dragged 18 left: 2 short of the upper box's right edge, 140.
+    let rects = resize(&mut h, 18.0, egui::Modifiers::NONE);
+    assert!((rects[1][2] - 140.0).abs() < 0.01, "the right edge lands on the upper box's: {rects:?}");
+    assert!((rects[1][0] - 60.0).abs() < 0.01, "the left edge stays: {rects:?}");
+    // Alt held resizes freely: 2 more points left lands at 138.
+    let rects = resize(&mut h, 2.0, egui::Modifiers::ALT);
+    assert!((rects[1][2] - 138.0).abs() < 0.3, "with Alt it resizes as dragged: {rects:?}");
+}

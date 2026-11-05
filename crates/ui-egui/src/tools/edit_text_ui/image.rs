@@ -891,11 +891,26 @@ pub(crate) fn image_input(cx: &ImageCx<'_>, images: &[pdfcraft_engine::PageImage
                         let is_corner =
                             matches!(handle, ImageHandle::TopLeft | ImageHandle::TopRight | ImageHandle::BottomLeft | ImageHandle::BottomRight);
                         let shift = ui.input(|inp| inp.modifiers.shift);
-                        if is_corner && !shift {
+                        let keep = is_corner && !shift;
+                        let resized = if keep {
                             apply_resize_proportional(drag.initial_rect, handle, delta)
                         } else {
                             apply_resize(drag.initial_rect, handle, delta)
-                        }
+                        };
+                        // Smart guides (Thai edition): the dragged edges snap as a move does.
+                        let (x, y) = match handle {
+                            ImageHandle::TopLeft => (Some(true), Some(true)),
+                            ImageHandle::TopRight => (Some(false), Some(true)),
+                            ImageHandle::BottomLeft => (Some(true), Some(false)),
+                            ImageHandle::BottomRight => (Some(false), Some(false)),
+                            ImageHandle::TopCenter => (None, Some(true)),
+                            ImageHandle::BottomCenter => (None, Some(false)),
+                            ImageHandle::LeftCenter => (Some(true), None),
+                            ImageHandle::RightCenter => (Some(false), None),
+                        };
+                        let snapped = crate::content_ui::snap_resize(ui, xf.rect, drag.initial_rect, resized, x, y, keep);
+                        crate::content_ui::paint_guides(ui.painter(), xf.rect, drag.initial_rect, snapped);
+                        snapped
                     }
                     // Smart guides (Thai edition): the picture's centre snaps to the page's centre lines.
                     DragTarget::Move => {

@@ -283,8 +283,12 @@ impl MoveBackground {
         let r = screen_rect(xf, info, page, from);
         let to = if let Some((_, grab, start)) = cv.grab {
             let Some(p) = pointer else { return };
-            let d = if grab == Grab::Move { snap_to_centre(ui, xf.rect, r, p - start) } else { p - start };
-            dragged(r, grab, d, self.picture)
+            match grab {
+                Grab::Move => dragged(r, grab, snap_to_centre(ui, xf.rect, r, p - start), self.picture),
+                Grab::Corner(left, top) => {
+                    snap_resize(ui, xf.rect, r, dragged(r, grab, p - start, self.picture), Some(left), Some(top), self.picture)
+                }
+            }
         } else if let Some(to) = self.settling {
             let to = screen_rect(xf, info, page, to);
             // A moved text box keeps its top edge (its height follows its lines).
@@ -432,10 +436,10 @@ fn lines_y(r: Rect) -> [f32; 3] {
 
 /// The nearest guide to any of `moving` within [`SNAP`]: how far to shift onto it, the guide,
 /// and which of `moving` goes onto it.
-fn nearest(moving: [f32; 3], guides: impl Iterator<Item = f32>) -> Option<(f32, f32, usize)> {
+fn nearest(moving: &[f32], guides: impl Iterator<Item = f32>) -> Option<(f32, f32, usize)> {
     let mut best: Option<(f32, f32, usize)> = None;
     for g in guides {
-        for (k, m) in moving.into_iter().enumerate() {
+        for (k, &m) in moving.iter().enumerate() {
             let shift = g - m;
             if shift.abs() <= SNAP && best.is_none_or(|b| shift.abs() < b.0.abs()) {
                 best = Some((shift, g, k));
@@ -447,7 +451,7 @@ fn nearest(moving: [f32; 3], guides: impl Iterator<Item = f32>) -> Option<(f32, 
 
 /// Along one axis: a guide within reach snaps (and is held), else the held guide keeps the box
 /// while its line stays within [`RELEASE`] of it; past that the hold lets go.
-fn snap_axis(moving: [f32; 3], guides: impl Iterator<Item = f32>, held: &mut Option<(f32, usize)>) -> Option<f32> {
+fn snap_axis(moving: &[f32], guides: impl Iterator<Item = f32>, held: &mut Option<(f32, usize)>) -> Option<f32> {
     if let Some((shift, g, k)) = nearest(moving, guides) {
         *held = Some((g, k));
         return Some(shift);
@@ -476,13 +480,102 @@ fn snap_delta_held(page: Rect, r: Rect, d: egui::Vec2, others: &[Rect], grid: Op
     let xs = std::iter::once(page.center().x).chain(others.iter().flat_map(|o| lines_x(*o))).chain(near(page.left(), [moved.left(), moved.right()]));
     let ys = std::iter::once(page.center().y).chain(others.iter().flat_map(|o| lines_y(*o))).chain(near(page.top(), [moved.top(), moved.bottom()]));
     let mut out = d;
-    if let Some(shift) = snap_axis(lines_x(moved), xs, &mut hold.x) {
+    if let Some(shift) = snap_axis(&lines_x(moved), xs, &mut hold.x) {
         out.x += shift;
     }
-    if let Some(shift) = snap_axis(lines_y(moved), ys, &mut hold.y) {
+    if let Some(shift) = snap_axis(&lines_y(moved), ys, &mut hold.y) {
         out.y += shift;
     }
     out
+}
+
+/// Smart guides while resizing (Thai edition): the box `from` (screen) resized to `to` by its
+/// edges `x` and `y` (`Some(true)`: the left or top edge moves, `Some(false)`: the right or
+/// bottom one, `None`: that axis doesn't change), with the moving edges snapped onto other boxes'
+/// edges and centres, the page's centre lines and the grid, and held there as a move is (see
+/// [`RELEASE`]). `keep_aspect`: a picture's corner keeps its proportions, so only the edge
+/// nearer a guide snaps and the other follows. Alt held resizes freely.
+pub(crate) fn snap_resize(ui: &egui::Ui, page: Rect, from: Rect, to: Rect, x: Option<bool>, y: Option<bool>, keep_aspect: bool) -> Rect {
+    let ctx = ui.ctx();
+    if ui.input(|i| i.modifiers.alt) || !guide_options(ctx).1 {
+        return to;
+    }
+    let grid = ctx.data(|g| g.get_temp::<Option<f32>>(grid_id(page))).flatten();
+    let id = egui::Id::unique("snap-hold-resize");
+    let now = ui.input(|i| i.time);
+    let mut hold = ctx.data(|g| g.get_temp::<(Hold, f64)>(id)).filter(|(_, at)| now - at <= HOLD_FORGET).map(|(h, _)| h).unwrap_or_default();
+    let out = snap_resized_held(page, to, (x, y), keep_aspect, &snap_targets(ctx, page, from), grid, &mut hold);
+    ctx.data_mut(|g| g.insert_temp(id, (hold, now)));
+    out
+}
+
+/// [`snap_resize`] without the Alt key, lining up with `others`, held in `hold`.
+fn snap_resized_held(
+    page: Rect,
+    to: Rect,
+    (x, y): (Option<bool>, Option<bool>),
+    keep_aspect: bool,
+    others: &[Rect],
+    grid: Option<f32>,
+    hold: &mut Hold,
+) -> Rect {
+    if !(to.is_positive() && to.is_finite()) {
+        return to;
+    }
+    let near = |origin: f32, edge: f32| grid.filter(|s| s.is_finite() && *s >= 1.0).map(|s| origin + ((edge - origin) / s).round() * s);
+    let edge_x = x.map(|left| if left { to.left() } else { to.right() });
+    let edge_y = y.map(|top| if top { to.top() } else { to.bottom() });
+    let sx = edge_x.and_then(|e| {
+        let guides = std::iter::once(page.center().x).chain(others.iter().flat_map(|o| lines_x(*o))).chain(near(page.left(), e));
+        snap_axis(&[e], guides, &mut hold.x)
+    });
+    let sy = edge_y.and_then(|e| {
+        let guides = std::iter::once(page.center().y).chain(others.iter().flat_map(|o| lines_y(*o))).chain(near(page.top(), e));
+        snap_axis(&[e], guides, &mut hold.y)
+    });
+    if x.is_none() {
+        hold.x = None;
+    }
+    if y.is_none() {
+        hold.y = None;
+    }
+    if let (true, Some(left), Some(top)) = (keep_aspect, x, y) {
+        // The nearer guide wins; the other side follows from the box's proportions, around the
+        // corner opposite the one dragged.
+        let (w, h) = (to.width(), to.height());
+        let wide = |a: f32| {
+            let nw = w + if left { -a } else { a };
+            (nw, h * nw / w)
+        };
+        let tall = |b: f32| {
+            let nh = h + if top { -b } else { b };
+            (w * nh / h, nh)
+        };
+        let (nw, nh) = match (sx, sy) {
+            (Some(a), Some(b)) if a.abs() <= b.abs() => wide(a),
+            (Some(a), None) => wide(a),
+            (_, Some(b)) => tall(b),
+            (None, None) => return to,
+        };
+        if !(nw.is_finite() && nh.is_finite() && nw >= 1.0 && nh >= 1.0) {
+            return to;
+        }
+        let (ax, ay) = (if left { to.right() } else { to.left() }, if top { to.bottom() } else { to.top() });
+        let corner = Pos2::new(if left { ax - nw } else { ax + nw }, if top { ay - nh } else { ay + nh });
+        return Rect::from_two_pos(Pos2::new(ax, ay), corner);
+    }
+    let mut out = to;
+    match (x, sx) {
+        (Some(true), Some(s)) => out.min.x += s,
+        (Some(false), Some(s)) => out.max.x += s,
+        _ => {}
+    }
+    match (y, sy) {
+        (Some(true), Some(s)) => out.min.y += s,
+        (Some(false), Some(s)) => out.max.y += s,
+        _ => {}
+    }
+    if out.width() >= 1.0 && out.height() >= 1.0 { out } else { to }
 }
 
 /// The guides a box moved from `from` to `r` sits on: the page's centre lines across the page,
@@ -633,7 +726,10 @@ pub(crate) fn page_input(
                     (Grab::Move, None) => snap_to_centre(ui, xf.rect, from, end - start),
                     _ => end - start,
                 };
-                let r = dragged(from, grab, d, keep);
+                let mut r = dragged(from, grab, d, keep);
+                if let Grab::Corner(left, top) = grab {
+                    r = snap_resize(ui, xf.rect, from, r, Some(left), Some(top), keep);
+                }
                 let (p0, p1) = (to_display(&txf, info, to_page, r.left_bottom()), to_display(&txf, info, to_page, r.right_top()));
                 let mut rect = [p0[0], p0[1], p1[0], p1[1]];
                 if let AddedContent::Text(t) = &a.content
@@ -928,13 +1024,17 @@ pub(crate) fn paint_page(
             && let (Some((gp, g, start)), Some(p)) = (cv.grab, pointer)
             && gp == page
         {
-            let d = if g == Grab::Move { snap_to_centre(ui, xf.rect, r, p - start) } else { p - start };
+            let picture = matches!(a.content, AddedContent::Image(_));
             let from = r;
-            r = dragged(r, g, d, matches!(a.content, AddedContent::Image(_)));
-            if g == Grab::Move {
-                paint_guides(painter, xf.rect, from, r);
-                paint_offset(painter, xf, p, d);
+            match g {
+                Grab::Move => {
+                    let d = snap_to_centre(ui, xf.rect, r, p - start);
+                    r = dragged(r, g, d, picture);
+                    paint_offset(painter, xf, p, d);
+                }
+                Grab::Corner(left, top) => r = snap_resize(ui, xf.rect, from, dragged(r, g, p - start, picture), Some(left), Some(top), picture),
             }
+            paint_guides(painter, xf.rect, from, r);
         }
         if selected
             && cv.grab.is_none()
@@ -2406,6 +2506,48 @@ mod snap_tests {
         let d = snap_delta_held(page, r, vec2(220.0, 0.0), &[other], None, &mut hold);
         assert_eq!(d.x, 220.0);
         assert!(hold.x.is_none());
+    }
+
+    /// Thai edition: a box resized by a corner or a side snaps only the edges being dragged onto
+    /// the guides; the edges that stay put stay put.
+    #[test]
+    fn a_resized_box_snaps_the_dragged_edges() {
+        use super::{Hold, snap_resized_held};
+        let page = Rect::from_min_size(pos2(0.0, 0.0), vec2(1000.0, 1000.0));
+        let other = Rect::from_min_max(pos2(300.0, 100.0), pos2(500.0, 180.0));
+        let snap = |to: Rect, edges, keep| snap_resized_held(page, to, edges, keep, &[other], None, &mut Hold::default());
+        // The bottom-right corner dragged to 4 short of the other's right edge, far from any
+        // horizontal guide: the right edge lands on 500, the rest as dragged.
+        let to = Rect::from_min_max(pos2(100.0, 400.0), pos2(496.0, 437.0));
+        assert_eq!(snap(to, (Some(false), Some(false)), false), Rect::from_min_max(pos2(100.0, 400.0), pos2(500.0, 437.0)));
+        // A left side dragged 3 past the other's left edge: only the left edge moves onto it.
+        let to = Rect::from_min_max(pos2(297.0, 400.0), pos2(700.0, 437.0));
+        assert_eq!(snap(to, (Some(true), None), false), Rect::from_min_max(pos2(300.0, 400.0), pos2(700.0, 437.0)));
+        // A right side doesn't snap its left edge, even when that one is near a guide.
+        assert_eq!(snap(to, (Some(false), None), false), to);
+        // Beyond the snapping distance it resizes as dragged.
+        let to = Rect::from_min_max(pos2(100.0, 400.0), pos2(500.0 - SNAP - 1.0, 437.0));
+        assert_eq!(snap(to, (Some(false), Some(false)), false), to);
+    }
+
+    /// Thai edition: a picture resized by a corner keeps its proportions: the edge nearer a guide
+    /// snaps and the other follows, around the corner that stays put.
+    #[test]
+    fn a_picture_resized_by_a_corner_keeps_its_proportions_when_it_snaps() {
+        use super::{Hold, snap_resized_held};
+        let page = Rect::from_min_size(pos2(0.0, 0.0), vec2(1000.0, 1000.0));
+        let other = Rect::from_min_max(pos2(300.0, 100.0), pos2(500.0, 180.0));
+        let mut hold = Hold::default();
+        // 2:1, its top-left fixed at (100, 400), the corner dragged to 4 short of x = 500.
+        let to = Rect::from_min_max(pos2(100.0, 400.0), pos2(496.0, 598.0));
+        let out = snap_resized_held(page, to, (Some(false), Some(false)), true, &[other], None, &mut hold);
+        assert_eq!(out.min, to.min, "the opposite corner stays");
+        assert_eq!(out.right(), 500.0);
+        assert!((out.width() / out.height() - 2.0).abs() < 1e-4, "still 2:1: {out:?}");
+        // Held while pulled a little past the guide.
+        let to = Rect::from_min_max(pos2(100.0, 400.0), pos2(510.0, 605.0));
+        let out = snap_resized_held(page, to, (Some(false), Some(false)), true, &[other], None, &mut hold);
+        assert_eq!(out.right(), 500.0, "held");
     }
 }
 

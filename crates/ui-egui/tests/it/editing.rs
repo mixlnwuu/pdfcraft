@@ -7127,16 +7127,22 @@ fn cropped_image_corner_resize_keeps_opposite_corner_and_scales_crop() {
         let desired = fixed + (grip - fixed) * factor + offset;
         let to = if horizontal_only { egui::pos2(desired.x, from.y) } else { desired };
         let generation = h.state().session.get(id).unwrap().edit_generation();
+        // Alt held: an exact resize, off the smart guides (Thai edition), which would otherwise
+        // snap the edge onto a caption's.
+        let alt = egui::Modifiers::ALT;
+        h.event(egui::Event::ModifiersChanged(alt));
         h.hover_at(from);
         h.run_steps(1);
-        h.drag_at(from);
+        h.event(egui::Event::PointerButton { pos: from, button: egui::PointerButton::Primary, pressed: true, modifiers: alt });
         h.run_steps(1);
         for k in 1..=5 {
             h.hover_at(from + (to - from) * (k as f32 / 5.0));
             h.run_steps(1);
         }
         assert_eq!(h.state().session.get(id).unwrap().edit_generation(), generation, "dragging previews without committing every frame");
-        h.drop_at(to);
+        h.event(egui::Event::PointerButton { pos: to, button: egui::PointerButton::Primary, pressed: false, modifiers: alt });
+        h.run_steps(1);
+        h.event(egui::Event::ModifiersChanged(egui::Modifiers::NONE));
         h.run_steps(4);
         assert!(h.state().views[0].line_editor.is_none(), "a label under a selected image grip cannot take its drag");
         let after = h.state().session.get(id).unwrap().page_images(0)[0].visible_rect.unwrap();
