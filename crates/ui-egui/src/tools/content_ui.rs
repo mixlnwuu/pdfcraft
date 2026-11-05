@@ -1077,21 +1077,31 @@ pub(crate) fn picture_dropped(
 }
 
 /// The page's own picture `index`, dragged from `page` (`target`: its whole box on screen, `p`:
-/// the pointer) and dropped on another page, goes there, or with Ctrl a copy of it does (Thai
-/// edition).
+/// the pointer) and dropped on another page, goes there, or with Ctrl a copy of it does; with
+/// Ctrl, a drop on its own page leaves it and adds the copy there (Thai edition). `None`: a plain
+/// drop on its own page, which the caller moves.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn page_picture_dropped(
     ui: &egui::Ui,
     view: &mut DocView,
+    xf: &PageXform,
     page: usize,
     index: usize,
     info: &DocInfo,
     target: Rect,
     p: Pos2,
 ) -> Option<Edit> {
-    let (to_page, txf) = view.other_page_at(page, p)?;
+    let copy = ui.input(|i| i.modifiers.command);
+    // Another page takes it (moved, or copied with Ctrl); on its own page only Ctrl makes a copy,
+    // as with added pictures and text (Thai edition); a plain move there is the caller's.
+    let (to_page, txf) = match view.other_page_at(page, p) {
+        Some(other) => other,
+        None if copy => (page, *xf),
+        None => return None,
+    };
     let (p0, p1) = (to_display(&txf, info, to_page, target.left_bottom()), to_display(&txf, info, to_page, target.right_top()));
     view.image_selection = None;
-    Some(Edit::MovePageImageToPage { page, index, to_page, rect: [p0[0], p0[1], p1[0], p1[1]], copy: ui.input(|i| i.modifiers.command) })
+    Some(Edit::MovePageImageToPage { page, index, to_page, rect: [p0[0], p0[1], p1[0], p1[1]], copy })
 }
 
 /// The image controller owns image selection; the added-content panel follows the same XObject.

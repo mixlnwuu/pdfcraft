@@ -265,7 +265,8 @@ impl EditCtx {
 }
 
 /// [`Edit::MovePageImageToPage`]: the page's own picture drawn on `to_page` as an added picture
-/// of the same image object, then (unless `copy`) taken off `page`.
+/// of the same image object, then (unless `copy`) taken off `page`. A copy may land on `page`
+/// itself (Ctrl-drag within the page); a move there is an [`ImageEdit::Move`] instead.
 fn move_page_image_to_page(
     doc: &mut pdfcraft_cos::Document,
     page: usize,
@@ -275,7 +276,7 @@ fn move_page_image_to_page(
     copy: bool,
 ) -> Result<(), EditError> {
     let invalid = |m: &str| EditError::Edit(pdfcraft_edit::EditError::Invalid(m.into()));
-    if page == to_page {
+    if page == to_page && !copy {
         return Err(invalid("the picture is already on that page"));
     }
     if !rect.iter().all(|v| v.is_finite()) || rect[2] <= rect[0] || rect[3] <= rect[1] {

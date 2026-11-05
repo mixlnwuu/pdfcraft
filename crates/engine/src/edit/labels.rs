@@ -210,7 +210,11 @@ impl Edit {
             Edit::MoveAnnotationToPage { copy: false, .. }
             | Edit::MoveContentToPage { copy: false, .. }
             | Edit::MovePageImageToPage { copy: false, .. } => Label::of("Move to another page"),
-            Edit::MoveContentToPage { copy: true, page, to_page, .. } if page == to_page => Label::of("Copy object"),
+            Edit::MoveContentToPage { copy: true, page, to_page, .. } | Edit::MovePageImageToPage { copy: true, page, to_page, .. }
+                if page == to_page =>
+            {
+                Label::of("Copy object")
+            }
             Edit::MoveAnnotationToPage { copy: true, .. }
             | Edit::MoveContentToPage { copy: true, .. }
             | Edit::MovePageImageToPage { copy: true, .. } => Label::of("Copy to another page"),

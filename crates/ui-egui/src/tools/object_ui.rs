@@ -249,8 +249,10 @@ fn painter_input(cx: PageToolContext<'_>, view: &mut DocView) -> bool {
     true
 }
 
-/// The text box a Ctrl+drag of `target` (its user-space `rect`) drops `delta` (screen) away: a
-/// paragraph of the page as an added box in its look, or a copy of an added text box.
+/// The copy a Ctrl+drag of `target` (its user-space `rect`) drops `delta` (screen) away, on the
+/// same page: a paragraph of the page as an added box in its look, a copy of an added text box or
+/// picture, or the page's own picture as an added picture (Thai edition). Each copy is a new added
+/// item.
 #[allow(clippy::too_many_arguments)]
 fn dropped_copy(
     xf: &PageXform,
@@ -260,7 +262,7 @@ fn dropped_copy(
     target: ObjectTarget,
     rect: [f64; 4],
     delta: egui::Vec2,
-) -> Option<pdfcraft_engine::AddedText> {
+) -> Option<Edit> {
     let ph = f64::from(info.pages.get(page)?.height);
     let display = |p: Pos2| {
         let (x, y) = xf.screen_to_view(p);
@@ -269,17 +271,28 @@ fn dropped_copy(
     let from = xf.user_rect(info, page, rect.map(|v| v as f32)).left_bottom();
     let (a, b) = (display(from), display(from + delta));
     let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
-    let mut text = match target.kind {
+    if !(dx.is_finite() && dy.is_finite()) {
+        return None;
+    }
+    let shift = |r: [f64; 4]| [r[0] + dx, r[1] + dy, r[2] + dx, r[3] + dy];
+    let text = match target.kind {
         ObjectKind::Text => crate::edit_text_ui::paragraph_as_added(xf, info, page, doc.text_blocks(page).get(target.index)?)?,
         ObjectKind::Added => match &doc.added().iter().filter(|a| a.page == page).nth(target.index)?.content {
             pdfcraft_engine::AddedContent::Text(t) => t.clone(),
-            pdfcraft_engine::AddedContent::Image(_) => return None,
+            content @ pdfcraft_engine::AddedContent::Image(_) => {
+                let content = content.with_rect(shift(content.rect()));
+                return Some(Edit::MoveContentToPage { page, index: target.index, to_page: page, content, copy: true });
+            }
         },
-        _ => return None,
+        ObjectKind::Image => {
+            // The picture's whole box (past any clip), in display space, moved by the drag.
+            let whole = xf.user_rect(info, page, doc.page_images(page).get(target.index)?.rect.map(|v| v as f32));
+            let (p0, p1) = (display(whole.left_bottom()), display(whole.right_top()));
+            let rect = shift([p0[0], p0[1], p1[0], p1[1]]);
+            return Some(Edit::MovePageImageToPage { page, index: target.index, to_page: page, rect, copy: true });
+        }
     };
-    let r = text.rect;
-    text.rect = [r[0] + dx, r[1] + dy, r[2] + dx, r[3] + dy];
-    Some(text)
+    Some(Edit::AddText { page, text: pdfcraft_engine::AddedText { rect: shift(text.rect), ..text } })
 }
 
 fn screen(xf: &PageXform, info: &DocInfo, page: usize, object: &EditableObject) -> Rect {
@@ -363,10 +376,10 @@ fn gesture_input(s: &mut ObjectSelection, cx: PageToolContext<'_>, view: &mut Do
                     }
                 }
             } else if view.pending_edit.is_none()
-                && let Some(text) = dropped_copy(xf, info, page, doc, target, rect, gesture.now - gesture.start)
+                && let Some(edit) = dropped_copy(xf, info, page, doc, target, rect, gesture.now - gesture.start)
             {
                 view.content.select_added = Some((page, doc.added().iter().filter(|a| a.page == page).count()));
-                view.pending_edit = Some(Edit::AddText { page, text });
+                view.pending_edit = Some(edit);
                 s.clear();
             }
             return true;
@@ -552,10 +565,11 @@ fn input(s: &mut ObjectSelection, cx: PageToolContext<'_>, view: &mut DocView) -
             }
         }
         if let Some(object) = hit
-            && matches!(object.target.kind, ObjectKind::Text | ObjectKind::Added)
+            && matches!(object.target.kind, ObjectKind::Text | ObjectKind::Added | ObjectKind::Image)
             && ui.input(|i| i.modifiers.command && !i.modifiers.shift)
         {
-            // Ctrl on text: a click toggles it on release, a drag drops a copy (Thai edition).
+            // Ctrl on text or a picture: a click toggles it on release, a drag drops a copy (Thai
+            // edition).
             s.gesture = Some(Gesture { start: p, now: p, marquee: false, additive: true, copy: Some((object.target, object.rect)) });
         } else if let Some(object) = hit {
             if let Some(index) = s.selected.iter().position(|o| o.target == object.target) {

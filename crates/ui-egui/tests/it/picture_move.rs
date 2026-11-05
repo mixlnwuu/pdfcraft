@@ -135,3 +135,46 @@ fn a_page_picture_resized_by_a_corner_stretches_its_own_pixels() {
     h.drop_at(to);
     h.run_steps(4);
 }
+
+/// Thai edition: Ctrl held as a page's own picture is dropped on its own page leaves it where it
+/// was and adds a copy where it was dropped, as Ctrl does for added pictures and text; without
+/// Ctrl the same drag moves it.
+#[test]
+fn a_page_picture_ctrl_dragged_on_its_own_page_is_copied_there() {
+    let mut h = two_pages();
+    let id = h.state().views[0].id;
+    let p1 = h.state().views[0].page_screen_rect(0).expect("page 1 on screen");
+    let c = p1.center();
+    let before = h.state().session.get(id).unwrap().page_images(0)[0].rect;
+    h.drag_at(c);
+    h.run_steps(1);
+    h.drop_at(c);
+    h.run_steps(2);
+    assert!(h.state().views[0].image_selection.is_some(), "selected");
+    let to = c + egui::vec2(0.0, p1.height() / 4.0);
+    let ctrl = egui::Modifiers::COMMAND;
+    h.event(egui::Event::ModifiersChanged(ctrl));
+    h.hover_at(c);
+    h.run_steps(1);
+    h.event(egui::Event::PointerButton { pos: c, button: egui::PointerButton::Primary, pressed: true, modifiers: ctrl });
+    h.run_steps(1);
+    for k in 1..=6 {
+        h.hover_at(c + (to - c) * (k as f32 / 6.0));
+        h.run_steps(1);
+    }
+    h.event(egui::Event::PointerButton { pos: to, button: egui::PointerButton::Primary, pressed: false, modifiers: ctrl });
+    h.run_steps(1);
+    h.event(egui::Event::ModifiersChanged(egui::Modifiers::NONE));
+    h.run_steps(4);
+    let doc = h.state().session.get(id).unwrap();
+    let images = doc.page_images(0);
+    assert!(
+        images.iter().any(|im| im.rect == before),
+        "the original stays where it was: {before:?} in {:?}",
+        images.iter().map(|i| i.rect).collect::<Vec<_>>()
+    );
+    assert_eq!(images.len(), 2, "and a copy is on the page");
+    assert_eq!(doc.added().iter().filter(|a| a.page == 0).count(), 1, "the copy is an added picture on page 1");
+    assert!(doc.added().iter().all(|a| a.page == 0), "nothing went to page 2");
+    assert_eq!(doc.can_undo(), Some("Copy object"), "one step, named as a copy");
+}

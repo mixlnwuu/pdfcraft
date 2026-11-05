@@ -976,7 +976,7 @@ pub(crate) fn image_input(cx: &ImageCx<'_>, images: &[pdfcraft_engine::PageImage
                     let dropped = matches!(drag.target, DragTarget::Move)
                         .then(|| {
                             crate::content_ui::picture_dropped(ui, view, added, page, info, preview, p)
-                                .or_else(|| crate::content_ui::page_picture_dropped(ui, view, page, i, info, target, p))
+                                .or_else(|| crate::content_ui::page_picture_dropped(ui, view, xf, page, i, info, target, p))
                         })
                         .flatten();
                     if let Some(edit) = dropped {
