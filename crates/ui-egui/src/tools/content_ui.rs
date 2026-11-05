@@ -355,6 +355,10 @@ const SNAP: f32 = 6.0;
 /// Smart guides' colour, as in Photoshop.
 const GUIDE: Color32 = Color32::from_rgb(0xFF, 0x2E, 0xC8);
 
+/// The page's centre lines' colour: the green they had before the smart guides, so they stand
+/// apart from the lines to other boxes (Thai edition, the owner's choice).
+const CENTRE_GUIDE: Color32 = Color32::from_rgb(0x2E, 0xB8, 0x5C);
+
 /// Once a box has snapped to a guide it stays on it until the pointer pulls this far (screen
 /// points) away, so it feels held, as Photoshop's guides do (Thai edition).
 const RELEASE: f32 = 14.0;
@@ -585,13 +589,14 @@ pub(crate) fn paint_guides(painter: &egui::Painter, page: Rect, from: Rect, r: R
         return;
     }
     let stroke = Stroke::new(1.0, GUIDE);
+    let centre = Stroke::new(1.0, CENTRE_GUIDE);
     let on = |a: f32, b: f32| (a - b).abs() < 0.5;
     let pc = page.center();
     if on(r.center().x, pc.x) {
-        painter.line_segment([Pos2::new(pc.x, page.top()), Pos2::new(pc.x, page.bottom())], stroke);
+        painter.line_segment([Pos2::new(pc.x, page.top()), Pos2::new(pc.x, page.bottom())], centre);
     }
     if on(r.center().y, pc.y) {
-        painter.line_segment([Pos2::new(page.left(), pc.y), Pos2::new(page.right(), pc.y)], stroke);
+        painter.line_segment([Pos2::new(page.left(), pc.y), Pos2::new(page.right(), pc.y)], centre);
     }
     for o in snap_targets(painter.ctx(), page, from) {
         for x in lines_x(o) {

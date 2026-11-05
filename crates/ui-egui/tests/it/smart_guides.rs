@@ -244,3 +244,75 @@ fn a_box_resized_by_a_corner_snaps_its_edge_to_another_box() {
     let rects = resize(&mut h, 2.0, egui::Modifiers::ALT);
     assert!((rects[1][2] - 138.0).abs() < 0.3, "with Alt it resizes as dragged: {rects:?}");
 }
+
+/// Thai edition: the page's centre lines are green, as before the smart guides, so they stand
+/// apart from the magenta lines to other boxes.
+#[test]
+fn the_page_centre_guide_is_green_and_box_guides_stay_magenta() {
+    const CENTRE: egui::Color32 = egui::Color32::from_rgb(0x2E, 0xB8, 0x5C);
+    let mut h = Harness::builder().with_size(egui::vec2(1400.0, 900.0)).build_eframe(|_cc| {
+        let mut app = PdfCraftApp::new();
+        app.set_option("language", "en").unwrap();
+        app.open_bytes("blank.pdf", None, blank()).unwrap();
+        app.set_option("zoom", "200").unwrap();
+        app
+    });
+    crate::support::settle(&mut h);
+    // A box whose centre is at x = 90, and another lower down at x 40..140.
+    for rect in [[40.0, 200.0, 140.0, 220.0], [40.0, 60.0, 140.0, 80.0]] {
+        let text = pdfcraft_engine::AddedText { text: "Box".into(), rect, size: 12.0, ..Default::default() };
+        assert!(h.state_mut().apply_edit(pdfcraft_engine::Edit::AddText { page: 0, text }));
+    }
+    assert!(h.state_mut().execute("edit.edit_text"));
+    crate::support::settle(&mut h);
+    let page = h.state().views[0].page_screen_rect(0).expect("on screen");
+    let k = page.width() / 300.0;
+    let at = |x: f64, y: f64| egui::pos2(page.left() + x as f32 * k, page.top() + (300.0 - y as f32) * k);
+    let lines = |h: &Harness<'static, PdfCraftApp>, colour: egui::Color32| -> Vec<[egui::Pos2; 2]> {
+        h.output()
+            .shapes
+            .iter()
+            .filter_map(|s| match &s.shape {
+                egui::Shape::LineSegment { points, stroke } if stroke.color == colour => Some(*points),
+                _ => None,
+            })
+            .collect()
+    };
+    let c = at(90.0, 210.0);
+    h.hover_at(c);
+    h.run_steps(1);
+    h.drag_at(c);
+    h.run_steps(1);
+    h.drop_at(c);
+    h.run_steps(2);
+    // Dragged 59 points right: 1 short of the page's centre line (x = 150), which it snaps onto.
+    let to = c + egui::vec2(59.0 * k, 0.0);
+    h.drag_at(c);
+    h.run_steps(1);
+    for s in 1..=6 {
+        h.hover_at(c + (to - c) * (s as f32 / 6.0));
+        h.run_steps(1);
+    }
+    let green = lines(&h, CENTRE);
+    assert!(
+        green.iter().any(|[a, b]| (a.x - page.center().x).abs() < 0.6 && (b.x - a.x).abs() < 0.1 && (b.y - a.y).abs() >= page.height() - 1.0),
+        "the vertical centre line, across the page, is green: {green:?}"
+    );
+    assert!(lines(&h, GUIDE).iter().all(|[a, b]| (a.x - page.center().x).abs() > 0.6 || (b.x - a.x).abs() > 0.1), "and not magenta");
+    h.drop_at(to);
+    h.run_steps(4);
+    // Lined up with the other box's left edge instead: a magenta line, no green one.
+    let r = added_rects(&h)[0];
+    let c = at((r[0] + r[2]) / 2.0, (r[1] + r[3]) / 2.0);
+    let to = c - egui::vec2((r[0] - 40.0 - 2.0) as f32 * k, 0.0);
+    h.drag_at(c);
+    h.run_steps(1);
+    for s in 1..=6 {
+        h.hover_at(c + (to - c) * (s as f32 / 6.0));
+        h.run_steps(1);
+    }
+    assert!(!lines(&h, GUIDE).is_empty(), "a box-to-box guide is magenta");
+    assert!(lines(&h, CENTRE).is_empty(), "no green line off the centre");
+    h.drop_at(to);
+    h.run_steps(2);
+}
