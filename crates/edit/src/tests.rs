@@ -11176,3 +11176,33 @@ q
         String::from_utf8_lossy(&page_content_bytes(&doc, 0))
     );
 }
+
+/// Thai edition: Word saves pages whose `q … Q` cross marked-content boundaries (a `q` opened in
+/// one tagged sequence, closed in the last one), so the last unit isn't balanced and Bring to Front
+/// refused ("across graphics or marked-content boundaries"). It now puts the image's whole tagged
+/// sequence in a stream of its own after everything; Send to Back before everything.
+#[test]
+fn arrange_to_front_and_back_past_word_style_interleaved_scopes() {
+    let content = "/P <</MCID 0>> BDC q 100 0 0 100 50 50 cm /Im0 Do Q EMC \
+                   /P <</MCID 1>> BDC q 0 0 100 100 re W n BT /F1 12 Tf 20 60 Td (Cell) Tj ET EMC \
+                   /P <</MCID 2>> BDC BT /F1 12 Tf 72 80 Td (Last) Tj ET Q EMC";
+    let mut doc = image_page_with(content);
+    arrange(&mut doc, 0, 0, images::ArrangeOrder::BringToFront).unwrap();
+    let doc = reopen(&doc);
+    let s = String::from_utf8_lossy(&page_content_bytes(&doc, 0)).into_owned();
+    assert!(marked_sequence(&s, 0).contains("/Im0 Do"), "the image keeps its own tagged sequence: {s}");
+    assert!(s.find("(Last)").unwrap() < s.find("/Im0 Do").unwrap(), "painted after everything: {s}");
+    let after = images::page_images(&doc, 0).unwrap();
+    assert_eq!(after.len(), 1);
+    // The cell clips to 0..100: under it only a quarter of the picture would show.
+    assert_eq!(after[0].visible_rect.unwrap_or(after[0].rect), [50.0, 50.0, 150.0, 150.0], "not under the cell's clip");
+    assert_eq!(after[0].rect, [50.0, 50.0, 150.0, 150.0], "where it was");
+
+    // And back again: before everything.
+    let mut doc = doc;
+    arrange(&mut doc, 0, 0, images::ArrangeOrder::SendToBack).unwrap();
+    let doc = reopen(&doc);
+    let s = String::from_utf8_lossy(&page_content_bytes(&doc, 0)).into_owned();
+    assert!(s.find("/Im0 Do").unwrap() < s.find("(Cell)").unwrap(), "painted first: {s}");
+    assert_eq!(images::page_images(&doc, 0).unwrap()[0].rect, [50.0, 50.0, 150.0, 150.0]);
+}

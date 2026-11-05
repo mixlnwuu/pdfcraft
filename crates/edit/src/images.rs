@@ -1023,6 +1023,25 @@ fn target_destination_unit<'a>(
     dest.map(|u| (u, forward)).ok_or_else(refused)
 }
 
+/// Thai edition: Word interleaves `q … Q` with marked content (a `q` opened in one tagged sequence
+/// and closed in a later one), so the first or last unit may not be balanced. Bring to Front / Send
+/// to Back don't need it: the image then goes in a content stream of its own after (`Some(true)`)
+/// or before (`Some(false)`) everything the page draws, where the whole page's state is known.
+/// `None`: next to `dest_unit` as usual.
+fn edge_destination(
+    ops: &[Op],
+    order: ArrangeOrder,
+    dest_unit: &std::ops::Range<usize>,
+    target_unit: &std::ops::Range<usize>,
+    insert_after: bool,
+) -> Option<bool> {
+    (matches!(order, ArrangeOrder::BringToFront | ArrangeOrder::SendToBack)
+        && dest_unit != target_unit
+        && !balanced_arrange_span(ops, dest_unit.clone())
+        && balanced_arrange_span(ops, 0..ops.len()))
+    .then_some(insert_after)
+}
+
 /// A moved unit must not borrow a graphics or marked-content boundary from its neighbours.
 fn balanced_arrange_span(ops: &[Op], range: std::ops::Range<usize>) -> bool {
     let Some(slice) = ops.get(range) else { return false };
@@ -1223,7 +1242,8 @@ fn arrange_image(
     }
 
     let (dest_unit, insert_after) = target_destination_unit(&units, target_idx, target_unit, order, has_other_paint)?;
-    if !balanced_arrange_span(&ops, target_unit.clone()) || !balanced_arrange_span(&ops, dest_unit.clone()) {
+    let edge = edge_destination(&ops, order, dest_unit, target_unit, insert_after);
+    if !balanced_arrange_span(&ops, target_unit.clone()) || (edge.is_none() && !balanced_arrange_span(&ops, dest_unit.clone())) {
         return Err(EditError::Invalid("cannot arrange an image across graphics or marked-content boundaries".into()));
     }
 
@@ -1250,7 +1270,10 @@ fn arrange_image(
     let (mut target_span, scope_start, rem_start, rem_end) = determine_arrange_spans(&ops, target, target_unit, has_other_paint, marked_unit)?;
 
     let missing = || EditError::Invalid("the destination content unit could not be located".into());
-    let (dest_pos, scan_target) = if insert_after {
+    let (dest_pos, scan_target) = if let Some(front) = edge {
+        // Not spliced into a stream (see `edge` below): only the state there matters.
+        (0, if front { ops.len() } else { 0 })
+    } else if insert_after {
         (dest_unit.end.checked_sub(1).and_then(|i| ops.get(i)).ok_or_else(missing)?.span.end, dest_unit.end)
     } else {
         (ops.get(dest_unit.start).ok_or_else(missing)?.span.start, dest_unit.start)
@@ -1264,6 +1287,7 @@ fn arrange_image(
         ops.get(dest_unit.start).map(|op| pieces.piece_of(op.span.start))
     };
     let owned_destination = destination_piece
+        .filter(|_| edge.is_none())
         .filter(|piece| all.get(*piece).is_some_and(|(obj, _)| doc.resolve(obj).as_dict().is_some_and(|d| d.get(b"PCAdded").is_some())));
     if let Some(piece) = owned_destination {
         let whole_unit = ops.iter().enumerate().all(|(index, op)| {
@@ -1438,14 +1462,19 @@ fn arrange_image(
         Vec::new()
     };
 
-    if let Some(piece) = owned_destination {
+    if owned_destination.is_some() || edge.is_some() {
         let changed = pieces.splice([(target_span, removal_replacement)]);
         let contents = crate::text::rewritten_contents(doc, all, changed);
         let mut list = match contents {
             Object::Array(list) => list,
             one => vec![one],
         };
-        let insertion = piece.saturating_add(usize::from(insert_after));
+        let insertion = match (edge, owned_destination) {
+            (Some(true), _) => list.len(),
+            (Some(false), _) => 0,
+            (None, Some(piece)) => piece.saturating_add(usize::from(insert_after)),
+            (None, None) => return Err(EditError::Invalid("the destination content stream is missing".into())),
+        };
         if insertion > list.len() {
             return Err(EditError::Invalid("the destination content stream is missing".into()));
         }
