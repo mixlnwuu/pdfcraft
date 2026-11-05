@@ -596,6 +596,14 @@ pub(crate) fn fills_page(xf: &PageXform, rect: Rect) -> bool {
     shown.is_positive() && shown.area() >= page.area() * 0.9
 }
 
+/// The picture being cropped on `page`: crop mode owns every press there, the controls beside its
+/// frame included, so the paragraphs under it and the empty page's marquee never take a crop
+/// button's press before the picture does. `None` when no picture on `page` is being cropped.
+pub(crate) fn crop_hit(view: &DocView, page: usize) -> Option<Hit> {
+    let selection = view.image_selection.as_ref().filter(|s| s.page == page && s.crop.is_some())?;
+    Some(Hit::new(Owner::Picture { index: selection.index, part: PicturePart::Body }, Layer::Handle, egui::CursorIcon::Default))
+}
+
 /// The picture under `p` (its shape, not only its box): a click selects it, a drag moves the
 /// selected one. On the text layer, asked before the paragraphs: editable text on top of a
 /// picture takes the press. `ocr_layer`: the page has one, so a scan isn't picked ([`fills_page`]).

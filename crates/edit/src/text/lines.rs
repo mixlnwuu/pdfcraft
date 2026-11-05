@@ -207,8 +207,9 @@ pub fn lift_paragraph(doc: &mut Document, page: usize, block: usize) -> Result<V
         keep.insert(*i, Op::new("TJ", vec![Object::Array(vec![n(shift)])]));
         layer.push(Op::new("q", vec![]));
         layer.push(Op::new("cm", placed.ctm.iter().map(|v| n(*v)).collect()));
-        for name in &state.ext_gstate {
-            layer.push(Op::new("gs", vec![Object::Name(name.clone())]));
+        // Each ExtGState from where it was selected, so a soft mask stays where it was.
+        for sel in &state.ext_gstate {
+            sel.push_ops(&mut layer, placed.ctm);
         }
         layer.extend(state.stroke.iter().cloned());
         if let Some(w) = state.line_width {
