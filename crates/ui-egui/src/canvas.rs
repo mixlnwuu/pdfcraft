@@ -2824,6 +2824,8 @@ fn draw_pages(
         // A paragraph of the page's text selected in Edit text & images: Arrange (Thai edition).
         if tool == QuickTool::EditText {
             crate::object_ui::arrange_menu(ui, view, can_modify);
+            // Several text boxes selected: Merge text boxes (Thai edition).
+            crate::object_ui::merge_menu(ui, view, doc, can_modify);
         }
         // Preparing a form: the selected field's menu.
         if preparing && let Some((name, wi)) = view.prepare.selected.clone() {

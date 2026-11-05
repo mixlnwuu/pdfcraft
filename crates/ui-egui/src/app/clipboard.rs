@@ -145,6 +145,8 @@ impl PdfCraftApp {
         let Some(text) = pastes.iter().find_map(|p| if let ClipboardPaste::Text(text) = p { Some(text.as_str()) } else { None }) else { return };
         if self.comment_clip.as_ref().is_some_and(|c| c.marker == text) {
             self.paste_comment(i);
+        } else if self.multi_clip.as_ref().is_some_and(|c| c.marker == text) {
+            self.paste_objects(i);
         } else if self.image_clip.as_ref().is_some_and(|c| c.marker == text) {
             self.paste_added_image(i);
         } else {
@@ -163,6 +165,14 @@ impl PdfCraftApp {
             && let Some((page, index)) = self.views.get(i).and_then(|v| v.comments.selected)
             && self.copy_comment(i, page, index, ctx)
         {
+            return true;
+        }
+        // Several objects selected together (Thai edition): all of them, to paste together.
+        if editing_tool && let Some(clip) = self.objects_to_copy(i) {
+            if self.may_copy(id) {
+                ctx.copy_text(clip.marker.clone());
+                self.multi_clip = Some(clip);
+            }
             return true;
         }
         // A picture of the page itself (Edit text & images): its pixels to the clipboard, which
@@ -309,6 +319,141 @@ impl PdfCraftApp {
         }
         let (page, target) = view.objects.single_selected()?;
         (target.kind == pdfcraft_engine::ObjectKind::Image).then_some((page, target.index))
+    }
+
+    /// The text put on the clipboard for objects copied together, while they are held to paste
+    /// (Thai edition).
+    pub fn multi_clip_marker(&self) -> Option<String> {
+        self.multi_clip.as_ref().map(|c| c.marker.clone())
+    }
+
+    /// The objects selected together in Edit text & images, two or more, to copy (Thai edition):
+    /// text boxes and the page's paragraphs as boxes in their look, added pictures and the page's
+    /// pictures. The clipboard text is their text, top to bottom, or a word for pictures alone.
+    fn objects_to_copy(&self, i: usize) -> Option<crate::state::MultiClip> {
+        use crate::state::MultiItem;
+        let view = self.views.get(i)?;
+        if view.content.draft.is_some() || view.line_editor.is_some() {
+            return None;
+        }
+        let (page, objects) = view.objects.selection()?;
+        if objects.len() < 2 {
+            return None;
+        }
+        let doc = self.session.get(view.id)?;
+        let xf = view.page_xform(page)?;
+        let info = doc.info.pages.get(page)?;
+        let added: Vec<&pdfcraft_engine::Added> = doc.added().iter().filter(|a| a.page == page).collect();
+        let blocks = doc.text_blocks(page);
+        let images = doc.page_images(page);
+        let mut items = Vec::with_capacity(objects.len());
+        for o in objects {
+            let item = match o.target.kind {
+                pdfcraft_engine::ObjectKind::Text => {
+                    MultiItem::Text(edit_text_ui::paragraph_as_added(&xf, &doc.info, page, blocks.get(o.target.index)?)?)
+                }
+                pdfcraft_engine::ObjectKind::Added => match &added.get(o.target.index)?.content {
+                    pdfcraft_engine::AddedContent::Text(t) => MultiItem::Text(t.clone()),
+                    content => MultiItem::Added { index: o.target.index, content: content.clone() },
+                },
+                pdfcraft_engine::ObjectKind::Image => {
+                    let image = images.get(o.target.index)?;
+                    // Vector artwork has no picture to copy as an added one: it stays behind.
+                    if image.width == 0 || image.height == 0 {
+                        continue;
+                    }
+                    // The whole box (past any crop), in display space.
+                    let [x0, y0, x1, y1] = image.rect;
+                    let corners = [(x0, y0), (x1, y1)].map(|(x, y)| {
+                        let v = info.user_to_view(x as f32, y as f32);
+                        [f64::from(v[0]), f64::from(info.height) - f64::from(v[1])]
+                    });
+                    let rect = [
+                        corners[0][0].min(corners[1][0]),
+                        corners[0][1].min(corners[1][1]),
+                        corners[0][0].max(corners[1][0]),
+                        corners[0][1].max(corners[1][1]),
+                    ];
+                    MultiItem::PageImage { index: o.target.index, rect }
+                }
+            };
+            items.push((item, o.clone()));
+        }
+        if items.is_empty() {
+            return None;
+        }
+        let mut texts: Vec<(f64, f64, String)> = items
+            .iter()
+            .filter_map(|(item, _)| if let MultiItem::Text(t) = item { Some((t.rect[3], t.rect[0], t.text.clone())) } else { None })
+            .collect();
+        texts.sort_by(|a, b| b.0.total_cmp(&a.0).then(a.1.total_cmp(&b.1)));
+        let marker = if texts.is_empty() { format!("[{}]", tl!("Image")) } else { texts.into_iter().map(|t| t.2).collect::<Vec<_>>().join("\n") };
+        Some(crate::state::MultiClip { doc: view.id, page, items, marker, pastes: 0 })
+    }
+
+    /// ⌘V with objects copied together (Thai edition): all of them on the current page, keeping
+    /// how they lay together, a step down and right of the last paste on their own page, where
+    /// they were on another; one undo step, and the pasted objects selected. Pictures paste only
+    /// into the document they came from (as their own image objects); text boxes anywhere.
+    fn paste_objects(&mut self, i: usize) {
+        use crate::state::MultiItem;
+        use pdfcraft_engine::Edit;
+        if !self.editing_content() {
+            return;
+        }
+        let Some(clip) = self.multi_clip.clone() else { return };
+        let Some(view) = self.views.get(i) else { return };
+        if view.content.draft.is_some() || view.line_editor.is_some() {
+            return;
+        }
+        let (id, to_page) = (view.id, view.current);
+        let Some(doc) = self.session.get(id) else { return };
+        if !doc.allows_modification() {
+            self.notify_error(tl!("The document's security settings don't allow this change"));
+            return;
+        }
+        let same_doc = clip.doc == id;
+        let steps = if same_doc && to_page == clip.page { clip.pastes.saturating_add(1) } else { clip.pastes };
+        let shift = PASTE_STEP * f64::from(steps.min(40));
+        let moved = |r: [f64; 4]| [r[0] + shift, r[1] - shift, r[2] + shift, r[3] - shift];
+        let mut edits = Vec::new();
+        let mut expected = Vec::new();
+        for (item, object) in &clip.items {
+            let edit = match item {
+                MultiItem::Text(t) => Edit::AddText { page: to_page, text: pdfcraft_engine::AddedText { rect: moved(t.rect), ..t.clone() } },
+                MultiItem::Added { index, content } if same_doc => {
+                    Edit::MoveContentToPage { page: clip.page, index: *index, to_page, content: content.with_rect(moved(content.rect())), copy: true }
+                }
+                MultiItem::PageImage { index, rect } if same_doc => {
+                    Edit::MovePageImageToPage { page: clip.page, index: *index, to_page, rect: moved(*rect), copy: true }
+                }
+                _ => continue,
+            };
+            edits.push(edit);
+            let text = if let MultiItem::Text(t) = item { Some(t.text.clone()) } else { None };
+            let r = object.rect;
+            expected.push(pdfcraft_engine::EditableObject {
+                target: pdfcraft_engine::ObjectTarget { kind: pdfcraft_engine::ObjectKind::Added, index: 0 },
+                rect: [r[0] + shift, r[1] - shift, r[2] + shift, r[3] - shift],
+                content_type: object.content_type,
+                text,
+            });
+        }
+        if edits.is_empty() {
+            return;
+        }
+        // "Paste" is an edit label already, so the history reads the same in every language.
+        let edit = if edits.len() > 1 { Edit::Batch { label: "Paste".into(), edits } } else { edits.remove(0) };
+        if self.apply_edit(edit) {
+            if let Some(c) = self.multi_clip.as_mut() {
+                c.pastes = c.pastes.saturating_add(1);
+            }
+            if let Some(v) = self.views.get_mut(i) {
+                v.content.selected = None;
+                v.image_selection = None;
+                v.objects.select_after_paste(to_page, expected);
+            }
+        }
     }
 
     /// The selected added picture in Edit a PDF, to copy.

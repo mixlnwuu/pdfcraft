@@ -256,3 +256,49 @@ fn a_page_picture_copied_and_pasted_keeps_its_size() {
     let (w2, h2) = size(r);
     assert!((w2 - w0).abs() < 0.01 && (h2 - h0).abs() < 0.01, "same size on page 2: {r:?}");
 }
+
+/// Thai edition: a page's own picture copied together with a text box pastes with it: the same
+/// picture at its size, laid out with the box as they were, in one step.
+#[test]
+fn a_page_picture_and_a_text_box_copy_and_paste_together() {
+    let mut h = two_pages();
+    h.state_mut().system_clipboard = false;
+    let id = h.state().views[0].id;
+    let original = h.state().session.get(id).unwrap().page_images(0)[0].clone();
+    let [x0, y0, x1, _] = original.rect;
+    let t = pdfcraft_engine::AddedText { text: "Label".into(), rect: [x0, y0 - 6.0, x1, y0 - 1.0], size: 4.0, ..Default::default() };
+    assert!(h.state_mut().apply_edit(pdfcraft_engine::Edit::AddText { page: 0, text: t }));
+    h.run_steps(4);
+    let screen = |h: &Harness<'static, PdfCraftApp>, x: f64, y: f64| {
+        let doc = h.state().session.get(id).unwrap();
+        let page = &doc.info.pages[0];
+        let r = h.state().views[0].page_screen_rect(0).unwrap();
+        let k = r.width() as f64 / page.width as f64;
+        egui::pos2(r.left() + (x * k) as f32, r.top() + ((page.height as f64 - y) * k) as f32)
+    };
+    let picture = screen(&h, (x0 + x1) / 2.0, (original.rect[1] + original.rect[3]) / 2.0);
+    let label = screen(&h, (x0 + x1) / 2.0, y0 - 3.5);
+    for (p, m) in [(picture, egui::Modifiers::NONE), (label, egui::Modifiers::SHIFT)] {
+        h.hover_at(p);
+        h.run_steps(2);
+        for pressed in [true, false] {
+            h.event_modifiers(egui::Event::PointerButton { pos: p, button: egui::PointerButton::Primary, pressed, modifiers: m }, m);
+        }
+        h.run_steps(4);
+    }
+    h.event(egui::Event::Copy);
+    h.run_steps(2);
+    let marker = h.state().multi_clip_marker().expect("both copied");
+    h.event(egui::Event::Paste(marker));
+    h.run_steps(4);
+    let doc = h.state().session.get(id).unwrap();
+    let images = doc.page_images(0);
+    assert_eq!(images.len(), 2, "the picture pasted");
+    let pasted = images.iter().find(|im| im.rect != original.rect).unwrap();
+    assert_eq!(pasted.object, original.object, "the same picture");
+    assert!((size(pasted.rect).0 - size(original.rect).0).abs() < 0.01, "at its size");
+    assert!((pasted.rect[0] - original.rect[0] - 12.0).abs() < 0.01, "a step right");
+    let labels = doc.added().iter().filter(|a| matches!(&a.content, pdfcraft_engine::AddedContent::Text(t) if t.text == "Label")).count();
+    assert_eq!(labels, 2, "and the box with it");
+    assert_eq!(doc.can_undo(), Some("Paste"));
+}

@@ -655,6 +655,8 @@ pub struct PdfCraftApp {
     pub comment_clip: Option<CommentClip>,
     /// An added picture copied with ⌘C, ready to paste (Thai edition).
     pub image_clip: Option<ImageClip>,
+    /// Several objects copied together with ⌘C, ready to paste together (Thai edition).
+    pub(crate) multi_clip: Option<state::MultiClip>,
     /// A picture of the page itself copied, pasted at its size while the clipboard still holds its
     /// pixels (Thai edition).
     pub(crate) page_image_clip: Option<state::PageImageClip>,

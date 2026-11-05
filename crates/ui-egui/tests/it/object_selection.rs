@@ -530,3 +530,115 @@ fn a_pasted_paragraph_keeps_the_size_and_look_of_a_dragged_copy() {
     let look = |t: &pdfcraft_engine::AddedText| pdfcraft_engine::AddedText { rect: [0.0; 4], ..t.clone() };
     assert_eq!(look(pasted), look(&dragged), "same text, font and look");
 }
+
+/// Thai edition: text boxes selected together (here three on one line and one under them, as
+/// Word's PDFs set a line word by word) merge into one text box where they were, from the
+/// page's right-click menu: their text in reading order, one undo step.
+#[test]
+fn selected_text_boxes_merge_into_one_in_place() {
+    let mut h = harness();
+    let id = h.state().views[0].id;
+    for (text, rect) in [
+        ("aaa", [60.0, 300.0, 90.0, 314.0]),
+        ("bbb", [100.0, 300.0, 130.0, 314.0]),
+        ("ccc", [140.0, 300.0, 170.0, 314.0]),
+        ("ddd", [60.0, 282.0, 90.0, 296.0]),
+    ] {
+        let t = AddedText { text: text.into(), rect, size: 12.0, ..Default::default() };
+        assert!(h.state_mut().apply_edit(Edit::AddText { page: 0, text: t }));
+    }
+    crate::support::settle(&mut h);
+    let before = added_texts(&h).len();
+    // Click the first, Shift+click the others.
+    for (k, (x, y)) in [(75.0, 193.0), (115.0, 193.0), (155.0, 193.0), (75.0, 211.0)].into_iter().enumerate() {
+        let p = at(&h, x, y);
+        click(&mut h, p, if k == 0 { Modifiers::NONE } else { Modifiers::SHIFT });
+    }
+    h.get_by_label("4 objects selected");
+    let p = at(&h, 115.0, 193.0);
+    h.event(egui::Event::PointerButton { pos: p, button: egui::PointerButton::Secondary, pressed: true, modifiers: Modifiers::NONE });
+    h.event(egui::Event::PointerButton { pos: p, button: egui::PointerButton::Secondary, pressed: false, modifiers: Modifiers::NONE });
+    h.run_steps(3);
+    h.get_by_label("Merge text boxes").click();
+    crate::support::settle(&mut h);
+    let after = added_texts(&h);
+    assert_eq!(after.len(), before - 3, "four boxes became one: {after:?}");
+    let (text, rect) = after.iter().find(|(t, _)| t.contains("aaa")).cloned().expect("the merged box");
+    assert_eq!(text, "aaa bbb ccc\nddd");
+    assert!((rect[0] - 60.0).abs() < 0.5 && (rect[3] - 314.0).abs() < 0.5, "where they were: {rect:?}");
+    let doc = h.state().session.get(id).unwrap();
+    assert_eq!(doc.can_undo(), Some("Merge text boxes"), "one step");
+    assert!(h.state_mut().execute("edit.undo"));
+    crate::support::settle(&mut h);
+    assert_eq!(added_texts(&h).len(), before, "undo brings them back");
+}
+
+/// Thai edition: the page's own paragraphs merge too, with added boxes: the paragraphs leave the
+/// page's text and the merged box holds their text in their look.
+#[test]
+fn page_paragraphs_and_added_boxes_merge() {
+    let mut h = harness();
+    let before = objects(&h);
+    let keep = before.iter().find(|o| o.text.as_deref() == Some("Keep here")).expect("the paragraph").rect;
+    let p = at(&h, ((keep[0] + keep[2]) / 2.0) as f32, (500.0 - (keep[1] + keep[3]) / 2.0) as f32);
+    let t = AddedText { text: "More".into(), rect: [keep[2] + 10.0, keep[1], keep[2] + 50.0, keep[3]], size: 12.0, ..Default::default() };
+    assert!(h.state_mut().apply_edit(Edit::AddText { page: 0, text: t }));
+    crate::support::settle(&mut h);
+    click(&mut h, p, Modifiers::NONE);
+    let q = at(&h, (keep[2] + 30.0) as f32, (500.0 - (keep[1] + keep[3]) / 2.0) as f32);
+    click(&mut h, q, Modifiers::SHIFT);
+    h.get_by_label("2 objects selected");
+    h.event(egui::Event::PointerButton { pos: p, button: egui::PointerButton::Secondary, pressed: true, modifiers: Modifiers::NONE });
+    h.event(egui::Event::PointerButton { pos: p, button: egui::PointerButton::Secondary, pressed: false, modifiers: Modifiers::NONE });
+    h.run_steps(3);
+    h.get_by_label("Merge text boxes").click();
+    crate::support::settle(&mut h);
+    assert!(
+        objects(&h).iter().all(|o| o.text.as_deref() != Some("Keep here") || o.target.kind != pdfcraft_engine::ObjectKind::Text),
+        "the paragraph left the page's text"
+    );
+    let merged = added_texts(&h).into_iter().find(|(t, _)| t.contains("Keep here")).expect("merged");
+    assert_eq!(merged.0, "Keep here More");
+    assert!((merged.1[0] - keep[0]).abs() < 1.0, "where it was: {:?} vs {keep:?}", merged.1);
+}
+
+/// Thai edition: several objects selected together are copied with ⌘C and pasted with ⌘V at once:
+/// a paragraph of the page and an added box both come out as text boxes in their look and size,
+/// laid out as they were, a step down and right, in one undo step, and the pasted ones selected.
+#[test]
+fn several_selected_objects_copy_and_paste_together() {
+    let mut h = harness();
+    let id = h.state().views[0].id;
+    let before = objects(&h);
+    let keep = before.iter().find(|o| o.text.as_deref() == Some("Keep here")).expect("the paragraph").rect;
+    let note = added_texts(&h).into_iter().find(|(t, _)| t == "Added note").expect("the note").1;
+    let p = at(&h, ((keep[0] + keep[2]) / 2.0) as f32, (500.0 - (keep[1] + keep[3]) / 2.0) as f32);
+    let q = at(&h, ((note[0] + note[2]) / 2.0) as f32, (500.0 - (note[1] + note[3]) / 2.0) as f32);
+    click(&mut h, p, Modifiers::NONE);
+    click(&mut h, q, Modifiers::SHIFT);
+    h.get_by_label("2 objects selected");
+    let notes = added_texts(&h).len();
+    h.event(egui::Event::Copy);
+    h.run_steps(2);
+    let marker = h.state().multi_clip_marker().expect("both copied");
+    assert_eq!(marker, "Added note\nKeep here", "their text for other apps, top to bottom");
+    h.event(egui::Event::Paste(marker));
+    crate::support::settle(&mut h);
+    let after = added_texts(&h);
+    assert_eq!(after.len(), notes + 2, "both pasted: {after:?}");
+    let size = |r: [f64; 4]| (r[2] - r[0], r[3] - r[1]);
+    let pasted_note = after
+        .iter()
+        .filter(|(t, _)| t == "Added note")
+        .map(|(_, r)| *r)
+        .find(|r| (r[0] - note[0] - 12.0).abs() < 0.01)
+        .expect("the note, a step right");
+    assert!((pasted_note[3] - (note[3] - 12.0)).abs() < 0.01 && (size(pasted_note).0 - size(note).0).abs() < 0.01, "{pasted_note:?} vs {note:?}");
+    let pasted_keep = after.iter().find(|(t, _)| t == "Keep here").map(|(_, r)| *r).expect("the paragraph as a box");
+    assert!((pasted_keep[0] - keep[0] - 12.0).abs() < 1.0, "laid out as it was: {pasted_keep:?} vs {keep:?}");
+    assert_eq!(h.state().session.get(id).unwrap().can_undo(), Some("Paste"), "one step");
+    h.get_by_label("2 objects selected");
+    assert!(h.state_mut().execute("edit.undo"));
+    crate::support::settle(&mut h);
+    assert_eq!(added_texts(&h).len(), notes);
+}

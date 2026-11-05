@@ -247,6 +247,7 @@ impl PdfCraftApp {
             text_clipboard: None,
             comment_clip: None,
             image_clip: None,
+            multi_clip: None,
             page_image_clip: None,
             grid_drop: None,
             last_snapshot: None,
