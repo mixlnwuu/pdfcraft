@@ -324,6 +324,9 @@ mod tests {
         // lowers a mark only when a letter follows it: the clusters alone.
         assert!(ids("\u{0E02}\u{0E49}").contains(&id('\u{F70B}')), "ข้: lowered");
         assert!(ids("\u{0E08}\u{0E4A}").contains(&id('\u{F70C}')), "จ๊: lowered");
+        assert!(ids("\u{0E02}\u{0E48}").contains(&id('\u{F70A}')), "ข่: lowered");
+        assert!(ids("\u{0E01}\u{0E4B}").contains(&id('\u{F70D}')), "ก๋: lowered");
+        assert!(ids("\u{0E1F}\u{0E4B}").contains(&id('\u{F708}')), "ฟ๋: lowered and left");
         assert!(ids("\u{0E1B}\u{0E48}").contains(&id('\u{F705}')), "ป่: lowered and left");
         assert!(ids("\u{0E1B}\u{0E35}").contains(&id('\u{F702}')), "ปี: left");
         assert!(ids("\u{0E19}\u{0E34}\u{0E49}").contains(&id('\u{0E49}')), "นิ้: over the vowel");
