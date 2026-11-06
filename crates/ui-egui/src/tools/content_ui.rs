@@ -398,6 +398,42 @@ pub(crate) fn set_snap_grid(ctx: &egui::Context, page: Rect, step: Option<f32>) 
     ctx.data_mut(|d| d.insert_temp(grid_id(page), step));
 }
 
+/// The ruler guides over `page` (screen x of the upright ones, y of the level ones), for boxes to
+/// snap to as well (Thai edition).
+pub(crate) fn set_snap_lines(ctx: &egui::Context, page: Rect, xs: Vec<f32>, ys: Vec<f32>) {
+    ctx.data_mut(|d| d.insert_temp(lines_id(page), std::sync::Arc::new((xs, ys))));
+}
+
+fn lines_id(page: Rect) -> egui::Id {
+    egui::Id::unique(("snap-lines", page.min.x.to_bits(), page.min.y.to_bits()))
+}
+
+/// The ruler guides set for `page` this frame.
+fn snap_lines(ctx: &egui::Context, page: Rect) -> std::sync::Arc<(Vec<f32>, Vec<f32>)> {
+    ctx.data(|d| d.get_temp(lines_id(page))).unwrap_or_default()
+}
+
+/// A ruler guide being dragged to `at` (screen x or y, Thai edition): snapped onto the nearest of
+/// `lines` (page edges and centre, boxes' edges and centres) within [`SNAP`], and held there until
+/// it is pulled [`RELEASE`] away, as a moved box is. Returns where it goes and the line it sits on.
+/// Alt held, or Snap to Guides off, moves it freely.
+pub(crate) fn snap_line(ui: &egui::Ui, at: f32, lines: &[f32]) -> (f32, Option<f32>) {
+    let ctx = ui.ctx();
+    let id = egui::Id::unique("snap-hold-guide");
+    if ui.input(|i| i.modifiers.alt) || !guide_options(ctx).1 || !at.is_finite() {
+        ctx.data_mut(|g| g.remove::<(Option<(f32, usize)>, f64)>(id));
+        return (at, None);
+    }
+    let now = ui.input(|i| i.time);
+    let mut held = ctx.data(|g| g.get_temp::<(Option<(f32, usize)>, f64)>(id)).filter(|(_, t)| now - t <= HOLD_FORGET).and_then(|(h, _)| h);
+    let out = snap_axis(&[at], lines.iter().copied(), &mut held);
+    ctx.data_mut(|g| g.insert_temp(id, (held, now)));
+    match out {
+        Some(shift) => (at + shift, held.map(|(g, _)| g)),
+        None => (at, None),
+    }
+}
+
 fn grid_id(page: Rect) -> egui::Id {
     egui::Id::unique(("snap-grid", page.min.x.to_bits(), page.min.y.to_bits()))
 }
@@ -426,7 +462,7 @@ pub(crate) fn snap_to_centre(ui: &egui::Ui, page: Rect, r: Rect, d: egui::Vec2) 
     let id = egui::Id::unique("snap-hold");
     let now = ui.input(|i| i.time);
     let mut hold = ctx.data(|g| g.get_temp::<(Hold, f64)>(id)).filter(|(_, at)| now - at <= HOLD_FORGET).map(|(h, _)| h).unwrap_or_default();
-    let out = snap_delta_held(page, r, d, &snap_targets(ctx, page, r), grid, &mut hold);
+    let out = snap_delta_held(page, r, d, &snap_targets(ctx, page, r), grid, &snap_lines(ctx, page), &mut hold);
     ctx.data_mut(|g| g.insert_temp(id, (hold, now)));
     out
 }
@@ -473,18 +509,32 @@ fn snap_axis(moving: &[f32], guides: impl Iterator<Item = f32>, held: &mut Optio
 /// `grid` apart from the page's top left when the grid shows.
 #[cfg(test)]
 fn snap_delta(page: Rect, r: Rect, d: egui::Vec2, others: &[Rect], grid: Option<f32>) -> egui::Vec2 {
-    snap_delta_held(page, r, d, others, grid, &mut Hold::default())
+    snap_delta_held(page, r, d, others, grid, &(Vec::new(), Vec::new()), &mut Hold::default())
 }
 
 /// [`snap_delta`], held on to the guides in `hold` (see [`RELEASE`]) and updating it.
-fn snap_delta_held(page: Rect, r: Rect, d: egui::Vec2, others: &[Rect], grid: Option<f32>, hold: &mut Hold) -> egui::Vec2 {
+fn snap_delta_held(
+    page: Rect,
+    r: Rect,
+    d: egui::Vec2,
+    others: &[Rect],
+    grid: Option<f32>,
+    (rx, ry): &(Vec<f32>, Vec<f32>),
+    hold: &mut Hold,
+) -> egui::Vec2 {
     let moved = r.translate(d);
     // The grid lines nearest the box's edges.
     let near = |origin: f32, edges: [f32; 2]| -> Vec<f32> {
         grid.filter(|s| s.is_finite() && *s >= 1.0).map_or_else(Vec::new, |s| edges.iter().map(|m| origin + ((m - origin) / s).round() * s).collect())
     };
-    let xs = std::iter::once(page.center().x).chain(others.iter().flat_map(|o| lines_x(*o))).chain(near(page.left(), [moved.left(), moved.right()]));
-    let ys = std::iter::once(page.center().y).chain(others.iter().flat_map(|o| lines_y(*o))).chain(near(page.top(), [moved.top(), moved.bottom()]));
+    let xs = std::iter::once(page.center().x)
+        .chain(others.iter().flat_map(|o| lines_x(*o)))
+        .chain(near(page.left(), [moved.left(), moved.right()]))
+        .chain(rx.iter().copied());
+    let ys = std::iter::once(page.center().y)
+        .chain(others.iter().flat_map(|o| lines_y(*o)))
+        .chain(near(page.top(), [moved.top(), moved.bottom()]))
+        .chain(ry.iter().copied());
     let mut out = d;
     if let Some(shift) = snap_axis(&lines_x(moved), xs, &mut hold.x) {
         out.x += shift;
@@ -510,7 +560,7 @@ pub(crate) fn snap_resize(ui: &egui::Ui, page: Rect, from: Rect, to: Rect, x: Op
     let id = egui::Id::unique("snap-hold-resize");
     let now = ui.input(|i| i.time);
     let mut hold = ctx.data(|g| g.get_temp::<(Hold, f64)>(id)).filter(|(_, at)| now - at <= HOLD_FORGET).map(|(h, _)| h).unwrap_or_default();
-    let out = snap_resized_held(page, to, (x, y), keep_aspect, &snap_targets(ctx, page, from), grid, &mut hold);
+    let out = snap_resized_held(page, to, (x, y), keep_aspect, &snap_targets(ctx, page, from), (grid, &snap_lines(ctx, page)), &mut hold);
     ctx.data_mut(|g| g.insert_temp(id, (hold, now)));
     out
 }
@@ -522,7 +572,7 @@ fn snap_resized_held(
     (x, y): (Option<bool>, Option<bool>),
     keep_aspect: bool,
     others: &[Rect],
-    grid: Option<f32>,
+    (grid, (rx, ry)): (Option<f32>, &(Vec<f32>, Vec<f32>)),
     hold: &mut Hold,
 ) -> Rect {
     if !(to.is_positive() && to.is_finite()) {
@@ -532,11 +582,13 @@ fn snap_resized_held(
     let edge_x = x.map(|left| if left { to.left() } else { to.right() });
     let edge_y = y.map(|top| if top { to.top() } else { to.bottom() });
     let sx = edge_x.and_then(|e| {
-        let guides = std::iter::once(page.center().x).chain(others.iter().flat_map(|o| lines_x(*o))).chain(near(page.left(), e));
+        let guides =
+            std::iter::once(page.center().x).chain(others.iter().flat_map(|o| lines_x(*o))).chain(near(page.left(), e)).chain(rx.iter().copied());
         snap_axis(&[e], guides, &mut hold.x)
     });
     let sy = edge_y.and_then(|e| {
-        let guides = std::iter::once(page.center().y).chain(others.iter().flat_map(|o| lines_y(*o))).chain(near(page.top(), e));
+        let guides =
+            std::iter::once(page.center().y).chain(others.iter().flat_map(|o| lines_y(*o))).chain(near(page.top(), e)).chain(ry.iter().copied());
         snap_axis(&[e], guides, &mut hold.y)
     });
     if x.is_none() {
@@ -876,9 +928,11 @@ pub(crate) fn page_input(
         if let Some(edit) = cv.finish_draft(added, info) {
             view.pending_edit = Some(edit);
         }
-        // A box with lines aligned on their own keeps its width: they are aligned in it.
-        let auto =
-            !pdfcraft_engine::text_is_wrapped(t) && t.aligns.iter().all(Option::is_none) || t.direction != pdfcraft_engine::TextDirection::Horizontal;
+        // A box with lines aligned on their own keeps its width: they are aligned in it. So does a
+        // box made wider than its text (Thai edition): its text is aligned inside it.
+        let page_width = info.pages.get(page).map_or(f64::INFINITY, |p| f64::from(p.width));
+        let auto = pdfcraft_engine::hugs_text(t, page_width) && t.aligns.iter().all(Option::is_none)
+            || t.direction != pdfcraft_engine::TextDirection::Horizontal;
         cv.draft = Some(TextDraft {
             page,
             index: Some(i),
@@ -1465,9 +1519,18 @@ pub(crate) fn restyled(old: &AddedText, new: AddedText, page_width: Option<f64>)
             let r = pdfcraft_engine::added_text_rect(old);
             pdfcraft_engine::fitted_text(&AddedText { rect: [r[0], r[3] - new.size, r[0] + w.max(1.0), r[3]], ..new }, w)
         }
-        Some(w) if !pdfcraft_engine::text_is_wrapped(old) => pdfcraft_engine::fitted_text(&new, w),
+        // Aligning moves the text inside its box, which keeps its size (Thai edition, the owner's
+        // choice): refitting would hug the text again and leave nothing to align it in.
+        _ if only_alignment_changed(old, &new) => new,
+        // Only a box that hugs its text follows it; one made wider by hand keeps its width.
+        Some(w) if pdfcraft_engine::hugs_text(old, w) => pdfcraft_engine::fitted_text(&new, w),
         _ => new,
     }
+}
+
+/// Whether `new` differs from `old` in its alignment only.
+fn only_alignment_changed(old: &AddedText, new: &AddedText) -> bool {
+    (new.align != old.align || new.aligns != old.aligns) && AddedText { align: old.align, aligns: old.aligns.clone(), ..new.clone() } == *old
 }
 
 /// The Add text font menu: the bundled families, then the fonts installed on this machine, with
@@ -1712,6 +1775,9 @@ pub(crate) struct LookPreview {
     pub underline: Option<bool>,
     /// Which way the text runs (Thai edition); a paragraph of the page turned becomes an added box.
     pub direction: Option<pdfcraft_engine::TextDirection>,
+    /// The alignment of the whole box (Thai edition): its text moves inside the box, which keeps
+    /// its size.
+    pub align: Option<TextAlign>,
 }
 
 impl LookPreview {
@@ -1741,6 +1807,10 @@ impl LookPreview {
         }
         if let Some(d) = self.direction {
             look.direction = d;
+        }
+        if let Some(a) = self.align {
+            look.align = a;
+            look.aligns.clear();
         }
     }
 }
@@ -2588,6 +2658,52 @@ mod snap_tests {
         assert_eq!(snap_delta(page, r, vec2(35.0, 8.0), &[], None), vec2(35.0, 8.0));
     }
 
+    /// Thai edition (the owner's choice): aligning moves the text inside its box, which keeps its
+    /// size; a box made wider than its text keeps its width when restyled; one that hugs its text
+    /// still follows it.
+    #[test]
+    fn aligning_keeps_the_box_and_only_hugging_boxes_follow_their_text() {
+        use super::{AddedText, TextAlign, restyled};
+        let hug = pdfcraft_engine::fitted_text(
+            &AddedText { text: "Hello".into(), rect: [100.0, 100.0, 400.0, 114.0], size: 12.0, ..Default::default() },
+            600.0,
+        );
+        assert!(pdfcraft_engine::hugs_text(&hug, 600.0));
+        let wide = AddedText { rect: [100.0, 100.0, 400.0, 114.0], ..hug.clone() };
+        assert!(!pdfcraft_engine::hugs_text(&wide, 600.0));
+        for old in [&hug, &wide] {
+            let centred = restyled(old, AddedText { align: TextAlign::Center, ..old.clone() }, Some(600.0));
+            assert_eq!(centred.rect, old.rect, "aligning keeps the box");
+            assert_eq!(centred.align, TextAlign::Center);
+        }
+        let bigger = restyled(&wide, AddedText { size: 18.0, ..wide.clone() }, Some(600.0));
+        assert_eq!(bigger.rect, wide.rect, "a wide box keeps its width");
+        let bigger = restyled(&hug, AddedText { size: 18.0, ..hug.clone() }, Some(600.0));
+        assert!(bigger.rect[2] - bigger.rect[0] > hug.rect[2] - hug.rect[0], "a hugging box grows with its text");
+    }
+
+    /// No ruler guides.
+    const NO_LINES: (Vec<f32>, Vec<f32>) = (Vec::new(), Vec::new());
+
+    /// Thai edition: a moved box snaps onto a ruler guide dragged out of the rulers, and a resized
+    /// edge does too.
+    #[test]
+    fn boxes_snap_to_ruler_guides() {
+        use super::{Hold, snap_delta_held, snap_resized_held};
+        let page = Rect::from_min_size(pos2(0.0, 0.0), vec2(1000.0, 1000.0));
+        let r = Rect::from_min_size(pos2(100.0, 400.0), vec2(50.0, 20.0));
+        let lines = (vec![255.0], vec![700.0]);
+        // Its left edge 4 short of the upright guide at 255, its bottom 3 short of the level one.
+        let d = snap_delta_held(page, r, vec2(151.0, 277.0), &[], None, &lines, &mut Hold::default());
+        assert_eq!(r.translate(d).left(), 255.0);
+        assert_eq!(r.translate(d).bottom(), 700.0);
+        // Without the guides it moves as dragged.
+        assert_eq!(snap_delta_held(page, r, vec2(151.0, 277.0), &[], None, &NO_LINES, &mut Hold::default()), vec2(151.0, 277.0));
+        let to = Rect::from_min_max(r.min, pos2(252.0, 420.0));
+        let out = snap_resized_held(page, to, (Some(false), None), false, &[], (None, &lines), &mut Hold::default());
+        assert_eq!(out.right(), 255.0);
+    }
+
     /// Thai edition: a box that snapped to a guide is held on it while the drag pulls a little
     /// past the catch distance, as in Photoshop, and lets go further out.
     #[test]
@@ -2598,16 +2714,16 @@ mod snap_tests {
         let r = Rect::from_min_size(pos2(100.0, 400.0), vec2(50.0, 20.0));
         let mut hold = Hold::default();
         // Its left edge 4 from the other's left (300): it snaps, and holds the guide.
-        let d = snap_delta_held(page, r, vec2(196.0, 0.0), &[other], None, &mut hold);
+        let d = snap_delta_held(page, r, vec2(196.0, 0.0), &[other], None, &NO_LINES, &mut hold);
         assert_eq!(r.translate(d).left(), 300.0);
         assert!(hold.x.is_some());
         // 10 past it, beyond the catch distance but within the hold: still on the guide.
-        let d = snap_delta_held(page, r, vec2(210.0, 0.0), &[other], None, &mut hold);
+        let d = snap_delta_held(page, r, vec2(210.0, 0.0), &[other], None, &NO_LINES, &mut hold);
         assert_eq!(r.translate(d).left(), 300.0, "held");
         // Without the hold the same move snaps to nothing.
         assert_eq!(snap_delta(page, r, vec2(210.0, 0.0), &[other], None).x, 210.0);
         // 20 past it: let go, and the hold is gone.
-        let d = snap_delta_held(page, r, vec2(220.0, 0.0), &[other], None, &mut hold);
+        let d = snap_delta_held(page, r, vec2(220.0, 0.0), &[other], None, &NO_LINES, &mut hold);
         assert_eq!(d.x, 220.0);
         assert!(hold.x.is_none());
     }
@@ -2619,7 +2735,7 @@ mod snap_tests {
         use super::{Hold, snap_resized_held};
         let page = Rect::from_min_size(pos2(0.0, 0.0), vec2(1000.0, 1000.0));
         let other = Rect::from_min_max(pos2(300.0, 100.0), pos2(500.0, 180.0));
-        let snap = |to: Rect, edges, keep| snap_resized_held(page, to, edges, keep, &[other], None, &mut Hold::default());
+        let snap = |to: Rect, edges, keep| snap_resized_held(page, to, edges, keep, &[other], (None, &NO_LINES), &mut Hold::default());
         // The bottom-right corner dragged to 4 short of the other's right edge, far from any
         // horizontal guide: the right edge lands on 500, the rest as dragged.
         let to = Rect::from_min_max(pos2(100.0, 400.0), pos2(496.0, 437.0));
@@ -2644,13 +2760,13 @@ mod snap_tests {
         let mut hold = Hold::default();
         // 2:1, its top-left fixed at (100, 400), the corner dragged to 4 short of x = 500.
         let to = Rect::from_min_max(pos2(100.0, 400.0), pos2(496.0, 598.0));
-        let out = snap_resized_held(page, to, (Some(false), Some(false)), true, &[other], None, &mut hold);
+        let out = snap_resized_held(page, to, (Some(false), Some(false)), true, &[other], (None, &NO_LINES), &mut hold);
         assert_eq!(out.min, to.min, "the opposite corner stays");
         assert_eq!(out.right(), 500.0);
         assert!((out.width() / out.height() - 2.0).abs() < 1e-4, "still 2:1: {out:?}");
         // Held while pulled a little past the guide.
         let to = Rect::from_min_max(pos2(100.0, 400.0), pos2(510.0, 605.0));
-        let out = snap_resized_held(page, to, (Some(false), Some(false)), true, &[other], None, &mut hold);
+        let out = snap_resized_held(page, to, (Some(false), Some(false)), true, &[other], (None, &NO_LINES), &mut hold);
         assert_eq!(out.right(), 500.0, "held");
     }
 }

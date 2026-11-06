@@ -74,6 +74,7 @@ mod recovery;
 mod redact;
 mod reload;
 mod restyle;
+mod ruler_guides;
 mod script_noop;
 mod scroll_prefetch;
 mod side_panels;

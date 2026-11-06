@@ -532,6 +532,11 @@ impl PdfCraftApp {
         let blocked = view.content.blocked().is_some();
         let Some(d) = view.content.draft.as_mut() else { return };
         let committed = d.style.clone();
+        // Aligning stops the box following its text (Thai edition, the owner's choice): the text
+        // is aligned inside the box as it stands.
+        if style.align != committed.align || style.aligns != committed.aligns {
+            d.auto = false;
+        }
         // `text` and `rect` stay what the page has; the rest is the new style.
         d.style = pdfcraft_engine::AddedText { text: committed.text.clone(), rect: committed.rect, ..style };
         d.focus = true;

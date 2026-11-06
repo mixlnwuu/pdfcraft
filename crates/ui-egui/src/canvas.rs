@@ -31,6 +31,7 @@ pub(super) mod page_cursor;
 mod page_input;
 pub(super) mod page_pointer;
 pub(super) mod page_router;
+mod ruler_guides;
 pub mod scroll_speed;
 mod selection;
 pub(super) mod signature_drag;
@@ -629,6 +630,11 @@ pub struct DocView {
     /// The page picture being moved or resized, alone (Thai edition): what follows the pointer, so the page
     /// behind it doesn't come along. Keyed by (edit generation, page, index).
     pub image_drag_picture: Option<((u64, usize, usize), Option<egui::TextureHandle>)>,
+    /// Guides dragged out of the rulers (Thai edition), on screen only, and the one being dragged.
+    pub(crate) ruler_guides: Vec<ruler_guides::RulerGuide>,
+    pub(crate) guide_drag: Option<ruler_guides::GuideDrag>,
+    /// The rulers show, and with them the guides (this frame).
+    pub(crate) guides_shown: bool,
     /// Select tool: the picture clicked, to copy in its original format.
     pub picked_image: Option<crate::image_pick::PickedImage>,
     /// A paragraph box being dragged (moved, or resized from its right edge) in Edit text.
@@ -1005,6 +1011,9 @@ impl DocView {
             format_painter: None,
             image_selection: None,
             image_drag_picture: None,
+            ruler_guides: Vec::new(),
+            guide_drag: None,
+            guides_shown: false,
             picked_image: None,
             block_drag: None,
             pending_action: None,
@@ -1647,6 +1656,33 @@ fn paint_rulers(ui: &egui::Ui, view: &DocView, info: &DocInfo, units: crate::uni
     }
     painter.rect_filled(Rect::from_min_size(area.min, egui::vec2(RULER, RULER)), 0.0, fill);
     painter.text(Rect::from_min_size(area.min, egui::vec2(RULER, RULER)).center(), egui::Align2::CENTER_CENTER, units.label(), font, ink);
+}
+
+/// The rulers and the guides dragged out of them (Thai edition), over the document `area`.
+fn rulers_and_guides(
+    ui: &egui::Ui,
+    view: &mut DocView,
+    (doc, info, added): (&pdfcraft_engine::Document, &DocInfo, &[pdfcraft_engine::Added]),
+    units: crate::units::Unit,
+    area: Rect,
+    (show, modal): (bool, bool),
+) {
+    view.guides_shown = show;
+    if !show {
+        view.guide_drag = None;
+        return;
+    }
+    // The boxes on the pages shown, for a guide being dragged to be drawn to.
+    let mut boxes: HashMap<usize, Vec<Rect>> = HashMap::new();
+    if view.guide_drag.is_some() {
+        for (page, xf) in view.screen_xforms.clone() {
+            let (lines, images) = page_input::edit_inventory(view, doc, page);
+            boxes.insert(page, crate::content_ui::page_boxes(&xf, info, page, added, &lines, &images));
+        }
+    }
+    let boxes_on = |page: usize| boxes.get(&page).cloned().unwrap_or_default();
+    ruler_guides::guides(ui, view, &ruler_guides::GuideFrame { area, units, boxes: &boxes_on, modal });
+    paint_rulers(ui, view, info, units, area);
 }
 
 /// The grid over page `page` (Thai edition): drawn on screen only, from the page's top left.
@@ -3335,9 +3371,7 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
 
     view.viewport_screen = out.inner_rect;
     view.auto_scroll.paint(ui, avail);
-    if show_rulers {
-        paint_rulers(ui, view, info, env.units, out.inner_rect);
-    }
+    rulers_and_guides(ui, view, (doc, info, &added), env.units, out.inner_rect, (show_rulers, modal));
     if unobstructed && matches!(tool, QuickTool::Select | QuickTool::ColumnSelect) {
         copy_selected |= selection_actions(ui, avail, view, info, prefs, allowed && !comments_hidden, can_copy);
     }

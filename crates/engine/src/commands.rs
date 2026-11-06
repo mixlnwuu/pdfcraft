@@ -213,6 +213,8 @@ pub const COMMANDS: &[CommandSpec] = &[
     // Thai edition: smart guides shown while moving boxes, and boxes snapping to them.
     c("view.smart_guides", "Smart Guides", None, None, Document, "align-center"),
     c("view.snap", "Snap to Guides", None, None, Document, "move"),
+    // Thai edition: remove the guides dragged out of the rulers.
+    c("view.clear_guides", "Clear Guides", None, None, Document, "eraser"),
     c("view.layout.cover", "Show cover page in two-page view", None, None, TwoPageView, "bookmark"),
     // Acrobat's view modes, a page display and a zoom at once (the rail's Page display menu).
     c("view.fit_width_scrolling", "Fit to width scrolling", None, None, Document, "arrow-left-right"),

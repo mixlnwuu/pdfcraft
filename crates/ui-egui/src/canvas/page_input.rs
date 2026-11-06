@@ -70,6 +70,9 @@ pub(super) fn page_tool_input(ui: &mut egui::Ui, view: &mut DocView, frame: &mut
     let (lines, images) = if matches!(tool, QuickTool::AddText | QuickTool::EditText) && can_modify {
         let (lines, images) = edit_inventory(view, doc, i);
         set_snap(ui.ctx(), &xf, info, i, (added, &lines, &images), frame.env.show_grid.then_some(units));
+        // The guides dragged out of the rulers (Thai edition).
+        let (xs, ys) = super::ruler_guides::snap_lines(view, i, xf.rect);
+        crate::content_ui::set_snap_lines(ui.ctx(), xf.rect, xs, ys);
         (lines, images)
     } else {
         Default::default()
@@ -381,7 +384,7 @@ fn right_click(hits: &PageHits<'_>, under: &[crate::page_router::Hit], view: &mu
 }
 
 /// Edit text's paragraphs and pictures on page `i`, kept while the document is unchanged.
-fn edit_inventory(
+pub(super) fn edit_inventory(
     view: &mut DocView,
     doc: &pdfcraft_engine::Document,
     i: usize,

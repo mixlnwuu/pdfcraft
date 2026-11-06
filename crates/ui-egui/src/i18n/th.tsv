@@ -2960,6 +2960,8 @@ theme	Appearance	ลักษณะที่ปรากฏ
 @id	view.snap	ดูดเข้าแนว
 	Smart Guides	เส้นช่วยจัดแนว
 	Snap to Guides	ดูดเข้าแนว
+@id	view.clear_guides	ล้างเส้นไกด์
+	Clear Guides	ล้างเส้นไกด์
 	Editing tips	เคล็ดลับการแก้ไขข้อความ
 	Tips for editing text	เคล็ดลับการแก้ไขข้อความ
 	Change the text and pictures already on the page: click a paragraph to select it, double-click it to type.	แก้ข้อความและรูปภาพที่มีอยู่แล้วในหน้า: คลิกหนึ่งครั้งเพื่อเลือกย่อหน้า ดับเบิลคลิกเพื่อพิมพ์แก้
