@@ -190,7 +190,80 @@ fn shape_run(text: &str, rtl: bool, kind: ShapedScript, script: Option<harfrust:
         cluster.glyphs.push((info.glyph_id, at));
         cluster.advance += f64::from(pos.x_advance) * scale;
     }
-    Ok(out.into_iter().map(|(_, c)| c).collect())
+    let mut out: Vec<ShapedCluster> = out.into_iter().map(|(_, c)| c).collect();
+    if text.chars().any(|c| ('\u{0E01}'..='\u{0E4E}').contains(&c)) && !has_thai_layout(font) {
+        thai_pua_forms(font, &mut out);
+    }
+    Ok(out)
+}
+
+/// Whether `font` lays Thai out itself: its GSUB or GPOS has a Thai script.
+fn has_thai_layout(font: &FontRef<'_>) -> bool {
+    let thai = |tags: Vec<skrifa::raw::types::Tag>| tags.iter().any(|t| t == &skrifa::raw::types::Tag::new(b"thai"));
+    let gsub =
+        font.gsub().ok().and_then(|t| t.script_list().ok()).map(|l| l.script_records().iter().map(|r| r.script_tag()).collect()).unwrap_or_default();
+    let gpos =
+        font.gpos().ok().and_then(|t| t.script_list().ok()).map(|l| l.script_records().iter().map(|r| r.script_tag()).collect()).unwrap_or_default();
+    thai(gsub) || thai(gpos)
+}
+
+/// Thai edition: a Thai font with no Thai layout tables of its own (TH Sarabun PSK has only Latin
+/// ones) draws every tone mark as high as over a vowel, and the marks over ป ฝ ฟ ฬ into their
+/// stems. Such fonts carry the forms Windows draws instead, in the private-use area (U+F700 to
+/// U+F71A): tone marks lowered onto a consonant with no vowel above, marks shifted left of a tall
+/// consonant's stem, ฐ and ญ without their tails over a vowel below, and vowels below ฎ ฏ dropped
+/// under their tails. Each glyph of `clusters` is swapped for the form that fits where it sits, when
+/// the font has it; the text the clusters show stays as typed.
+fn thai_pua_forms(font: &FontRef<'_>, clusters: &mut [ShapedCluster]) {
+    let charmap = font.charmap();
+    let glyph = |c: char| charmap.map(c).map(|g| g.to_u32());
+    let upper_vowel = |c: char| matches!(c, '\u{0E31}' | '\u{0E34}'..='\u{0E37}' | '\u{0E47}' | '\u{0E4D}');
+    let below_vowel = |c: char| matches!(c, '\u{0E38}'..='\u{0E3A}');
+    for i in 0..clusters.len() {
+        // A tone mark before a Sara Am sits over its Nikhahit: high.
+        let next = clusters.get(i + 1).and_then(|c| c.text.chars().next());
+        let Some(cluster) = clusters.get_mut(i) else { continue };
+        let chars: Vec<char> = cluster.text.chars().collect();
+        let Some(&base) = chars.first() else { continue };
+        let tall = matches!(base, '\u{0E1B}' | '\u{0E1D}' | '\u{0E1F}' | '\u{0E2C}');
+        let below = chars.iter().copied().any(below_vowel);
+        let mut swaps: Vec<(char, char)> = Vec::new();
+        match base {
+            '\u{0E10}' if below => swaps.push((base, '\u{F700}')),
+            '\u{0E0D}' if below => swaps.push((base, '\u{F70F}')),
+            _ => {}
+        }
+        for (k, &c) in chars.iter().enumerate().skip(1) {
+            let raised = chars.get(1..k).unwrap_or_default().iter().copied().any(upper_vowel) || (k + 1 == chars.len() && next == Some('\u{0E33}'));
+            let form = match c {
+                // ่ ้ ๊ ๋ ์
+                '\u{0E48}'..='\u{0E4C}' => {
+                    let n = u32::from(c) - 0x0E48;
+                    match (tall, raised) {
+                        (true, true) => char::from_u32(0xF713 + n),
+                        (true, false) => char::from_u32(0xF705 + n),
+                        (false, false) => char::from_u32(0xF70A + n),
+                        (false, true) => None,
+                    }
+                }
+                '\u{0E31}' if tall => Some('\u{F710}'),
+                '\u{0E34}'..='\u{0E37}' if tall => char::from_u32(0xF701 + (u32::from(c) - 0x0E34)),
+                '\u{0E47}' if tall => Some('\u{F712}'),
+                '\u{0E4D}' if tall => Some('\u{F711}'),
+                '\u{0E38}'..='\u{0E3A}' if matches!(base, '\u{0E0E}' | '\u{0E0F}') => char::from_u32(0xF718 + (u32::from(c) - 0x0E38)),
+                _ => None,
+            };
+            if let Some(form) = form {
+                swaps.push((c, form));
+            }
+        }
+        for (c, form) in swaps {
+            let (Some(from), Some(to)) = (glyph(c), glyph(form)) else { continue };
+            if let Some(g) = cluster.glyphs.iter_mut().find(|(id, _)| *id == from) {
+                g.0 = to;
+            }
+        }
+    }
 }
 
 /// Glyph `id` of the Arabic document face, bounded like [`crate::japanese_glyph`]. Glyphs without
@@ -232,6 +305,32 @@ mod tests {
             return false;
         }
         true
+    }
+
+    /// Thai edition: TH Sarabun PSK has no Thai layout tables, so its tone marks are lowered onto
+    /// a consonant with no vowel above, and shifted left of ป's stem, with the forms Windows uses
+    /// (from U+F700), as Word draws them; over a vowel, or before Sara Am, they stay high.
+    #[test]
+    fn th_sarabun_tone_marks_sit_where_word_puts_them() {
+        let Some(script) = crate::document_family_font("TH Sarabun PSK", false, false) else {
+            eprintln!("skipping: built without TH Sarabun PSK (set CRAFT_FONTS_DIR)");
+            return;
+        };
+        let (font, _) = face(script).unwrap();
+        let id = |c: char| font.charmap().map(c).unwrap().to_u32();
+        let ids = |s: &str| shape_face(s, script, true).unwrap().iter().flat_map(|c| c.glyphs.iter().map(|g| g.0)).collect::<Vec<_>>();
+        assert!(!has_thai_layout(font));
+        // Replacement text is shaped a cluster at a time (edit text/fallback.rs), and the shaper
+        // lowers a mark only when a letter follows it: the clusters alone.
+        assert!(ids("\u{0E02}\u{0E49}").contains(&id('\u{F70B}')), "ข้: lowered");
+        assert!(ids("\u{0E08}\u{0E4A}").contains(&id('\u{F70C}')), "จ๊: lowered");
+        assert!(ids("\u{0E1B}\u{0E48}").contains(&id('\u{F705}')), "ป่: lowered and left");
+        assert!(ids("\u{0E1B}\u{0E35}").contains(&id('\u{F702}')), "ปี: left");
+        assert!(ids("\u{0E19}\u{0E34}\u{0E49}").contains(&id('\u{0E49}')), "นิ้: over the vowel");
+        assert!(ids("\u{0E19}\u{0E49}\u{0E33}").contains(&id('\u{0E49}')), "น้ำ: over the Nikhahit");
+        // The text the clusters show stays as typed.
+        let text: String = shape_face("\u{0E02}\u{0E49}\u{0E32}", script, true).unwrap().iter().map(|c| c.text.as_str()).collect();
+        assert_eq!(text, "\u{0E02}\u{0E49}\u{0E32}");
     }
 
     #[test]
