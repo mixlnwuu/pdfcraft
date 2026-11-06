@@ -20,6 +20,12 @@ const GUIDE_COLOUR: Color32 = Color32::from_rgb(0x22, 0xC8, 0xE0);
 /// A guide's colour while it sits on something it was drawn to.
 const HELD_COLOUR: Color32 = Color32::from_rgb(0xFF, 0x2E, 0xC8);
 
+/// How near (screen points) a guide dragged across the page's centre line comes before it is
+/// pulled onto it, and how far it must then be pulled away to let go: further than to anything
+/// else, so the middle of the page is easy to hit (the owner's wish).
+const CENTRE_CATCH: f32 = 16.0;
+const CENTRE_RELEASE: f32 = 30.0;
+
 /// How wide a guide is to grab (screen points).
 const GRAB: f32 = 6.0;
 
@@ -49,6 +55,15 @@ impl RulerGuide {
 pub(crate) struct GuideDrag {
     pub upright: bool,
     pub moving: Option<usize>,
+    /// It sits on the page's centre line, held there by its stronger pull.
+    pub on_centre: bool,
+}
+
+/// Whether a guide at `along` goes onto the page's centre line at `centre`: within
+/// [`CENTRE_CATCH`] of it, or within [`CENTRE_RELEASE`] while it is already `held` there.
+fn centre_pull(along: f32, centre: f32, held: bool) -> bool {
+    let d = (along - centre).abs();
+    d.is_finite() && (d <= CENTRE_CATCH || held && d <= CENTRE_RELEASE)
 }
 
 /// The ruler guides of view `view` on `page` (screen rect `rect`), for boxes to snap to: the
@@ -86,10 +101,10 @@ fn page_at(pages: &[(usize, PageXform)], p: Pos2) -> Option<(usize, Rect)> {
     None
 }
 
-/// The lines a guide on `page` (screen) is drawn to: the page's edges and centre, and the edges
-/// and centres of `boxes`.
+/// The lines a guide on `page` (screen) is drawn to besides the page's centre ([`centre_pull`]):
+/// the page's edges, and the edges and centres of `boxes`.
 fn lines(page: Rect, boxes: &[Rect], upright: bool) -> Vec<f32> {
-    let mut out = if upright { vec![page.left(), page.center().x, page.right()] } else { vec![page.top(), page.center().y, page.bottom()] };
+    let mut out = if upright { vec![page.left(), page.right()] } else { vec![page.top(), page.bottom()] };
     for b in boxes {
         if upright {
             out.extend([b.left(), b.center().x, b.right()]);
@@ -144,7 +159,7 @@ pub(crate) fn guides(ui: &egui::Ui, view: &mut DocView, frame: &GuideFrame<'_>) 
             if upright { CursorIcon::ResizeHorizontal } else { CursorIcon::ResizeVertical },
         );
         if resp.drag_started() && view.guide_drag.is_none() && view.ruler_guides.len() < MAX_GUIDES {
-            view.guide_drag = Some(GuideDrag { upright, moving: None });
+            view.guide_drag = Some(GuideDrag { upright, moving: None, on_centre: false });
         }
     }
 
@@ -170,7 +185,7 @@ pub(crate) fn guides(ui: &egui::Ui, view: &mut DocView, frame: &GuideFrame<'_>) 
         if strip.is_positive() && view.guide_drag.is_none() && !frame.modal {
             let icon = if g.upright { CursorIcon::ResizeHorizontal } else { CursorIcon::ResizeVertical };
             if grab_area(&ctx, egui::Id::unique(("ruler-guide", view.id.0, k)), strip, icon).drag_started() {
-                take = Some(GuideDrag { upright: g.upright, moving: Some(k) });
+                take = Some(GuideDrag { upright: g.upright, moving: Some(k), on_centre: false });
             }
         }
     }
@@ -193,11 +208,19 @@ pub(crate) fn guides(ui: &egui::Ui, view: &mut DocView, frame: &GuideFrame<'_>) 
         drag.moving.and_then(|k| view.ruler_guides.get(k)).and_then(|g| pages.iter().find(|(i, _)| *i == g.page)).map(|(i, xf)| (*i, xf.rect))
     });
     // Where it goes: snapped (and held) on the page's lines.
+    // The page's centre pulls hardest; then its edges and what is on it.
     let placed = target.filter(|_| !on_ruler).map(|(page, rect)| {
         let along = if drag.upright { p.x } else { p.y };
+        let centre = if drag.upright { rect.center().x } else { rect.center().y };
+        if crate::content_ui::snapping(ui) && centre_pull(along, centre, drag.on_centre) {
+            return (page, rect, centre, Held::Centre);
+        }
         let (to, held) = crate::content_ui::snap_line(ui, along, &lines(rect, &(frame.boxes)(page), drag.upright));
-        (page, rect, to, held.is_some())
+        (page, rect, to, if held.is_some() { Held::Line } else { Held::Free })
     });
+    if let Some(d) = view.guide_drag.as_mut() {
+        d.on_centre = placed.is_some_and(|(.., held)| held == Held::Centre);
+    }
     if escape {
         view.guide_drag = None;
         return;
@@ -231,7 +254,11 @@ pub(crate) fn guides(ui: &egui::Ui, view: &mut DocView, frame: &GuideFrame<'_>) 
     let fg = ctx.layer_painter(egui::LayerId::new(Order::Foreground, egui::Id::unique(("ruler-guide-drag", view.id.0)))).with_clip_rect(inside);
     // Over a ruler or off the pages nothing shows: letting go there removes it.
     if let Some((_, rect, to, held)) = placed {
-        let colour = if held { HELD_COLOUR } else { GUIDE_COLOUR };
+        let colour = match held {
+            Held::Centre => crate::content_ui::CENTRE_GUIDE,
+            Held::Line => HELD_COLOUR,
+            Held::Free => GUIDE_COLOUR,
+        };
         let (a, b) = if drag.upright {
             (Pos2::new(to, inside.top()), Pos2::new(to, inside.bottom()))
         } else {
@@ -252,6 +279,16 @@ pub(crate) fn guides(ui: &egui::Ui, view: &mut DocView, frame: &GuideFrame<'_>) 
     }
     ctx.set_cursor_icon(if drag.upright { CursorIcon::ResizeHorizontal } else { CursorIcon::ResizeVertical });
     ctx.request_repaint();
+}
+
+/// What a guide being dragged sits on.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Held {
+    Free,
+    /// An edge or centre of the page or of something on it.
+    Line,
+    /// The page's centre line, drawn green as the boxes' centre guides are.
+    Centre,
 }
 
 /// An area of its own over the pages at `rect` that takes a drag, with `icon` over it.
@@ -287,8 +324,19 @@ mod tests {
     fn a_guide_is_drawn_to_the_page_centre_and_the_boxes_edges() {
         let page = Rect::from_min_size(pos2(0.0, 0.0), vec2(400.0, 600.0));
         let b = Rect::from_min_size(pos2(30.0, 40.0), vec2(100.0, 20.0));
-        assert_eq!(lines(page, &[b], true), [0.0, 200.0, 400.0, 30.0, 80.0, 130.0]);
-        assert_eq!(lines(page, &[b], false), [0.0, 300.0, 600.0, 40.0, 50.0, 60.0]);
+        assert_eq!(lines(page, &[b], true), [0.0, 400.0, 30.0, 80.0, 130.0]);
+        assert_eq!(lines(page, &[b], false), [0.0, 600.0, 40.0, 50.0, 60.0]);
+    }
+
+    /// The page's centre pulls a guide from further away than anything else, and holds it longer.
+    #[test]
+    fn the_page_centre_pulls_hardest() {
+        use super::centre_pull;
+        assert!(centre_pull(312.0, 300.0, false), "caught 12 points away");
+        assert!(!centre_pull(320.0, 300.0, false), "not 20 away");
+        assert!(centre_pull(325.0, 300.0, true), "held 25 away once on it");
+        assert!(!centre_pull(335.0, 300.0, true), "let go 35 away");
+        assert!(!centre_pull(f32::NAN, 300.0, true));
     }
 
     #[test]

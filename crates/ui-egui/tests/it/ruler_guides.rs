@@ -177,3 +177,33 @@ fn aligning_a_selected_box_keeps_its_size() {
     assert_eq!(t.align, pdfcraft_engine::TextAlign::Center, "centred");
     assert_eq!(t.rect, before, "the box keeps its size");
 }
+
+/// Thai edition (the owner's wish): a guide dragged near the page's middle is pulled onto it from
+/// further away than onto anything else, drawn green while it is there, and cyan once let go.
+#[test]
+fn the_page_centre_pulls_a_guide_hardest_and_shows_green() {
+    const GREEN: egui::Color32 = egui::Color32::from_rgb(0x2E, 0xB8, 0x5C);
+    let green = |h: &Harness<'static, PdfCraftApp>| {
+        h.output().shapes.iter().any(|s| matches!(&s.shape, egui::Shape::LineSegment { stroke, .. } if stroke.color == GREEN))
+    };
+    let mut h = harness();
+    let area = h.state().views[0].viewport_rect();
+    let page = h.state().views[0].page_screen_rect(0).expect("on screen");
+    let from = egui::pos2(page.center().x + 40.0, area.top() + 9.0);
+    // 12 screen points short of the middle: further than anything else would pull it.
+    let to = egui::pos2(from.x, page.center().y - 12.0);
+    h.hover_at(from);
+    h.run_steps(1);
+    h.drag_at(from);
+    h.run_steps(1);
+    for s in 1..=8 {
+        h.hover_at(from + (to - from) * (s as f32 / 8.0));
+        h.run_steps(1);
+    }
+    assert!(green(&h), "green on the page's middle");
+    h.drop_at(to);
+    h.run_steps(3);
+    let guides = h.state().views[0].ruler_guides();
+    assert!((guides[0].2 - 0.5).abs() < 1e-4, "on the middle: {guides:?}");
+    assert!(!green(&h), "cyan once let go");
+}

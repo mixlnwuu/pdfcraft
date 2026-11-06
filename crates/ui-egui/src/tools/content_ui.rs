@@ -359,7 +359,7 @@ const GUIDE: Color32 = Color32::from_rgb(0xFF, 0x2E, 0xC8);
 
 /// The page's centre lines' colour: the green they had before the smart guides, so they stand
 /// apart from the lines to other boxes (Thai edition, the owner's choice).
-const CENTRE_GUIDE: Color32 = Color32::from_rgb(0x2E, 0xB8, 0x5C);
+pub(crate) const CENTRE_GUIDE: Color32 = Color32::from_rgb(0x2E, 0xB8, 0x5C);
 
 /// Once a box has snapped to a guide it stays on it until the pointer pulls this far (screen
 /// points) away, so it feels held, as Photoshop's guides do (Thai edition).
@@ -372,6 +372,11 @@ const HOLD_FORGET: f64 = 0.4;
 /// edition), for this frame.
 pub(crate) fn set_guide_options(ctx: &egui::Context, show: bool, snap: bool) {
     ctx.data_mut(|d| d.insert_temp(egui::Id::unique("guide-options"), (show, snap)));
+}
+
+/// Whether things snap this frame: Snap to Guides is on and Alt is not held (Thai edition).
+pub(crate) fn snapping(ui: &egui::Ui) -> bool {
+    guide_options(ui.ctx()).1 && !ui.input(|i| i.modifiers.alt)
 }
 
 fn guide_options(ctx: &egui::Context) -> (bool, bool) {
