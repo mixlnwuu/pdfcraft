@@ -11274,6 +11274,17 @@ ware",
     assert_eq!(own_underlines(&reopen(&plain)).0, 0, "{}", String::from_utf8_lossy(&page_content_bytes(&plain, 0)));
 }
 
+/// Thai edition: a paragraph wrapped in a `/Span` with ActualText (how PdfCraft writes rewritten
+/// Thai) moves in a group: the marked-content operators its line lists are not text to shift.
+#[test]
+fn text_inside_an_actual_text_span_moves_in_a_group() {
+    let mut doc = text_page("/Span <</ActualText (Hello)>> BDC BT /F1 12 Tf 72 700 Td (Hello) Tj ET EMC");
+    text::translate_blocks(&mut doc, 0, &[0], [10.0, -20.0]).unwrap();
+    let doc = reopen(&doc);
+    let b = &text::text_blocks(&doc, 0).unwrap()[0];
+    assert!((b.rect[0] - 82.0).abs() < 0.5, "moved right: {:?}", b.rect);
+}
+
 #[test]
 fn an_underline_moves_with_its_text_in_a_group() {
     let mut doc = text_page("BT /F1 12 Tf 72 700 Td (Hardware) Tj ET");

@@ -1190,6 +1190,12 @@ pub(crate) fn translate_blocks(doc: &mut Document, page: usize, indexes: &[usize
     let fonts = res.get(b"Font").map(|r| doc.resolve(r)).and_then(|r| r.as_dict().cloned()).unwrap_or_default();
     let pieces = Pieces::join(&streams.iter().map(|(_, d)| d.as_slice()).collect::<Vec<_>>());
     let ops = pieces.parse().ops;
+    // A line also lists the marked-content operators around its text (the `/Span` with the
+    // ActualText PdfCraft writes around rewritten Thai, Thai edition): only its text operators move.
+    selected.retain(|i| ops.get(*i).is_some_and(|o| o.is("Tj") || o.is("TJ") || o.is("'") || o.is("\"")));
+    if selected.is_empty() {
+        return Err(EditError::Invalid("a selected paragraph has no text to move".into()));
+    }
     let shown = interpret(doc, &ops, &res, &mut HashMap::new(), &mut Carry::new(), None, None)?;
     let mut patches = HashMap::new();
     // Keep full precision: a tiny rounded text-space change can be magnified by a CTM,
