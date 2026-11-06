@@ -99,6 +99,8 @@ h1 em{font-style:normal;color:var(--accent)}
 /* A screenshot beside its words. */
 .split{display:grid;grid-template-columns:1fr 1.45fr;gap:56px;align-items:center}
 .shot.side{margin:0;max-width:none}
+.video{max-width:1000px;margin:28px auto 0;border-radius:12px;overflow:hidden;box-shadow:var(--shadow);background:#000}.video video{width:100%;height:auto;display:block}
+#video{text-align:center}
 ul.ticks{list-style:none;padding:0;margin:24px 0 0;display:grid;gap:12px}
 ul.ticks li{display:flex;gap:12px;align-items:flex-start;font-size:17px}
 ul.ticks li:before{content:"✓";flex:none;width:26px;height:26px;border-radius:50%;background:var(--accent-soft);color:var(--accent-text);display:grid;place-items:center;font-weight:700;font-size:14px;margin-top:2px}
@@ -171,7 +173,7 @@ footer p{margin:0 0 8px}.foot{display:flex;gap:22px;align-items:flex-start}.foot
 </div>
 <header class="bar"><div class="wrap">
   <a class="brand" href="./"><span class="logo"><img src="favicon.png?v=2" width="256" height="256" alt=""></span>PdfCraft ภาษาไทย <small>ฉบับไม่เป็นทางการ</small></a>
-  <nav><a href="#features">ความสามารถ</a><a href="#compare">ต่างจากทางการ</a><a href="#install">วิธีติดตั้ง</a><a href="#faq">คำถามที่พบบ่อย</a></nav>
+  <nav><a href="#video">คลิปแนะนำ</a><a href="#features">ความสามารถ</a><a href="#compare">ต่างจากทางการ</a><a href="#install">วิธีติดตั้ง</a><a href="#faq">คำถามที่พบบ่อย</a></nav>
   <a class="btn primary sm dl" href="https://github.com/mixlnwuu/pdfcraft/releases/latest">ดาวน์โหลด</a>
 </div></header>
 
@@ -187,6 +189,11 @@ footer p{margin:0 0 8px}.foot{display:flex;gap:22px;align-items:flex-start}.foot
     <img class="only-dark" src="home-dark.png" width="1440" height="900" alt="หน้าแรกของโปรแกรม PdfCraft ภาษาไทย ในธีมมืด" loading="lazy">
   </div>
 </div></div>
+
+<section id="video"><div class="wrap">
+  <h2>คลิปแนะนำโปรแกรม</h2><p class="sub">ดูการใช้งาน PdfCraft ภาษาไทยเบื้องต้น</p>
+  <div class="video"><video controls playsinline preload="metadata" width="1920" height="1080" src="intro.mp4#t=0.1" aria-label="คลิปแนะนำโปรแกรม PdfCraft ภาษาไทยเบื้องต้น">เบราว์เซอร์นี้เล่นคลิปไม่ได้ <a href="intro.mp4">ดาวน์โหลดคลิป</a></video></div>
+</div></section>
 
 <section id="features"><div class="wrap">
   <h2>ทำอะไรได้บ้าง</h2><p class="sub">เครื่องมือที่งานเอกสารไทยต้องใช้ ครบในโปรแกรมเดียว</p>
