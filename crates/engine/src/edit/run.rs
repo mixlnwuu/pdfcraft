@@ -1,6 +1,6 @@
 use super::{
     AddedContent, Arc, Edit, EditError, FieldValue, ImageEdit, NewAnnotation, Shape, a11y, copy_image, decode_data_file, embed_image, fit_picture,
-    image_content_type, is_xfa_data_file, js, mark_source, measure, open_source, strip_xfa, unrestricted, xfa, xfa_after_data_change,
+    image_content_type, is_xfa_data_file, js, mark_source, measure, model_poster, open_source, strip_xfa, unrestricted, xfa, xfa_after_data_change,
 };
 use crate::SourceProblem;
 use crate::sources::{comment_source, import_pdf_comments};
@@ -27,6 +27,7 @@ pub(crate) fn check_permission(edit: &Edit, p: &pdfcraft_cos::Permissions) -> Re
         | Edit::SetBookmarkPage { .. }
         | Edit::SetBookmarkColor { .. }
         | Edit::SetBookmarkStyle { .. }
+        | Edit::ImportBookmarks { .. }
         | Edit::BookmarksFromStructure
         | Edit::NumberPages { .. } => {
             if p.assemble() {
@@ -49,6 +50,7 @@ pub(crate) fn check_permission(edit: &Edit, p: &pdfcraft_cos::Permissions) -> Re
         Edit::AddMeasurement(_)
         | Edit::AddAnnotation(_)
         | Edit::AddCustomStamp { .. }
+        | Edit::AddModel3d { .. }
         | Edit::DeleteAnnotation { .. }
         | Edit::DuplicateAnnotation { .. }
         | Edit::MoveAnnotationToPage { .. }
@@ -265,7 +267,8 @@ impl EditCtx {
 }
 
 /// [`Edit::MovePageImageToPage`]: the page's own picture drawn on `to_page` as an added picture
-/// of the same image object, then (unless `copy`) taken off `page`.
+/// of the same image object, then (unless `copy`) taken off `page`. A copy may land on `page`
+/// itself (Ctrl-drag within the page); a move there is an [`ImageEdit::Move`] instead.
 fn move_page_image_to_page(
     doc: &mut pdfcraft_cos::Document,
     page: usize,
@@ -275,7 +278,7 @@ fn move_page_image_to_page(
     copy: bool,
 ) -> Result<(), EditError> {
     let invalid = |m: &str| EditError::Edit(pdfcraft_edit::EditError::Invalid(m.into()));
-    if page == to_page {
+    if page == to_page && !copy {
         return Err(invalid("the picture is already on that page"));
     }
     if !rect.iter().all(|v| v.is_finite()) || rect[2] <= rect[0] || rect[3] <= rect[1] {
@@ -498,6 +501,9 @@ pub(crate) fn run_edit(doc: &mut pdfcraft_cos::Document, edit: &Edit, cx: &mut E
         Edit::SetBookmarkPage { path, page } => pdfcraft_organize::set_bookmark_page(doc, path, *page)?,
         Edit::SetBookmarkColor { path, color } => pdfcraft_organize::set_bookmark_color(doc, path, *color)?,
         Edit::SetBookmarkStyle { path, bold, italic } => pdfcraft_organize::set_bookmark_style(doc, path, *bold, *italic)?,
+        Edit::ImportBookmarks { parent, index, bookmarks, replace } => {
+            pdfcraft_organize::import_outline(doc, parent, *index, bookmarks, *replace)?;
+        }
         Edit::BookmarksFromStructure => {
             let entries: Vec<_> = pdfcraft_a11y::headings(doc)
                 .into_iter()
@@ -552,6 +558,16 @@ pub(crate) fn run_edit(doc: &mut pdfcraft_cos::Document, edit: &Edit, cx: &mut E
             let new = NewAnnotation { page: *page, shape, style, contents: name.clone(), author: author.clone() };
             let index = pdfcraft_annot::add_annotation(doc, &new, &cx.meta())?;
             pdfcraft_annot::orient_image_stamp(doc, *page, index, rotation)?;
+        }
+        Edit::AddModel3d { page, rect, model, poster, activation, name } => {
+            // A file that is not a model is refused before its poster is brought in.
+            pdfcraft_annot::check_model(model)?;
+            let poster = match poster {
+                Some(file) => Some(model_poster(doc, *rect, file)?),
+                None => None,
+            };
+            let new = pdfcraft_annot::NewModel3d { page: *page, rect: *rect, model, activation: *activation, poster, contents: name };
+            pdfcraft_annot::add_3d_model(doc, &new, &cx.meta())?;
         }
         Edit::DeleteAnnotation { page, index } => pdfcraft_annot::delete_annotation(doc, *page, *index)?,
         Edit::SetAnnotationContents { page, index, text } => pdfcraft_annot::set_contents(doc, *page, *index, text, &cx.meta())?,

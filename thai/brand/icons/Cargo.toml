@@ -1,0 +1,16 @@
+# Thai edition: renders the app icon from the cat (thai/brand/thai-edition-cat-original.png).
+# Standalone (not a workspace member): run it by hand after changing the cat or the colour, then
+# update the sha256 values in ATTRIBUTION.toml.
+#
+#   cargo run --release --manifest-path thai/brand/icons/Cargo.toml
+[package]
+name = "thai-icons"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+tiny-skia = "=0.11.4"
+
+[workspace]

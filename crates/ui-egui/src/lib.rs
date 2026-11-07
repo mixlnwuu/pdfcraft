@@ -195,6 +195,7 @@ pub use persist::units;
 #[cfg(not(target_arch = "wasm32"))]
 pub use persist::window_state;
 use platform::drag_pointer;
+use platform::file_filter;
 #[cfg(not(target_arch = "wasm32"))]
 pub use platform::file_watch;
 #[cfg(target_os = "macos")]
@@ -379,6 +380,9 @@ pub struct PdfCraftApp {
     pub show_rulers: bool,
     /// A grid over the pages (Thai edition): drawn on screen only, and moved boxes snap to it.
     pub show_grid: bool,
+    /// Smart guides drawn while a box moves (Thai edition), and whether it snaps to them.
+    pub show_smart_guides: bool,
+    pub snap_to_guides: bool,
     /// The Linux portal is enabled only by the native host, and starts on the first System choice.
     #[cfg(target_os = "linux")]
     desktop_theme: Option<pdfcraft_platform::desktop_theme::DesktopTheme>,
@@ -386,6 +390,9 @@ pub struct PdfCraftApp {
     desktop_theme_enabled: bool,
     /// How far a mouse-wheel notch scrolls.
     pub scroll_speed: scroll_speed::ScrollSpeed,
+    /// Preferences ▸ Invert middle-button drag: the middle button's pan or auto-scroll moves the
+    /// view the other way. Off by default.
+    pub invert_middle_drag: bool,
     /// Preferences ▸ Animation effects: on, off, or as the system's animation setting says.
     pub animation_effects: motion::AnimationEffects,
     /// Whether the system asked for no animations, and how the desktop app asks it.
@@ -420,6 +427,11 @@ pub struct PdfCraftApp {
     pub update_attempt: Option<String>,
     /// Preferences: ask for a newer release at start, kept across launches (Thai edition).
     pub check_updates_at_start: bool,
+    /// Thai edition: the editing tips (Ctrl+E / Ctrl+T) have been shown once, kept across launches.
+    pub editing_tips_shown: bool,
+    /// Thai edition: show the editing tips with the first document until they have been shown. The
+    /// desktop app sets it; tests and embedders start without it.
+    pub offer_editing_tips: bool,
     pub(crate) updates: updates::Updates,
     /// Lists the Print dialog's printers in the background (the desktop app sets it; see
     /// [`PrinterSource`]).
@@ -644,6 +656,11 @@ pub struct PdfCraftApp {
     pub comment_clip: Option<CommentClip>,
     /// An added picture copied with ⌘C, ready to paste (Thai edition).
     pub image_clip: Option<ImageClip>,
+    /// Several objects copied together with ⌘C, ready to paste together (Thai edition).
+    pub(crate) multi_clip: Option<state::MultiClip>,
+    /// A picture of the page itself copied, pasted at its size while the clipboard still holds its
+    /// pixels (Thai edition).
+    pub(crate) page_image_clip: Option<state::PageImageClip>,
     /// Files dropped on the page grid, waiting for the pointer to say which gap they go to.
     grid_drop: Option<GridDrop>,
     /// The last snapshot (width, height, RGBA); `system_clipboard` also puts it on the
@@ -703,6 +720,9 @@ pub struct PdfCraftApp {
     control: Option<control::Control>,
     /// A bookmark being renamed in the Bookmarks panel: (path, text so far).
     pub bookmark_rename: Option<(Vec<usize>, String)>,
+    /// Bookmarks copied or cut in the Bookmarks panel, with their subtrees, ready to paste into
+    /// any document. Destinations are page indices.
+    pub bookmark_clipboard: Option<Vec<pdfcraft_engine::OutlineNode>>,
     /// Number pages dialog settings (1-based pages).
     pub number_draft: NumberDraft,
     pub(crate) word_count_draft: word_count_ui::Draft,

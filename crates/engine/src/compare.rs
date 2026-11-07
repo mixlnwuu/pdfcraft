@@ -140,6 +140,8 @@ pub enum OfficeFormat {
     Docx,
     Pptx,
     Html,
+    /// CSS-free HTML that preserves text and inline images but drops colours and layout styling.
+    HtmlSimple,
     Rtf,
     Markdown,
 }
@@ -150,6 +152,7 @@ impl OfficeFormat {
             OfficeFormat::Docx => "docx",
             OfficeFormat::Pptx => "pptx",
             OfficeFormat::Html => "html",
+            OfficeFormat::HtmlSimple => "html",
             OfficeFormat::Rtf => "rtf",
             OfficeFormat::Markdown => "md",
         }
@@ -228,25 +231,71 @@ impl crate::Document {
                 let crop_width = f64::from(info.crop[2] - info.crop[0]);
                 let display_width = f64::from(if info.rotation % 180 == 0 { info.width } else { info.height });
                 let unit = if crop_width > 0.0 && crop_width.is_finite() && display_width.is_finite() { display_width / crop_width } else { 1.0 };
+                // What the page draws (Thai edition): rules and filled boxes, for ruled tables,
+                // shaded boxes and lines, and dots, for bulleted lists.
+                let shapes: Vec<pdfcraft_export::Shape> = pdfcraft_edit::reading_shapes(cos, i)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|s| pdfcraft_export::Shape { rect: visible_rect(s.rect), color: s.color, rule: s.rule, dot: s.dot })
+                    .collect();
+                let dots: Vec<[f64; 4]> = shapes.iter().filter(|s| s.dot).map(|s| s.rect).collect();
                 let reading = pdfcraft_edit::reading_blocks_checked(cos, i).unwrap_or_default();
                 let forms_unread = reading.truncated;
+                let indents = reading.indents;
                 let blocks = reading
                     .blocks
                     .into_iter()
-                    .filter(|b| !b.text.trim().is_empty())
-                    .map(|b| {
+                    .enumerate()
+                    .filter(|(_, b)| !b.text.trim().is_empty())
+                    .flat_map(|(k, b)| {
+                        // Thai edition: a first line set in (Word draws the indent as a space), on an
+                        // upright page and baseline.
+                        let indent = indents
+                            .get(k)
+                            .copied()
+                            .filter(|v| v.is_finite() && *v > 1.0 && info.rotation % 360 == 0 && b.rotation.abs() < 0.1)
+                            .map_or(0.0, |v| v * unit);
                         let f = b.base_font.to_ascii_lowercase();
                         // `text` is trimmed; the editor text keeps the source's own spaces.
                         let space_around = [b.editor_text.starts_with(char::is_whitespace), b.editor_text.ends_with(char::is_whitespace)];
-                        pdfcraft_export::Block {
+                        // Thai edition: the Windows Thai fonts' private-use glyph variants ("ได" +
+                        // U+F70B) as the Thai they are, which every reader's font can show.
+                        let thai = |t: &str| pdfcraft_fonts::thai_text::from_presentation_forms(t).into_owned();
+                        let rows: Vec<String> = b.editor_text.split('\n').map(thai).collect();
+                        // A form's rows that end in a dotted line to write on end there in Word too
+                        // (Thai edition): run together, Word wraps them elsewhere ("ถนน" pulled up).
+                        let leader = |r: &str| r.trim_end().ends_with("...") || r.trim_end().ends_with('\u{2026}');
+                        let text = if rows.len() > 1 && rows.iter().take(rows.len() - 1).any(|r| leader(r)) {
+                            let mut text = String::new();
+                            for (k, r) in rows.iter().map(|r| r.trim()).enumerate() {
+                                if k > 0 {
+                                    text.push(if rows.get(k - 1).is_some_and(|p| leader(p)) { '\n' } else { ' ' });
+                                }
+                                text.push_str(r);
+                            }
+                            text
+                        } else {
+                            thai(&b.text)
+                        };
+                        let block = pdfcraft_export::Block {
                             space_around,
-                            text: b.text,
+                            text,
                             rect: visible_rect(b.rect),
                             size: b.size * unit,
                             bold: f.contains("bold") || f.contains("black") || f.contains("heavy"),
                             italic: f.contains("italic") || f.contains("oblique"),
                             color: b.color,
                             rotation: b.rotation - f64::from(info.rotation),
+                            font: b.base_font,
+                            bullet: false,
+                            indent,
+                        };
+                        // A paragraph with a bullet before its lines is a list, one item each; lines
+                        // set centred stay lines of their own (Thai edition).
+                        let items = pdfcraft_export::list_items(block, &rows, &dots);
+                        match <[pdfcraft_export::Block; 1]>::try_from(items) {
+                            Ok([one]) => pdfcraft_export::centred_lines(one, &rows, f64::from(info.width)),
+                            Err(items) => items,
                         }
                     })
                     .collect();
@@ -279,7 +328,7 @@ impl crate::Document {
                 }
                 // The page colour (Edit a PDF ▸ Background, a producer's page fill) for formats that keep one.
                 let background = pdfcraft_edit::page_background(cos, i).ok().flatten();
-                pdfcraft_export::Page { width: info.width as f64, height: info.height as f64, blocks, images, background }
+                pdfcraft_export::Page { width: info.width as f64, height: info.height as f64, blocks, images, background, shapes }
             })
             .collect();
         (pages, truncated)
@@ -301,6 +350,7 @@ impl crate::Document {
             OfficeFormat::Docx => pdfcraft_export::docx(&pages, &title),
             OfficeFormat::Pptx => pdfcraft_export::pptx(&pages, &title),
             OfficeFormat::Html => pdfcraft_export::html(&pages, &title).into_bytes(),
+            OfficeFormat::HtmlSimple => pdfcraft_export::html_simple(&pages, &title).into_bytes(),
             OfficeFormat::Rtf => pdfcraft_export::rtf(&pages).into_bytes(),
             OfficeFormat::Markdown => pdfcraft_export::markdown(&pages).into_bytes(),
         };

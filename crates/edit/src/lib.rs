@@ -43,6 +43,8 @@ pub use backdrop::{Backdrop, backdrops_left_off, page_backdrop, page_backdrops};
 pub use text::strip_subset_tag;
 mod background;
 pub use background::page_background;
+mod shapes;
+pub use shapes::{DrawnShape, reading_shapes};
 pub mod objects;
 pub use objects::{EditableObject, MAX_MOVE_OBJECTS, ObjectKind, ObjectTarget, editable_objects, move_objects};
 
@@ -62,7 +64,8 @@ pub use text::{
 pub mod added;
 pub use added::{
     Added, AddedImage, AddedText, Align, Arrange, Content, Family, MarkerScan, TextDirection, add_content, added_layer, arrange_content,
-    arrange_paragraph, delete_content, first_undrawable, fitted_text, isolate_content, list_added, scan_markers, text_is_wrapped, update_content,
+    arrange_paragraph, delete_content, first_undrawable, fitted_text, hugs_text, isolate_content, list_added, scan_markers, text_is_wrapped,
+    update_content,
 };
 
 mod apply;
@@ -77,8 +80,8 @@ use marks::{matrix_number, n};
 pub(crate) use place::undrawable;
 #[cfg(test)]
 use place::{ISOLATION_MAX_DEPTH, OLD_WRAP_CLOSE, WRAP_CLOSE, WRAP_OPEN, is_wrap_close, stream_bytes, stream_tag, tagged, wrapper_role};
+use place::{Reach, check, check_on_top, contents, draw_on_top, lift_on_top, page_list, place_tagged, revealed_under_paint};
 pub use place::{add_page_fonts, stamp, stamp_with_fonts, undrawable_message};
-use place::{check, check_on_top, contents, page_list, place_tagged};
 
 #[cfg(test)]
 mod marked_isolation_tests;

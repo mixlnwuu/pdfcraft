@@ -419,6 +419,8 @@ fn app_creator<'a>(
         // Help ▸ Check for updates asks the Thai edition's releases (Thai edition).
         app.update_source = Some(std::sync::Arc::new(updates::latest_release));
         app.set_startup_update_check(true);
+        // The editing tips come up once, with the first document (Thai edition).
+        app.offer_editing_tips = true;
         // A portable copy is replaced by hand: its prompt opens the release's page.
         #[cfg(windows)]
         if pdfcraft_ui_egui::portable::data_dir().is_none() {

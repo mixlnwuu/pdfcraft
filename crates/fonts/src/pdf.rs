@@ -67,6 +67,10 @@ pub struct Metrics {
     /// Subset CIDFontType2 only: one bit per CID (below 65 536) whose glyph has an outline in the
     /// embedded program. See [`cids_with_outlines`].
     outlined_cids: Vec<u64>,
+    /// Thai edition: the Thai marks above the line that this font draws with more than one glyph
+    /// (a Thai font's lowered and left-shifted forms, which ToUnicode labels as the plain mark),
+    /// with each code's glyph box (x min, y min, x max, y max, font units). See [`thai_mark_variants`].
+    thai_marks: HashMap<char, Vec<(u32, [i16; 4])>>,
 }
 
 fn nums(doc: &Document, o: Option<&Object>) -> Vec<f64> {
@@ -628,6 +632,7 @@ impl Metrics {
             code_len: 1,
             explicit_reverse: (32..127u8).map(|c| (char::from(c), u32::from(c))).collect(),
             outlined_cids: Vec::new(),
+            thai_marks: HashMap::new(),
         }
     }
 
@@ -657,6 +662,7 @@ impl Metrics {
             Codes::Ranges(r) => r.last().map_or(2, |x| x.0),
         };
         m.unicode = unicode_map(doc, font, m.composite);
+        repair_word_sara_am(&mut m);
         if m.std14.is_some() {
             embedded_widths(doc, font, &mut m);
         }
@@ -669,6 +675,9 @@ impl Metrics {
             }
         }
         m.explicit_reverse = reverse;
+        if m.composite {
+            m.thai_marks = thai_mark_variants(doc, font, &m);
+        }
         // Only a font known to be laid out in visual order counts: a missing GSUB proves nothing
         // (bare CFF and subset fonts often drop it), and the font program is never decoded here.
         if legacy_indic_font(&m.base_font) {
@@ -897,7 +906,15 @@ impl Metrics {
     pub fn encode(&self, text: &str) -> Option<Vec<u8>> {
         // The lowest code showing each wanted character. Explicit entries and the encoding are
         // checked one by one; each range is asked for the wanted characters it can show.
-        let wanted: HashSet<char> = text.chars().collect();
+        // Sara Am (ำ) can be drawn as Nikhahit then Sara Aa (Thai edition, see
+        // `repair_word_sara_am`), so those two are wanted too.
+        let wanted: HashSet<char> = text
+            .chars()
+            .flat_map(|c| {
+                let parts: &[char] = if c == '\u{0E33}' { &['\u{0E4D}', '\u{0E32}'] } else { &[] };
+                std::iter::once(c).chain(parts.iter().copied())
+            })
+            .collect();
         let mut reverse: HashMap<char, u32> = HashMap::new();
         for &ch in &wanted {
             if let Some(&code) = self.explicit_reverse.get(&ch) {
@@ -912,12 +929,178 @@ impl Metrics {
             }
         }
         let mut out = Vec::with_capacity(text.len() * self.code_len);
-        for ch in text.chars() {
-            let code = *reverse.get(&ch)?;
-            let bytes = code.to_be_bytes();
-            out.extend_from_slice(&bytes[4 - self.code_len.clamp(1, 4)..]);
+        let width = self.code_len.clamp(1, 4);
+        let mut push = |code: u32| out.extend_from_slice(code.to_be_bytes().get(4 - width..).unwrap_or_default());
+        let chars: Vec<char> = if self.thai_marks.is_empty() { Vec::new() } else { text.chars().collect() };
+        for (i, ch) in text.chars().enumerate() {
+            match reverse.get(&ch) {
+                // A Thai mark the font draws in several forms: the one that fits where it sits.
+                Some(&code) if !chars.is_empty() && self.thai_marks.contains_key(&ch) => push(self.thai_mark_code(&chars, i).unwrap_or(code)),
+                Some(&code) => push(code),
+                None if ch == '\u{0E33}' => {
+                    push(*reverse.get(&'\u{0E4D}')?);
+                    push(*reverse.get(&'\u{0E32}')?);
+                }
+                None => return None,
+            }
         }
         Some(out)
+    }
+}
+
+/// Thai marks above the line: Mai Han-akat, the vowels above, Mai Taikhu, the tone marks,
+/// Thanthakhat, Nikhahit and Yamakkan.
+fn thai_above_mark(c: char) -> bool {
+    matches!(c, '\u{0E31}' | '\u{0E34}'..='\u{0E37}' | '\u{0E47}'..='\u{0E4E}')
+}
+
+/// Thai marks that sit on a consonant, above or below it.
+fn thai_mark(c: char) -> bool {
+    thai_above_mark(c) || matches!(c, '\u{0E38}'..='\u{0E3A}')
+}
+
+/// How many codes of one mark are looked at: a Thai font has four forms of a tone mark at most.
+const MAX_MARK_FORMS: usize = 8;
+
+/// Thai edition: Word embeds a Thai font (TH Sarabun PSK, Angsana New…) with the glyphs its
+/// shaping picked, and its ToUnicode labels a tone mark's lowered form (for ข้า, with no vowel
+/// above) and its raised one both as the plain mark. Writing the text again must pick the form
+/// again, or every tone mark of an edited paragraph floats as high as over a vowel. For each mark
+/// above the line that the font draws with more than one glyph, the codes and their glyph boxes,
+/// read from the embedded TrueType program (none for another kind of program).
+fn thai_mark_variants(doc: &Document, font: &Dict, m: &Metrics) -> HashMap<char, Vec<(u32, [i16; 4])>> {
+    use skrifa::raw::TableProvider as _;
+    use skrifa::raw::tables::glyf::Glyph;
+    let mut codes: HashMap<char, Vec<u32>> = HashMap::new();
+    let mut add = |c: char, code: u32| {
+        let list = codes.entry(c).or_default();
+        if !list.contains(&code) && list.len() < MAX_MARK_FORMS {
+            list.push(code);
+        }
+    };
+    for (&code, (_, text)) in &m.unicode.explicit {
+        if let Some(c) = only_char(text).filter(|c| thai_above_mark(*c))
+            && m.shows(code, c)
+        {
+            add(c, code);
+        }
+    }
+    for c in ('\u{0E31}'..='\u{0E4E}').filter(|c| thai_above_mark(*c)) {
+        for range in &m.unicode.ranges {
+            if let Some(code) = range.first_code(c, |x| m.shows(x, c)) {
+                add(c, code);
+            }
+        }
+    }
+    codes.retain(|_, list| list.len() > 1);
+    if codes.is_empty() {
+        return HashMap::new();
+    }
+    let Some(descendant) = dict(doc, font.get(b"DescendantFonts").and_then(|o| doc.resolve(o).as_array().and_then(|a| a.first()).cloned()).as_ref())
+    else {
+        return HashMap::new();
+    };
+    let Some(program) = dict(doc, descendant.get(b"FontDescriptor")).and_then(|d| d.get(b"FontFile2").cloned()) else { return HashMap::new() };
+    let program = doc.resolve(&program);
+    let Object::Stream(stream) = program.as_ref() else { return HashMap::new() };
+    let Ok(bytes) = stream.decoded_within(16 << 20) else { return HashMap::new() };
+    let Ok(face) = skrifa::FontRef::from_index(&bytes, 0) else { return HashMap::new() };
+    let (Ok(loca), Ok(glyf)) = (face.loca(None), face.glyf()) else { return HashMap::new() };
+    let map = match descendant.get(b"CIDToGIDMap").map(|o| doc.resolve(o)).as_deref() {
+        Some(Object::Stream(map)) => map.decoded_within(1 << 17).ok(),
+        _ => None,
+    };
+    let gid = |cid: u32| match &map {
+        Some(map) => {
+            let at = usize::try_from(cid).ok()?.checked_mul(2)?;
+            map.get(at..at.checked_add(2)?).map(|b| u32::from(u16::from_be_bytes([b[0], b[1]])))
+        }
+        None => Some(cid),
+    };
+    let bounds = |code: u32| -> Option<[i16; 4]> {
+        let glyph = loca.get_glyf(skrifa::GlyphId::new(gid(m.cid(code))?), &glyf).ok()??;
+        Some(match glyph {
+            Glyph::Simple(g) => [g.x_min(), g.y_min(), g.x_max(), g.y_max()],
+            Glyph::Composite(g) => [g.x_min(), g.y_min(), g.x_max(), g.y_max()],
+        })
+    };
+    codes
+        .into_iter()
+        .filter_map(|(c, list)| {
+            let boxes: Vec<(u32, [i16; 4])> = list.into_iter().filter_map(|code| bounds(code).map(|b| (code, b))).collect();
+            (boxes.len() > 1).then_some((c, boxes))
+        })
+        .collect()
+}
+
+impl Metrics {
+    /// The code of the Thai mark `chars[i]` in the form that fits where it sits (see
+    /// [`thai_mark_variants`]): a tone mark or Thanthakhat lowered onto a consonant with no vowel
+    /// above, raised over one (or over the Nikhahit of a Sara Am after it); a mark over a tall
+    /// consonant (ป ฝ ฟ ฬ) shifted left, clear of its stem. `None` when the font has one form.
+    fn thai_mark_code(&self, chars: &[char], i: usize) -> Option<u32> {
+        let c = *chars.get(i)?;
+        let forms = self.thai_marks.get(&c)?;
+        // The consonant the mark sits on, and the marks between them.
+        let mut k = i;
+        while k > 0 && chars.get(k - 1).is_some_and(|p| thai_mark(*p)) {
+            k -= 1;
+        }
+        let between = chars.get(k..i).unwrap_or_default();
+        let tall = k.checked_sub(1).and_then(|b| chars.get(b)).is_some_and(|b| matches!(b, '\u{0E1B}' | '\u{0E1D}' | '\u{0E1F}' | '\u{0E2C}'));
+        let tone = matches!(c, '\u{0E48}'..='\u{0E4C}');
+        let raised = between.iter().any(|p| matches!(p, '\u{0E31}' | '\u{0E34}'..='\u{0E37}' | '\u{0E47}' | '\u{0E4D}'))
+            || chars.get(i + 1) == Some(&'\u{0E33}');
+        let mut candidates: Vec<&(u32, [i16; 4])> = forms.iter().collect();
+        if tone {
+            let (lo, hi) = candidates.iter().map(|(_, b)| i32::from(b[1])).fold((i32::MAX, i32::MIN), |(lo, hi), y| (lo.min(y), hi.max(y)));
+            let target = if raised { hi } else { lo };
+            // The forms whose bottom is nearer the wanted height than the other.
+            let reach = (hi - lo) / 2;
+            candidates.retain(|(_, b)| (i32::from(b[1]) - target).abs() <= reach);
+        }
+        let pick = if tall { candidates.iter().min_by_key(|(_, b)| b[2]) } else { candidates.iter().max_by_key(|(_, b)| b[2]) };
+        pick.map(|(code, _)| *code)
+    }
+}
+
+/// Thai edition: Word's PDF export of some Thai fonts (AngsanaUPC seen) draws Sara Am (ำ) as two
+/// glyphs, Nikhahit (ํ, no width) then Sara Aa (า), and its ToUnicode labels the Sara Aa glyph ำ
+/// and the Nikhahit a space, with no code labelled า at all. Read as written, every า shows as ำ
+/// and every ำ as a space and an ำ, so editing such text changed it. In a Thai font with no า, a
+/// code labelled ำ that has a width is า, and a code labelled as a space with no width is ํ; the
+/// text then joins ํา back into ำ (and writing splits ำ the same way, [`Metrics::encode`]).
+fn repair_word_sara_am(m: &mut Metrics) {
+    const AA: char = '\u{0E32}';
+    const AM: char = '\u{0E33}';
+    let thai = |t: &str| t.chars().any(|c| ('\u{0E01}'..='\u{0E5B}').contains(&c));
+    if !m.unicode.explicit.values().any(|(_, t)| thai(t)) {
+        return;
+    }
+    let has_aa = m.unicode.explicit.values().any(|(_, t)| t.contains(AA))
+        || m.unicode.encoding.values().any(|t| t.contains(AA))
+        || m.unicode.ranges.iter().any(|r| r.units.contains(&(AA as u16)));
+    if has_aa {
+        return;
+    }
+    let mut marks = Vec::new();
+    let mut aas = Vec::new();
+    for (&code, (_, text)) in &m.unicode.explicit {
+        if text == " " && m.width(code) == 0.0 {
+            marks.push(code);
+        } else if text.chars().eq(std::iter::once(AM)) && m.width(code) > 0.0 {
+            aas.push(code);
+        }
+    }
+    if marks.is_empty() || aas.is_empty() {
+        return;
+    }
+    for (codes, ch) in [(marks, '\u{0E4D}'), (aas, AA)] {
+        for code in codes {
+            if let Some((_, text)) = m.unicode.explicit.get_mut(&code) {
+                *text = ch.to_string();
+            }
+        }
     }
 }
 

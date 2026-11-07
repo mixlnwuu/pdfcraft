@@ -223,7 +223,7 @@ const SIGN: &[&str] = &[
     "sign.panel",
 ];
 const WINDOW: &[&str] = &["view.next_tab", "view.previous_tab"];
-const HELP: &[&str] = &["help.shortcuts", SEP, "help.app_page", "help.github", SEP, "help.check_updates", SEP, "help.about"];
+const HELP: &[&str] = &["help.shortcuts", "help.editing_tips", SEP, "help.app_page", "help.github", SEP, "help.check_updates", SEP, "help.about"];
 
 /// A registry shortcut as a craft-keymap chord: `command` is ⌘ (Ctrl elsewhere) and `mac_ctrl`
 /// the Control key on macOS. `None` for a key craft-keymap doesn't name.
@@ -344,7 +344,7 @@ impl PdfCraftApp {
             Node::Separator,
         ];
         // Thai edition: rulers and a grid.
-        view.extend(list(&["view.rulers", "view.grid"], &mut used));
+        view.extend(list(&["view.rulers", "view.grid", "view.smart_guides", "view.snap", "view.clear_guides"], &mut used));
         view.push(Node::Separator);
         view.extend(list(PANES, &mut used));
         view.push(Node::submenu(
@@ -500,6 +500,8 @@ impl PdfCraftApp {
             "view.page_gaps" => Some(view.is_some_and(|v| v.show_page_gaps)),
             "view.rulers" => Some(self.show_rulers),
             "view.grid" => Some(self.show_grid),
+            "view.smart_guides" => Some(self.show_smart_guides),
+            "view.snap" => Some(self.snap_to_guides),
             "view.layout.cover" => Some(view.is_some_and(|v| v.cover)),
             "view.full_screen" => Some(self.full_screen),
             "view.read_mode" => Some(self.mode == crate::Mode::Read),
@@ -819,5 +821,44 @@ mod tests {
         app.native_menu_clicks(&ctx);
         app.native_menu_clicks(&ctx);
         assert_eq!(app.session.get(doc).unwrap().info.pages[0].rotation, (before + 90) % 360, "rotated once");
+    }
+
+    /// Thai edition: the whole menu bar reads in Thai, as Windows lays it out (the About item
+    /// comes from craft-menu's "About {app}"). A new command or a relabelled one from upstream
+    /// shows up here untranslated. Names that stay as they are: the documents' own names.
+    #[test]
+    fn every_menu_reads_in_thai() {
+        let (mut app, ctx) = app(&["a.pdf"]);
+        app.set_option("language", "th").unwrap();
+        crate::i18n::set_current(crate::i18n::Lang::from_code("th").expect("Thai is embedded"));
+        let bar = craft_menu::layout(&app.menu_bar(&ctx), Target::Windows, &layout_options()).bar;
+        let thai = |s: &str| s.chars().any(|c| ('\u{0E00}'..='\u{0E7F}').contains(&c));
+        let mut english = Vec::new();
+        for menu in &bar.menus {
+            if !thai(&menu.title) {
+                english.push(format!("menu {}", menu.title));
+            }
+        }
+        fn walk(nodes: &[craft_menu::Node], thai: &dyn Fn(&str) -> bool, out: &mut Vec<String>) {
+            for n in nodes {
+                match n {
+                    craft_menu::Node::Item(it) if it.command.id != DOCUMENT && !thai(&it.label) => {
+                        out.push(format!("{} ({})", it.label, it.command.key()));
+                    }
+                    craft_menu::Node::Submenu { label, children, .. } => {
+                        if !thai(label) {
+                            out.push(format!("submenu {label}"));
+                        }
+                        walk(children, thai, out);
+                    }
+                    _ => {}
+                }
+            }
+        }
+        for menu in &bar.menus {
+            walk(&menu.children, &thai, &mut english);
+        }
+        crate::i18n::set_current(crate::i18n::Lang::EN);
+        assert!(english.is_empty(), "still in English: {english:#?}");
     }
 }

@@ -5,7 +5,7 @@
 //! editor would rewrite them ([`crate::edit_text_ui::LineEditor::style`]), added text boxes are
 //! restyled in place, and the whole change is one undo step.
 
-use pdfcraft_engine::{AddedContent, AddedText, BlockStyle, Document, Edit, ObjectKind, ObjectTarget};
+use pdfcraft_engine::{AddedContent, AddedText, BlockStyle, Document, Edit, ObjectKind, ObjectTarget, TextAlign};
 
 use crate::canvas::DocView;
 use crate::content_ui::LookPreview;
@@ -40,13 +40,49 @@ pub(crate) fn look_of(doc: &Document, page: usize, target: ObjectTarget) -> Opti
     match target.kind {
         ObjectKind::Text => {
             let b = doc.text_blocks(page).into_iter().nth(target.index)?;
-            Some(Look { text: crate::edit_text_ui::look_of(&b), source_font: Some(b.base_font) })
+            let align = rows_align(&b, &doc.text_lines(page));
+            Some(Look { text: AddedText { align, ..crate::edit_text_ui::look_of(&b) }, source_font: Some(b.base_font) })
         }
         ObjectKind::Added => match &doc.added().iter().filter(|a| a.page == page).nth(target.index)?.content {
             AddedContent::Text(t) => Some(Look { text: t.clone(), source_font: None }),
             AddedContent::Image(_) => None,
         },
         ObjectKind::Image => None,
+    }
+}
+
+/// How a paragraph's rows sit in its box (Thai edition), so the alignment buttons show it and a
+/// centred paragraph can be set back to the left: centred when the rows share a centre but not a
+/// left edge, right when they share a right edge only, else left. One row: left (it fills its box,
+/// so every alignment looks the same).
+fn rows_align(b: &pdfcraft_engine::TextBlock, lines: &[pdfcraft_engine::TextLine]) -> TextAlign {
+    if b.rotation != 0.0 {
+        return TextAlign::Left;
+    }
+    let spans: Vec<(f64, f64)> = b
+        .rows
+        .iter()
+        .filter_map(|row| {
+            let rects: Vec<[f64; 4]> = row.iter().filter_map(|i| lines.get(*i).map(|l| l.rect)).collect();
+            let x0 = rects.iter().map(|r| r[0].min(r[2])).fold(f64::INFINITY, f64::min);
+            let x1 = rects.iter().map(|r| r[0].max(r[2])).fold(f64::NEG_INFINITY, f64::max);
+            (x0.is_finite() && x1.is_finite()).then_some((x0, x1))
+        })
+        .collect();
+    if spans.len() < 2 {
+        return TextAlign::Left;
+    }
+    let tol = (b.size * 0.3).max(1.0);
+    let same = |f: &dyn Fn(&(f64, f64)) -> f64| {
+        let v: Vec<f64> = spans.iter().map(f).collect();
+        let (lo, hi) = v.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), x| (lo.min(*x), hi.max(*x)));
+        hi - lo <= tol
+    };
+    let (left, right, centre) = (same(&|s| s.0), same(&|s| s.1), same(&|s| (s.0 + s.1) / 2.0));
+    match (left, right, centre) {
+        (false, _, true) => TextAlign::Center,
+        (false, true, false) => TextAlign::Right,
+        _ => TextAlign::Left,
     }
 }
 
@@ -61,6 +97,7 @@ pub(crate) fn change_between(before: &AddedText, after: &AddedText, underline: O
         // An added box's own underline (Thai edition), when the extras didn't say.
         underline: underline.or((after.underline != before.underline).then_some(after.underline)),
         direction: (after.direction != before.direction).then_some(after.direction),
+        align: (after.align != before.align || after.aligns != before.aligns).then_some(after.align),
     }
 }
 
@@ -75,6 +112,7 @@ pub(crate) fn all_of(look: &AddedText, underline: Option<bool>) -> LookPreview {
         // An underlined added box passes its underline on (Thai edition).
         underline: underline.or(look.underline.then_some(true)),
         direction: None,
+        align: None,
     }
 }
 
@@ -110,7 +148,14 @@ pub(crate) fn restyle_edit(
             }
             ObjectKind::Text => {
                 let b = blocks.get(t.index)?;
-                let style = paragraph_style(&crate::edit_text_ui::look_of(b), change);
+                let mut style = paragraph_style(&crate::edit_text_ui::look_of(b), change);
+                // Aligned inside its own box (Thai edition): a single line would otherwise grow
+                // to the page's margin and be aligned there.
+                if style.align.is_some() && b.rotation == 0.0 {
+                    let own = b.rect[2] - b.rect[0];
+                    // A point to spare, so measuring the text again never wraps its last word.
+                    style.width = (own.is_finite() && own > 0.0).then_some(own + 1.0);
+                }
                 (style != BlockStyle::default()).then(|| Edit::EditTextBlock { page, block: t.index, text: b.editor_text.clone(), style })
             }
             ObjectKind::Added => {
@@ -144,6 +189,7 @@ fn paragraph_style(look0: &AddedText, change: &LookPreview) -> BlockStyle {
         size: (look.size != look0.size).then_some(look.size),
         color: (look.color != look0.color).then_some(look.color),
         underline: change.underline,
+        align: change.align,
         ..Default::default()
     }
 }
@@ -240,6 +286,19 @@ mod tests {
         assert_eq!((style.size, style.color), (None, None));
         // The painter's whole look over a paragraph that already has it changes nothing.
         assert_eq!(paragraph_style(&look0, &all_of(&look0, None)), BlockStyle::default());
+    }
+
+    /// Thai edition: alignment is a change of its own, and a paragraph is aligned inside its box.
+    #[test]
+    fn alignment_is_passed_on() {
+        let look0 = AddedText { size: 12.0, ..AddedText::default() };
+        let after = AddedText { align: TextAlign::Center, ..look0.clone() };
+        let change = change_between(&look0, &after, None);
+        assert_eq!(change, LookPreview { align: Some(TextAlign::Center), ..Default::default() });
+        assert_eq!(paragraph_style(&look0, &change), BlockStyle { align: Some(TextAlign::Center), ..Default::default() });
+        // Lines aligned on their own, set back to the box's alignment, is a change too.
+        let mixed = AddedText { aligns: vec![None, Some(TextAlign::Right)], ..look0.clone() };
+        assert_eq!(change_between(&mixed, &look0, None).align, Some(TextAlign::Left));
     }
 
     #[test]

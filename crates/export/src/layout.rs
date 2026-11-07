@@ -18,6 +18,15 @@ pub struct Block {
     /// which `text` leaves out. A block that continues this one on its line is a run of the same
     /// paragraph, and these say whether a space separates them (#4158).
     pub space_around: [bool; 2],
+    /// The PDF font's name as the source gives it (`ABCDEF+AngsanaNew-Bold`); empty when unknown.
+    /// Writers that name fonts turn it into a family with [`family_name`] (Thai edition).
+    pub font: String,
+    /// An item of a bulleted list, its bullet left out of `text` ([`crate::list_items`], Thai
+    /// edition).
+    pub bullet: bool,
+    /// How far its first line is set in from the rest (points; Thai edition): Word's PDFs draw a
+    /// paragraph's indent as a wide space, so the block's box starts at the margin.
+    pub indent: f64,
 }
 
 /// An image of a page.
@@ -43,6 +52,37 @@ pub struct Page {
     /// The colour the whole page is painted before its content (a page background), as sRGB
     /// components in 0..=1; `None` for a page with no background of its own.
     pub background: Option<[f64; 3]>,
+    /// The rectangles and straight rules the page draws (Thai edition), for tables with their
+    /// grid, shading and borders, shaded boxes and lines.
+    pub shapes: Vec<Shape>,
+}
+
+/// A filled rectangle or a straight rule a page draws (Thai edition), on the displayed page in
+/// points (y up): [x0, y0, x1, y1], x0 ≤ x1 and y0 ≤ y1.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Shape {
+    pub rect: [f64; 4],
+    pub color: [f64; 3],
+    /// A line (its thin side is its thickness); otherwise a filled area.
+    pub rule: bool,
+    /// A small filled dot (a list's bullet), not an area.
+    pub dot: bool,
+}
+
+/// A table's border as the page draws it (Thai edition).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TableBorder {
+    pub color: [f64; 3],
+    /// Thickness in points.
+    pub width: f64,
+}
+
+/// Where a cell's text sits across it (Thai edition).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HAlign {
+    Left,
+    Center,
+    Right,
 }
 
 /// One cell of a detected table. `span` is how many grid columns the cell covers (a header
@@ -56,6 +96,12 @@ pub struct Cell {
     /// Text fill colour as sRGB components in 0..=1.
     pub color: [f64; 3],
     pub span: usize,
+    /// The source font's name, as [`Block::font`].
+    pub font: String,
+    /// The cell's shading, from what the page fills behind it (Thai edition).
+    pub fill: Option<[f64; 3]>,
+    /// Where its text sits across it, when the page shows it (Thai edition).
+    pub align: Option<HAlign>,
 }
 
 /// A table detected from the page's text layout: rows of cells, and the left edge of each
@@ -65,6 +111,55 @@ pub struct Table {
     pub rect: [f64; 4],
     pub cols: Vec<f64>,
     pub rows: Vec<Vec<Cell>>,
+    /// The border the page draws around and between the cells (a ruled table, Thai edition);
+    /// `None` for a table found from where its text sits, which proves no rules.
+    pub borders: Option<TableBorder>,
+    /// Each row's height in points, top to bottom, for a ruled table; empty otherwise.
+    pub row_heights: Vec<f64>,
+}
+
+/// The family Word and other programs know a PDF font by (Thai edition): the subset tag and the
+/// style suffix go, PostScript's `PS`/`MT` endings go, the standard 14 fonts become the faces
+/// Windows has, and a run-together name is split into words (`THSarabunNew` → `TH Sarabun New`).
+/// Empty for an unknown or generated font (PdfCraft's own `PC…` resources).
+pub fn family_name(base_font: &str) -> String {
+    let name = base_font
+        .split_once('+')
+        .map_or(base_font, |(tag, rest)| if tag.len() == 6 && tag.chars().all(|c| c.is_ascii_uppercase()) { rest } else { base_font });
+    let family = name.split([',', '-']).next().unwrap_or("").trim();
+    if family.is_empty() || family.starts_with("PCEd") || family.starts_with("PCRange") || family.starts_with("PCTh") {
+        return String::new();
+    }
+    let standard = match family {
+        "Helvetica" | "Arial" => Some("Arial"),
+        "Times" | "TimesNewRoman" | "Times New Roman" => Some("Times New Roman"),
+        "Courier" | "CourierNew" | "Courier New" => Some("Courier New"),
+        "Symbol" => Some("Symbol"),
+        "ZapfDingbats" => Some("Wingdings"),
+        _ => None,
+    };
+    if let Some(s) = standard {
+        return s.to_string();
+    }
+    if family.contains(' ') {
+        return family.to_string();
+    }
+    let trimmed = ["PSMT", "MT", "PS"].iter().find_map(|end| family.strip_suffix(end).filter(|f| f.len() > 2)).unwrap_or(family);
+    // Words begin at an uppercase letter after a lowercase one, or at the last capital of a run
+    // of capitals that a lowercase letter follows (`THSarabun` → `TH Sarabun`).
+    let chars: Vec<char> = trimmed.chars().collect();
+    let mut out = String::with_capacity(trimmed.len() + 4);
+    for (i, c) in chars.iter().enumerate() {
+        let prev = i.checked_sub(1).and_then(|j| chars.get(j));
+        let next = chars.get(i + 1);
+        let starts = c.is_ascii_uppercase()
+            && prev.is_some_and(|p| p.is_ascii_lowercase() || (p.is_ascii_uppercase() && next.is_some_and(char::is_ascii_lowercase)));
+        if starts {
+            out.push(' ');
+        }
+        out.push(*c);
+    }
+    out
 }
 
 /// What goes into the output, in order.
@@ -252,9 +347,35 @@ fn is_cell_like(b: &Block) -> bool {
 /// several short blocks, rows are blocks whose vertical spans overlap. Returns the tables and,
 /// per block, whether a table consumed it (so `items` can drop it from the paragraph flow).
 pub(crate) fn tables(blocks: &[Block]) -> (Vec<Table>, Vec<bool>) {
+    tables_skipping(blocks, &[])
+}
+
+/// A page's tables (Thai edition): those its rules draw ([`crate::ruled`]), with their grid,
+/// borders and shading, then those found from where the rest of its text sits.
+/// Blocks marked in `skip` (a running header or footer) are in no table, and come back marked
+/// as taken.
+pub(crate) fn page_tables(p: &Page, skip: &[bool]) -> (Vec<Table>, Vec<bool>) {
+    let (mut ruled, mut taken) = super::ruled::ruled_tables(&p.blocks, &p.shapes, skip);
+    for t in &mut ruled {
+        super::ruled::shade(t, &p.shapes);
+    }
+    for (t, s) in taken.iter_mut().zip(skip) {
+        *t |= *s;
+    }
+    let (text, mut consumed) = tables_skipping(&p.blocks, &taken);
+    for (c, t) in consumed.iter_mut().zip(&taken) {
+        *c |= *t;
+    }
+    ruled.extend(text);
+    (ruled, consumed)
+}
+
+/// [`tables`] leaving out the blocks marked in `skip`.
+fn tables_skipping(blocks: &[Block], skip: &[bool]) -> (Vec<Table>, Vec<bool>) {
     let mut consumed = vec![false; blocks.len()];
+    let free = |i: usize| !skip.get(i).copied().unwrap_or(false);
     // Candidate columns: cluster the left edges of cell-like blocks.
-    let mut xs: Vec<(f64, usize)> = blocks.iter().enumerate().filter(|(_, b)| is_cell_like(b)).map(|(i, b)| (b.rect[0], i)).collect();
+    let mut xs: Vec<(f64, usize)> = blocks.iter().enumerate().filter(|(i, b)| free(*i) && is_cell_like(b)).map(|(i, b)| (b.rect[0], i)).collect();
     xs.sort_by(|a, b| a.0.total_cmp(&b.0));
     let mut cols: Vec<(f64, Vec<usize>)> = Vec::new(); // (left edge, member block indices)
     for (x, i) in xs {
@@ -290,7 +411,7 @@ pub(crate) fn tables(blocks: &[Block]) -> (Vec<Table>, Vec<bool>) {
     order.sort_by(|a, b| blocks[*b].rect[3].total_cmp(&blocks[*a].rect[3]).then(blocks[*a].rect[0].total_cmp(&blocks[*b].rect[0])));
     for &bi in &order {
         let b = &blocks[bi];
-        if !is_cell_like(b) {
+        if !free(bi) || !is_cell_like(b) {
             continue;
         }
         let Some(ci) = column_at(b.rect[0]) else { continue };
@@ -341,7 +462,17 @@ pub(crate) fn tables(blocks: &[Block]) -> (Vec<Table>, Vec<bool>) {
                 let b = &blocks[bi];
                 let Some(slot) = edges.iter().position(|e| (*e - b.rect[0]).abs() <= COL_TOL) else { continue };
                 let span = edges[slot + 1..].iter().filter(|e| **e > b.rect[0] + COL_TOL && **e < b.rect[2] - COL_TOL).count() + 1;
-                let cell = Cell { text: b.text.trim().to_string(), size: b.size, bold: b.bold, italic: b.italic, color: b.color, span };
+                let cell = Cell {
+                    text: b.text.trim().to_string(),
+                    size: b.size,
+                    bold: b.bold,
+                    italic: b.italic,
+                    color: b.color,
+                    span,
+                    font: b.font.clone(),
+                    fill: None,
+                    align: None,
+                };
                 match slots.get_mut(slot) {
                     Some(Some((c, sources))) => {
                         c.text.push(' ');
@@ -370,7 +501,17 @@ pub(crate) fn tables(blocks: &[Block]) -> (Vec<Table>, Vec<bool>) {
                     }
                     None => {
                         column += 1;
-                        materialized.push(Cell { text: String::new(), size: 11.0, bold: false, italic: false, color: [0.0; 3], span: 1 });
+                        materialized.push(Cell {
+                            text: String::new(),
+                            size: 11.0,
+                            bold: false,
+                            italic: false,
+                            color: [0.0; 3],
+                            span: 1,
+                            font: String::new(),
+                            fill: None,
+                            align: None,
+                        });
                     }
                 }
             }
@@ -385,7 +526,7 @@ pub(crate) fn tables(blocks: &[Block]) -> (Vec<Table>, Vec<bool>) {
             right,
             used.iter().map(|&i| blocks[i].rect[3]).fold(f64::MIN, f64::max),
         ];
-        out.push(Table { rect, cols: edges, rows: rows_out });
+        out.push(Table { rect, cols: edges, rows: rows_out, borders: None, row_heights: Vec::new() });
     };
     // Runs of consecutive multi-column rows are tables. Rows on either side of a run that
     // hold a single cell wide enough to span two columns (a header band, a totals row) join
@@ -414,7 +555,11 @@ pub(crate) fn tables(blocks: &[Block]) -> (Vec<Table>, Vec<bool>) {
             let mut cs: Vec<usize> = cells.iter().map(|(c, _)| *c).collect();
             cs.sort_unstable();
             cs.dedup();
-            apart && cs.len() >= 2
+            // A number alone before a line ("1.", "๒)") is a numbered item, not a table's first
+            // column (Thai edition: Word numbers its lists so).
+            let leftmost = cells.iter().filter_map(|(_, bi)| blocks.get(*bi)).min_by(|a, b| a.rect[0].total_cmp(&b.rect[0]));
+            let numbered = cs.len() == 2 && leftmost.is_some_and(|b| crate::lists::number_prefix(&b.text).is_some_and(|n| n.3.is_empty()));
+            apart && cs.len() >= 2 && !numbered
         })
         .collect();
     let mut i = 0;
@@ -448,21 +593,27 @@ pub(crate) fn items(pages: &[Page]) -> Vec<Item<'_>> {
         if i > 0 {
             out.push(Item::PageBreak);
         }
-        let (tables, consumed) = tables(&p.blocks);
-        // Blocks and images by their top edge, top to bottom.
-        // A paragraph sits where its first run does: its other runs follow along the same line.
-        let mut parts: Vec<(f64, f64, Item)> = paragraphs(&p.blocks, &consumed)
-            .into_iter()
-            .filter_map(|runs| {
-                let first = runs.first()?.block;
-                let lvl = para_level(&runs, body);
-                Some((first.rect[3], first.rect[0], Item::Para(runs, lvl)))
-            })
-            .collect();
-        parts.extend(tables.into_iter().map(|t| (t.rect[3], t.rect[0], Item::Table(t))));
-        parts.extend(p.images.iter().map(|im| (im.rect[3], im.rect[0], Item::Img(im))));
-        parts.sort_by(|a, b| b.0.total_cmp(&a.0).then(a.1.total_cmp(&b.1)));
-        out.extend(parts.into_iter().map(|x| x.2));
+        out.extend(page_items(p, &[], body));
     }
     out
+}
+
+/// One page's items, top to bottom, leaving out the blocks marked in `skip` (Thai edition: the
+/// running header and footer, which Word gets as its own); `body` is the body text size.
+pub(crate) fn page_items<'a>(p: &'a Page, skip: &[bool], body: f64) -> Vec<Item<'a>> {
+    let (tables, consumed) = page_tables(p, skip);
+    // Blocks and images by their top edge, top to bottom.
+    // A paragraph sits where its first run does: its other runs follow along the same line.
+    let mut parts: Vec<(f64, f64, Item)> = paragraphs(&p.blocks, &consumed)
+        .into_iter()
+        .filter_map(|runs| {
+            let first = runs.first()?.block;
+            let lvl = para_level(&runs, body);
+            Some((first.rect[3], first.rect[0], Item::Para(runs, lvl)))
+        })
+        .collect();
+    parts.extend(tables.into_iter().map(|t| (t.rect[3], t.rect[0], Item::Table(t))));
+    parts.extend(p.images.iter().map(|im| (im.rect[3], im.rect[0], Item::Img(im))));
+    parts.sort_by(|a, b| b.0.total_cmp(&a.0).then(a.1.total_cmp(&b.1)));
+    parts.into_iter().map(|x| x.2).collect()
 }

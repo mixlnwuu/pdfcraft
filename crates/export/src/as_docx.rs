@@ -1,6 +1,7 @@
 use super::Zip;
 use super::as_html::esc;
-use super::layout::{Image, Item, Page, Table, body_size, items};
+use super::bands::Bands;
+use super::layout::{Block, Image, Item, Page, Table, body_size, page_items};
 
 /// A colour's 8-bit sRGB components (NaN and out-of-range values clamp; NaN reads as 0).
 pub(crate) fn rgb8(c: [f64; 3]) -> [u8; 3] {
@@ -14,21 +15,43 @@ pub(crate) fn hex(c: [f64; 3]) -> Option<String> {
     (r | g | b != 0).then(|| format!("{r:02X}{g:02X}{b:02X}"))
 }
 
-/// A formatted text run (shared by paragraphs and table cells).
-fn run_xml(text: &str, size: f64, bold: bool, italic: bool, color: [f64; 3]) -> String {
+/// How a run looks: its source font, size, weight, slant and colour.
+#[derive(Clone, Copy)]
+pub(crate) struct Look<'a> {
+    pub font: &'a str,
+    pub size: f64,
+    pub bold: bool,
+    pub italic: bool,
+    pub color: [f64; 3],
+}
+
+/// A formatted text run (shared by paragraphs and table cells). Word sets Thai (a complex script)
+/// in the `cs` font at `szCs` with `bCs`/`iCs`, so each is given too (Thai edition): with `sz` and
+/// `b` alone, Thai came out at Word's default size and never bold.
+fn run_xml(text: &str, look: Look<'_>) -> String {
     let mut rpr = String::new();
-    if bold {
-        rpr.push_str("<w:b/>");
+    let family = super::layout::family_name(look.font);
+    if !family.is_empty() {
+        let f = esc(&family);
+        rpr.push_str(&format!("<w:rFonts w:ascii=\"{f}\" w:hAnsi=\"{f}\" w:cs=\"{f}\" w:eastAsia=\"{f}\"/>"));
     }
-    if italic {
-        rpr.push_str("<w:i/>");
+    if look.bold {
+        rpr.push_str("<w:b/><w:bCs/>");
     }
-    if let Some(h) = hex(color) {
+    if look.italic {
+        rpr.push_str("<w:i/><w:iCs/>");
+    }
+    if let Some(h) = hex(look.color) {
         rpr.push_str(&format!("<w:color w:val=\"{h}\"/>"));
     }
-    let half_points = if size.is_finite() { (size * 2.0).round().clamp(2.0, 3276.0) as i64 } else { 24 };
-    rpr.push_str(&format!("<w:sz w:val=\"{half_points}\"/>"));
-    format!("<w:r><w:rPr>{rpr}</w:rPr><w:t xml:space=\"preserve\">{}</w:t></w:r>", esc(text))
+    let half_points = if look.size.is_finite() { (look.size * 2.0).round().clamp(2.0, 3276.0) as i64 } else { 24 };
+    rpr.push_str(&format!("<w:sz w:val=\"{half_points}\"/><w:szCs w:val=\"{half_points}\"/>"));
+    if text.chars().any(|c| ('\u{0E00}'..='\u{0E7F}').contains(&c)) {
+        rpr.push_str("<w:lang w:bidi=\"th-TH\"/>");
+    }
+    // A line the page breaks (Thai edition: a form's dotted line) breaks in Word too.
+    let body = text.split('\n').map(esc).collect::<Vec<_>>().join("</w:t><w:br/><w:t xml:space=\"preserve\">");
+    format!("<w:r><w:rPr>{rpr}</w:rPr><w:t xml:space=\"preserve\">{body}</w:t></w:r>")
 }
 
 /// One Word table: explicit absent borders (alignment alone cannot prove PDF rules), a grid sized
@@ -38,23 +61,53 @@ pub(crate) fn docx_table(t: &Table) -> String {
     edges.push(t.rect[2]);
     let widths: Vec<i64> = edges.windows(2).map(|w| ((w[1] - w[0]).max(20.0) * 20.0).round().clamp(60.0, 31680.0) as i64).collect();
     let mut s = String::from("<w:tbl><w:tblPr><w:tblW w:w=\"0\" w:type=\"auto\"/><w:tblBorders>");
+    // A ruled table (Thai edition) has the border the page draws, in eighths of a point.
+    let border = t.borders.map(|b| {
+        let eighths = if b.width.is_finite() { (b.width * 8.0).round().clamp(2.0, 96.0) as i64 } else { 4 };
+        format!("w:val=\"single\" w:sz=\"{eighths}\" w:space=\"0\" w:color=\"{}\"", hex(b.color).unwrap_or_else(|| "000000".into()))
+    });
     for edge in ["top", "left", "bottom", "right", "insideH", "insideV"] {
-        s.push_str(&format!("<w:{edge} w:val=\"nil\"/>"));
+        match &border {
+            Some(b) => s.push_str(&format!("<w:{edge} {b}/>")),
+            None => s.push_str(&format!("<w:{edge} w:val=\"nil\"/>")),
+        }
     }
-    s.push_str("</w:tblBorders></w:tblPr><w:tblGrid>");
+    s.push_str("</w:tblBorders>");
+    if border.is_some() {
+        // Its columns as the page draws them, and its text close to the rules.
+        s.push_str(
+            "<w:tblLayout w:type=\"fixed\"/><w:tblCellMar><w:left w:w=\"60\" w:type=\"dxa\"/><w:right w:w=\"60\" w:type=\"dxa\"/></w:tblCellMar>",
+        );
+    }
+    s.push_str("</w:tblPr><w:tblGrid>");
     for w in &widths {
         s.push_str(&format!("<w:gridCol w:w=\"{w}\"/>"));
     }
     s.push_str("</w:tblGrid>");
-    for row in &t.rows {
+    for (r, row) in t.rows.iter().enumerate() {
         s.push_str("<w:tr>");
+        // A ruled row is at least as tall as the page draws it (Thai edition).
+        if let Some(h) = t.row_heights.get(r).filter(|h| h.is_finite() && **h > 0.0) {
+            s.push_str(&format!("<w:trPr><w:trHeight w:val=\"{}\" w:hRule=\"atLeast\"/></w:trPr>", (h * 20.0).round().clamp(1.0, 31680.0) as i64));
+        }
         let mut column = 0usize;
         for c in row {
             let span = if c.span > 1 { format!("<w:gridSpan w:val=\"{}\"/>", c.span) } else { String::new() };
             let w: i64 = widths.iter().skip(column).take(c.span).sum();
+            // Its shading, its text centred down a ruled row, and across it as the page shows.
+            let shade = c.fill.and_then(hex).map_or_else(
+                || c.fill.map(|_| "<w:shd w:val=\"clear\" w:color=\"auto\" w:fill=\"000000\"/>".to_string()).unwrap_or_default(),
+                |h| format!("<w:shd w:val=\"clear\" w:color=\"auto\" w:fill=\"{h}\"/>"),
+            );
+            let valign = if t.borders.is_some() { "<w:vAlign w:val=\"center\"/>" } else { "" };
+            let jc = match c.align {
+                Some(super::layout::HAlign::Center) => "<w:pPr><w:jc w:val=\"center\"/></w:pPr>",
+                Some(super::layout::HAlign::Right) => "<w:pPr><w:jc w:val=\"right\"/></w:pPr>",
+                _ => "",
+            };
             s.push_str(&format!(
-                "<w:tc><w:tcPr><w:tcW w:w=\"{w}\" w:type=\"dxa\"/>{span}</w:tcPr><w:p>{}</w:p></w:tc>",
-                run_xml(&c.text, c.size, c.bold, c.italic, c.color)
+                "<w:tc><w:tcPr><w:tcW w:w=\"{w}\" w:type=\"dxa\"/>{span}{shade}{valign}</w:tcPr><w:p>{jc}{}</w:p></w:tc>",
+                run_xml(&c.text, Look { font: &c.font, size: c.size, bold: c.bold, italic: c.italic, color: c.color })
             ));
             column = column.saturating_add(c.span);
         }
@@ -143,12 +196,12 @@ fn picture_xml(n: usize, name: &str, (cx, cy): (i64, i64), rotation: Option<f64>
     )
 }
 
-fn positioned_page<'a>(page: &'a Page, media: &mut Vec<(String, &'a Image)>, shape_id: &mut usize) -> String {
+fn positioned_page<'a>(page: &'a Page, skip: &[bool], media: &mut Vec<(String, &'a Image)>, shape_id: &mut usize) -> String {
     // One 1 pt paragraph anchors the whole page. Shapes never reserve body space, so even a
     // page-sized watermark cannot push the invoice footer onto another page.
     let mut s = String::from("<w:p><w:pPr><w:spacing w:before=\"0\" w:after=\"0\" w:line=\"20\" w:lineRule=\"exact\"/></w:pPr>");
     let body = body_size(std::slice::from_ref(page)).max(1.0);
-    for b in &page.blocks {
+    for (_, b) in page.blocks.iter().enumerate().filter(|(i, _)| !skip.get(*i).copied().unwrap_or(false)) {
         *shape_id = shape_id.saturating_add(1);
         let rotation = layout_number(-b.rotation).rem_euclid(360.0);
         let (sin, cos) = rotation.to_radians().sin_cos();
@@ -171,7 +224,7 @@ fn positioned_page<'a>(page: &'a Page, media: &mut Vec<(String, &'a Image)>, sha
         );
         s.push_str(&format!(
             "<w:r><w:pict><v:rect id=\"Text{}\" style=\"{style}\" filled=\"f\" stroked=\"f\"><v:textbox inset=\"0,0,0,0\" style=\"mso-fit-shape-to-text:t\"><w:txbxContent><w:p><w:pPr><w:spacing w:before=\"0\" w:after=\"0\"/></w:pPr>{}</w:p></w:txbxContent></v:textbox><w10:wrap type=\"none\"/></v:rect></w:pict></w:r>",
-            shape_id, run_xml(&b.text, b.size, b.bold, b.italic, b.color)
+            shape_id, run_xml(&b.text, Look { font: &b.font, size: b.size, bold: b.bold, italic: b.italic, color: b.color })
         ));
     }
     for im in &page.images {
@@ -210,14 +263,190 @@ fn word_page_size(page: &Page) -> (i64, i64) {
     (twips(page.width), twips(page.height))
 }
 
-fn section(page: &Page) -> String {
+/// A flowing page's margins in twips, `[left, right, top, bottom]` (Thai edition): where the page's
+/// text and pictures are, so Word's lines are as long as the page's and wrap where they did,
+/// with a little room on the right for Word's own measure of the same font. A page with nothing
+/// on it keeps the default, an eighth of the page and at most an inch.
+pub(crate) fn word_margins(page: &Page) -> [i64; 4] {
     let (pw, ph) = word_page_size(page);
-    let (mx, my) = ((pw / 8).min(1440), (ph / 8).min(1440));
+    let (dx, dy) = ((pw / 8).min(1440), (ph / 8).min(1440));
+    let boxes = page.blocks.iter().filter(|b| b.rotation.abs() < 0.1).map(|b| b.rect).chain(page.images.iter().map(|im| im.rect));
+    let extent = boxes
+        .filter(|r| r.iter().all(|v| v.is_finite()) && r[2] > r[0] && r[3] > r[1])
+        .reduce(|a, b| [a[0].min(b[0]), a[1].min(b[1]), a[2].max(b[2]), a[3].max(b[3])]);
+    // Content past the page's edges says nothing of its margins.
+    let Some([x0, y0, x1, y1]) = extent.filter(|r| r[0] >= 0.0 && r[1] >= 0.0 && r[2] <= page.width && r[3] <= page.height) else {
+        return [dx, dx, dy, dy];
+    };
+    // At least a quarter inch (less on a page whose default is less), at most a quarter of the
+    // page or the default.
+    let clamp = |pt: f64, default: i64, side: f64| -> i64 {
+        let most = (side * 20.0 * 0.25).max(default as f64);
+        let least = (default as f64).min(360.0);
+        if pt.is_finite() { (pt * 20.0).round().clamp(least, most) as i64 } else { default }
+    };
+    [
+        clamp(x0 - 2.0, dx, page.width),
+        clamp(page.width - x1 - 8.0, dx, page.width),
+        clamp(page.height - y1 - 2.0, dy, page.height),
+        clamp(y0 - 2.0, dy, page.height),
+    ]
+}
+
+fn section(page: &Page, bands: &Bands<'_>) -> String {
+    let (pw, ph) = word_page_size(page);
+    let [ml, mr, mt, mb] =
+        if positioned(page) { [(pw / 8).min(1440), (pw / 8).min(1440), (ph / 8).min(1440), (ph / 8).min(1440)] } else { word_margins(page) };
+    // The header and footer sit where the page has them (Thai edition), within the margins.
+    let twips = |pt: f64| if pt.is_finite() { (pt * 20.0).round().clamp(0.0, 31680.0) as i64 } else { 0 };
+    let header_at = bands.header.first().map_or(mt / 2, |b| twips(page.height - b.rect[3]).min(mt));
+    let footer_at = bands.footer.last().map_or(mb / 2, |b| twips(b.rect[1]).min(mb));
+    let mut refs = String::new();
+    if !bands.header.is_empty() {
+        refs.push_str("<w:headerReference w:type=\"default\" r:id=\"rIdHeader\"/>");
+    }
+    if !bands.footer.is_empty() {
+        refs.push_str("<w:footerReference w:type=\"default\" r:id=\"rIdFooter\"/>");
+    }
     format!(
-        "<w:sectPr><w:type w:val=\"nextPage\"/><w:pgSz w:w=\"{pw}\" w:h=\"{ph}\"/><w:pgMar w:top=\"{my}\" w:right=\"{mx}\" w:bottom=\"{my}\" w:left=\"{mx}\" w:header=\"{}\" w:footer=\"{}\" w:gutter=\"0\"/></w:sectPr>",
-        my / 2,
-        my / 2
+        "<w:sectPr>{refs}<w:type w:val=\"nextPage\"/><w:pgSz w:w=\"{pw}\" w:h=\"{ph}\"/><w:pgMar w:top=\"{mt}\" w:right=\"{mr}\" w:bottom=\"{mb}\" w:left=\"{ml}\" w:header=\"{header_at}\" w:footer=\"{footer_at}\" w:gutter=\"0\"/></w:sectPr>"
     )
+}
+
+/// A flowing paragraph, its runs from left to right (Thai edition: a number before the text,
+/// "1." or "๒)", is Word's own numbering: the number leaves the text, and a run that was only the
+/// number goes; only with text after it, so a number on a line of its own stays text).
+fn para_xml(
+    look: &super::docx_flow::PageLook<'_>,
+    runs: &[super::layout::Run<'_>],
+    lvl: u8,
+    gap: i64,
+    numbering: &mut super::docx_flow::Numbering,
+) -> String {
+    let (Some(first), Some(last)) = (runs.first(), runs.last()) else { return String::new() };
+    numbering.bullets |= first.block.bullet;
+    let number = (!first.block.bullet && lvl == 0)
+        .then(|| super::lists::number_prefix(&first.text))
+        .flatten()
+        .filter(|n| !n.3.is_empty() || runs.iter().skip(1).any(|r| !r.text.trim().is_empty()));
+    let numbered = number.map(|(n, thai, paren, rest)| {
+        let id = numbering.item(super::docx_flow::NumberStyle { thai, paren }, n);
+        let text_x = if rest.is_empty() { runs.get(1).map_or(first.block.rect[0] + 18.0, |r| r.block.rect[0]) } else { first.block.rect[0] + 18.0 };
+        (id, text_x - first.block.rect[0], rest.to_string(), rest.is_empty())
+    });
+    let mut s = String::from("<w:p>");
+    s.push_str(&super::docx_flow::paragraph_props(
+        look,
+        first.block,
+        last.block.rect[2],
+        lvl,
+        gap,
+        numbered.as_ref().map(|(id, hang, ..)| (*id, *hang)),
+    ));
+    for (k, r) in runs.iter().enumerate() {
+        let text = match &numbered {
+            Some((_, _, rest, _)) if k == 0 => rest.as_str(),
+            Some((.., true)) if k == 1 => r.text.trim_start(),
+            _ => r.text.as_str(),
+        };
+        if !text.is_empty() {
+            s.push_str(&run_xml(
+                text,
+                Look { font: &r.block.font, size: r.block.size, bold: r.block.bold, italic: r.block.italic, color: r.block.color },
+            ));
+        }
+    }
+    s.push_str("</w:p>");
+    s
+}
+
+/// A number alone ("1.") that the page sets before a line of text, which the flow made a paragraph
+/// of its own, joins the paragraph on its right on the same line, so that the two become one
+/// numbered item (Thai edition).
+fn join_numbers(items: Vec<Item<'_>>) -> Vec<Item<'_>> {
+    let mut out: Vec<Item<'_>> = Vec::with_capacity(items.len());
+    for it in items {
+        if let Item::Para(runs, lvl) = it {
+            let joins = match out.last() {
+                Some(Item::Para(prev, 0)) => match (prev.as_slice(), runs.first()) {
+                    ([number], Some(next)) => {
+                        super::lists::number_prefix(&number.text).is_some_and(|n| n.3.is_empty())
+                            && (number.block.rect[3] - next.block.rect[3]).abs() <= 3.0
+                            && next.block.rect[0] >= number.block.rect[2] - 1.0
+                    }
+                    _ => false,
+                },
+                _ => false,
+            };
+            if joins && let Some(Item::Para(prev, _)) = out.last_mut() {
+                prev.extend(runs);
+                continue;
+            }
+            // The number set a hair lower than its line comes after it: it goes in front.
+            let lone_number = lvl == 0 && matches!(runs.as_slice(), [n] if super::lists::number_prefix(&n.text).is_some_and(|p| p.3.is_empty()));
+            let before_line = match (out.last(), runs.first()) {
+                (Some(Item::Para(prev, 0)), Some(number)) => prev
+                    .first()
+                    .is_some_and(|line| (number.block.rect[3] - line.block.rect[3]).abs() <= 3.0 && line.block.rect[0] >= number.block.rect[2] - 1.0),
+                _ => false,
+            };
+            if lone_number
+                && before_line
+                && let Some(Item::Para(prev, _)) = out.last_mut()
+            {
+                let mut joined = runs;
+                joined.append(prev);
+                *prev = joined;
+                continue;
+            }
+            out.push(Item::Para(runs, lvl));
+        } else {
+            out.push(it);
+        }
+    }
+    out
+}
+
+/// A header or footer part (Thai edition): one paragraph per block, placed across the page as
+/// the page has it, the page number and page count as fields, and the rule the page draws under
+/// the header (over the footer) as its last (first) paragraph's border.
+fn band_part(tag: &str, blocks: &[&Block], width: f64, pages: usize, rule: Option<([f64; 3], f64)>) -> String {
+    let mut s = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<w:{tag} xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">"
+    );
+    let header = tag == "hdr";
+    let ruled = rule.map(|(color, thick)| {
+        let c = hex(color).unwrap_or_else(|| "000000".into());
+        let sz = if thick.is_finite() { (thick * 8.0).round().clamp(2.0, 96.0) as i64 } else { 4 };
+        let side = if header { "bottom" } else { "top" };
+        format!("<w:pBdr><w:{side} w:val=\"single\" w:sz=\"{sz}\" w:space=\"4\" w:color=\"{c}\"/></w:pBdr>")
+    });
+    let edge = if header { blocks.len().saturating_sub(1) } else { 0 };
+    for (k, b) in blocks.iter().enumerate() {
+        let mid = (b.rect[0] + b.rect[2]) / 2.0;
+        let jc = if (mid - width / 2.0).abs() <= width * 0.08 {
+            "center"
+        } else if b.rect[0] > width / 2.0 {
+            "right"
+        } else {
+            "left"
+        };
+        let border = if k == edge { ruled.as_deref().unwrap_or_default() } else { "" };
+        s.push_str(&format!("<w:p><w:pPr>{border}<w:spacing w:before=\"0\" w:after=\"0\"/><w:jc w:val=\"{jc}\"/></w:pPr>"));
+        let look = Look { font: &b.font, size: b.size, bold: b.bold, italic: b.italic, color: b.color };
+        for (piece, field) in super::bands::fields(b.text.trim(), 1, pages) {
+            match field {
+                Some(page) => {
+                    let instr = if page { "PAGE" } else { "NUMPAGES" };
+                    s.push_str(&format!("<w:fldSimple w:instr=\" {instr} \">{}</w:fldSimple>", run_xml(&piece, look)));
+                }
+                None => s.push_str(&run_xml(&piece, look)),
+            }
+        }
+        s.push_str("</w:p>");
+    }
+    s.push_str(&format!("</w:{tag}>"));
+    s
 }
 
 /// The page colour of a Word document: Word has one background for the whole document, so it
@@ -231,32 +460,51 @@ fn word_background(pages: &[Page]) -> Option<String> {
 /// A Word document (.docx, Office Open XML). Ordinary pages flow as paragraphs and tables;
 /// pages with rotated text, or text that overlaps artwork, use floating shapes to retain their layout.
 pub fn docx(pages: &[Page], title: &str) -> Vec<u8> {
+    // The running header and footer (Thai edition): Word's own, out of the body.
+    let bands = super::bands::bands(pages);
     let mut body = String::new();
     let mut media: Vec<(String, &Image)> = Vec::new();
     // Word needs a paragraph between adjacent tables and after the last one in the body.
     let mut after_table = false;
     let mut shape_id = 0usize;
+    // The numbering part is written when a paragraph uses a bullet or a number (Thai edition).
+    let mut numbering = super::docx_flow::Numbering::default();
     for (page_index, page) in pages.iter().enumerate() {
         let (pw, _) = word_page_size(page);
-        let text_w = (pw - 2 * (pw / 8).min(1440)) as f64 / 20.0;
+        let [ml, mr, mt, _] = word_margins(page);
+        let text_w = (pw - ml - mr).max(1) as f64 / 20.0;
+        let skip = bands.skip.get(page_index).map(Vec::as_slice).unwrap_or_default();
         if positioned(page) {
-            body.push_str(&positioned_page(page, &mut media, &mut shape_id));
+            body.push_str(&positioned_page(page, skip, &mut media, &mut shape_id));
             after_table = false;
         } else {
-            for it in items(std::slice::from_ref(page)) {
+            let items = page_items(page, skip, body_size(std::slice::from_ref(page)));
+            // What the page draws that the flow keeps: shaded boxes and lines of their own, and
+            // where each item sits, for the space above it (Thai edition).
+            let margin = [ml as f64 / 20.0, mt as f64 / 20.0];
+            let table_rects: Vec<[f64; 4]> = items.iter().filter_map(|it| if let Item::Table(t) = it { Some(t.rect) } else { None }).collect();
+            let look = super::docx_flow::page_look(page, margin, &table_rects);
+            let mut lines = look.lines.iter().peekable();
+            let mut above: Option<f64> = None;
+            for it in join_numbers(items) {
+                let span = super::docx_flow::span(&it);
+                // Lines drawn above this item come first.
+                while let Some(l) = lines.next_if(|l| span.is_none_or(|(top, _)| l.y > top)) {
+                    if after_table {
+                        body.push_str("<w:p><w:pPr><w:spacing w:before=\"0\" w:after=\"0\"/></w:pPr></w:p>");
+                    }
+                    body.push_str(&format!(
+                        "<w:p><w:pPr><w:spacing w:before=\"{}\" w:after=\"0\"/></w:pPr></w:p>",
+                        super::docx_flow::before(&look, above, l.y + 6.0)
+                    ));
+                    body.push_str(&super::docx_flow::line_xml(&look, l));
+                    above = Some(l.y);
+                    after_table = true;
+                }
                 match &it {
                     Item::Para(runs, lvl) => {
-                        let style = match lvl {
-                            1 => "<w:pPr><w:pStyle w:val=\"Heading1\"/></w:pPr>",
-                            2 => "<w:pPr><w:pStyle w:val=\"Heading2\"/></w:pPr>",
-                            _ => "",
-                        };
-                        body.push_str("<w:p>");
-                        body.push_str(style);
-                        for r in runs {
-                            body.push_str(&run_xml(&r.text, r.block.size, r.block.bold, r.block.italic, r.block.color));
-                        }
-                        body.push_str("</w:p>");
+                        let gap = span.map_or(0, |(top, _)| super::docx_flow::before(&look, above, top));
+                        body.push_str(&para_xml(&look, runs, *lvl, gap, &mut numbering));
                     }
                     Item::Table(t) => {
                         if after_table {
@@ -281,6 +529,21 @@ pub fn docx(pages: &[Page], title: &str) -> Vec<u8> {
                     Item::PageBreak => body.push_str("<w:p><w:r><w:br w:type=\"page\"/></w:r></w:p>"),
                 }
                 after_table = matches!(it, Item::Table(_));
+                if let Some((_, bottom)) = span {
+                    above = Some(bottom);
+                }
+            }
+            for l in lines {
+                if after_table {
+                    body.push_str("<w:p><w:pPr><w:spacing w:before=\"0\" w:after=\"0\"/></w:pPr></w:p>");
+                }
+                body.push_str(&format!(
+                    "<w:p><w:pPr><w:spacing w:before=\"{}\" w:after=\"0\"/></w:pPr></w:p>",
+                    super::docx_flow::before(&look, above, l.y + 6.0)
+                ));
+                body.push_str(&super::docx_flow::line_xml(&look, l));
+                above = Some(l.y);
+                after_table = true;
             }
         }
         // Section breaks carry this source page's size and create exactly one next page.
@@ -288,13 +551,13 @@ pub fn docx(pages: &[Page], title: &str) -> Vec<u8> {
         if page_index + 1 < pages.len() {
             body.push_str(&format!(
                 "<w:p><w:pPr><w:spacing w:before=\"0\" w:after=\"0\" w:line=\"20\" w:lineRule=\"exact\"/>{}</w:pPr></w:p>",
-                section(page)
+                section(page, &bands)
             ));
         } else {
             if after_table || page.blocks.is_empty() && page.images.is_empty() {
                 body.push_str("<w:p><w:pPr><w:spacing w:after=\"0\" w:line=\"20\" w:lineRule=\"exact\"/></w:pPr></w:p>");
             }
-            body.push_str(&section(page));
+            body.push_str(&section(page, &bands));
         }
         after_table = false;
     }
@@ -320,6 +583,19 @@ xmlns:wp=\"http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawin
             "<Override PartName=\"/word/settings.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml\"/>",
         );
     }
+    if numbering.is_used() {
+        types.push_str("<Override PartName=\"/word/numbering.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml\"/>");
+    }
+    if !bands.header.is_empty() {
+        types.push_str(
+            "<Override PartName=\"/word/header1.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml\"/>",
+        );
+    }
+    if !bands.footer.is_empty() {
+        types.push_str(
+            "<Override PartName=\"/word/footer1.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml\"/>",
+        );
+    }
     types.push_str("</Types>");
     let rels = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\
 <Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"word/document.xml\"/>\
@@ -336,6 +612,15 @@ xmlns:wp=\"http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawin
     }
     if page_colour.is_some() {
         doc_rels.push_str("<Relationship Id=\"rIdSettings\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings\" Target=\"settings.xml\"/>");
+    }
+    if numbering.is_used() {
+        doc_rels.push_str("<Relationship Id=\"rIdNumbering\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering\" Target=\"numbering.xml\"/>");
+    }
+    if !bands.header.is_empty() {
+        doc_rels.push_str("<Relationship Id=\"rIdHeader\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/header\" Target=\"header1.xml\"/>");
+    }
+    if !bands.footer.is_empty() {
+        doc_rels.push_str("<Relationship Id=\"rIdFooter\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer\" Target=\"footer1.xml\"/>");
     }
     doc_rels.push_str("</Relationships>");
     let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
@@ -356,6 +641,15 @@ xmlns:wp=\"http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawin
     z.add("word/_rels/document.xml.rels", doc_rels.as_bytes(), true);
     if page_colour.is_some() {
         z.add("word/settings.xml", b"<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<w:settings xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:displayBackgroundShape/></w:settings>", true);
+    }
+    if numbering.is_used() {
+        z.add("word/numbering.xml", numbering.part().as_bytes(), true);
+    }
+    if !bands.header.is_empty() {
+        z.add("word/header1.xml", band_part("hdr", &bands.header, bands.width, pages.len(), bands.header_rule).as_bytes(), true);
+    }
+    if !bands.footer.is_empty() {
+        z.add("word/footer1.xml", band_part("ftr", &bands.footer, bands.width, pages.len(), bands.footer_rule).as_bytes(), true);
     }
     for (name, im) in &media {
         z.add(&format!("word/media/{name}"), &im.bytes, false);

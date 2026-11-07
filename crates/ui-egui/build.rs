@@ -1,4 +1,5 @@
-//! Bake the contributor credits into the binary as static Rust tables. Nothing is read at run time.
+//! Bake the contributor credits into the binary as static Rust tables, and embed the craft-i18n
+//! interface catalogs. Nothing is read at run time.
 //!
 //! - contributors/contributors.json: commit stats per GitHub username, with a mark for whose people.toml
 //!   entry is verified.
@@ -6,6 +7,12 @@
 //!   JSON says the entry was verified (`people_entry`).
 //!
 //! A missing or malformed file gives empty tables (or no names) and a warning.
+//!
+//! - `CRAFT_I18N_DIR`, a craft-i18n checkout (storytold/craft-i18n, at the SHA in
+//!   `craft-i18n.rev`): `craft_i18n.rs` holds `CRAFT_I18N`, one (locale, shared catalog, PdfCraft
+//!   catalog) entry per locale that has a `pdfcraft.tsv`. Unset, or not a checkout (a warning),
+//!   it is empty and the interface is English only; with `CRAFT_I18N_REQUIRED=1` (CI and releases)
+//!   that is an error instead. Recipe: craft-i18n's `docs/integration.md`.
 
 use std::fmt::Write as _;
 
@@ -23,6 +30,135 @@ fn main() {
     if let Err(e) = std::fs::write(&out, generate(&json, &people)) {
         println!("cargo::warning=writing {}: {e}", out.display());
     }
+    let out = out.with_file_name("craft_i18n.rs");
+    if let Err(e) = std::fs::write(&out, craft_i18n()) {
+        println!("cargo::error=writing {}: {e}", out.display());
+    }
+}
+
+/// The catalog this app reads in each locale: `locales/<locale>/pdfcraft.tsv`.
+const APP_CATALOG: &str = "pdfcraft.tsv";
+
+/// `CRAFT_I18N` from `CRAFT_I18N_DIR`: the `Embedded` list the craft-i18n crate reads.
+fn craft_i18n() -> String {
+    println!("cargo::rerun-if-env-changed=CRAFT_I18N_DIR");
+    println!("cargo::rerun-if-env-changed=CRAFT_I18N_REQUIRED");
+    let required = std::env::var("CRAFT_I18N_REQUIRED").is_ok_and(|v| v.trim() == "1");
+    let entries = match std::env::var_os("CRAFT_I18N_DIR").filter(|d| !d.is_empty()) {
+        // Not canonicalized: on Windows that gives `\\?\C:\…`, which `include_str!` can't read.
+        Some(dir) => match locales(&std::path::PathBuf::from(dir).join("locales")) {
+            Ok(entries) => entries,
+            Err(e) => {
+                let level = if required { "error" } else { "warning" };
+                println!("cargo::{level}=CRAFT_I18N_DIR: {e}; the interface is English only");
+                Vec::new()
+            }
+        },
+        None => {
+            if required {
+                println!("cargo::error=CRAFT_I18N_REQUIRED=1 but CRAFT_I18N_DIR is unset: a release must embed the translations");
+            }
+            Vec::new()
+        }
+    };
+    let entries = thai_edition(entries);
+    let mut o = String::from("/// (locale, shared catalog, PdfCraft's catalog), one entry per locale; `\"\"` for a missing file.\n");
+    o.push_str("pub static CRAFT_I18N: &craft_i18n::Embedded = &[\n");
+    for (code, shared, app) in entries {
+        // `{:?}` escapes the path (Windows backslashes) as a Rust string literal.
+        let shared = shared.map_or_else(|| "\"\"".to_string(), |p| format!("include_str!({p:?})"));
+        let _ = writeln!(o, "    ({code:?}, {shared}, include_str!({app:?})),");
+    }
+    o.push_str("];\n");
+    o
+}
+
+/// The Thai edition's own catalog, `src/i18n/th.tsv`: its wording, and the strings only this
+/// edition has.
+const EDITION_CATALOG: &str = "src/i18n/th.tsv";
+
+/// Thai from the edition's catalog first (Thai edition): its rows win, and craft-i18n's Thai
+/// catalog adds only the rows it lacks, into one file in `OUT_DIR`. Without craft-i18n (or its
+/// Thai), the edition's catalog alone: the edition is never English only.
+fn thai_edition(mut entries: Vec<Locale>) -> Vec<Locale> {
+    let own = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(EDITION_CATALOG);
+    println!("cargo::rerun-if-changed={}", own.display());
+    let Ok(own_text) = std::fs::read_to_string(&own) else {
+        println!("cargo::warning={}: unreadable; Thai is craft-i18n's alone", own.display());
+        return entries;
+    };
+    let theirs = entries.iter().position(|(code, ..)| code == "th");
+    let upstream = theirs.and_then(|i| entries.get(i)).and_then(|(_, _, app)| std::fs::read_to_string(app).ok()).unwrap_or_default();
+    let merged = merge_catalogs(&own_text, &upstream);
+    let out = std::path::PathBuf::from(std::env::var_os("OUT_DIR").unwrap_or_default()).join("th-pdfcraft.tsv");
+    if let Err(e) = std::fs::write(&out, merged) {
+        println!("cargo::warning=writing {}: {e}; Thai is craft-i18n's alone", out.display());
+        return entries;
+    }
+    match theirs.and_then(|i| entries.get_mut(i)) {
+        Some(entry) => entry.2 = out,
+        None => {
+            entries.push(("th".to_string(), None, out));
+            entries.sort();
+        }
+    }
+    entries
+}
+
+/// `own` with every row of `theirs` whose (context, source) it lacks after it. A row is a line
+/// that is neither blank nor a `#` comment; its key is its first two TAB-separated columns.
+fn merge_catalogs(own: &str, theirs: &str) -> String {
+    let key = |line: &str| -> Option<(String, String)> {
+        if line.trim().is_empty() || line.starts_with('#') {
+            return None;
+        }
+        let mut columns = line.split('\t');
+        Some((columns.next()?.to_string(), columns.next()?.to_string()))
+    };
+    let mine: std::collections::HashSet<(String, String)> = own.lines().filter_map(key).collect();
+    let mut out = own.trim_end_matches(['\r', '\n']).to_string();
+    out.push_str("\n\n# craft-i18n's Thai rows this edition doesn't have.\n");
+    for line in theirs.lines().filter(|l| key(l).is_some_and(|k| !mine.contains(&k))) {
+        out.push_str(line);
+        out.push('\n');
+    }
+    out
+}
+
+/// One embedded locale: its code, its `common.tsv` if it has one, and its PdfCraft catalog.
+type Locale = (String, Option<std::path::PathBuf>, std::path::PathBuf);
+
+/// Every locale under `dir` with PdfCraft's catalog, by code. An error when `dir` isn't a
+/// craft-i18n `locales/` directory.
+fn locales(dir: &std::path::Path) -> Result<Vec<Locale>, String> {
+    // Build scripts run in the crate's directory and `include_str!` resolves against the
+    // generated file, so a relative path would mean two different places.
+    if !dir.is_absolute() {
+        return Err(format!("{} is not an absolute path", dir.display()));
+    }
+    // Before read_dir, so a checkout that appears later reruns the script.
+    println!("cargo::rerun-if-changed={}", dir.display());
+    let list = std::fs::read_dir(dir).map_err(|e| format!("{} is not a craft-i18n checkout ({e})", dir.display()))?;
+    let mut out = Vec::new();
+    for entry in list.flatten() {
+        let path = entry.path();
+        let Some(code) = path.file_name().and_then(|n| n.to_str()).map(str::to_string) else { continue };
+        let app = path.join(APP_CATALOG);
+        if !app.is_file() {
+            continue;
+        }
+        println!("cargo::rerun-if-changed={}", app.display());
+        let shared = Some(path.join("common.tsv")).filter(|p| p.is_file());
+        if let Some(p) = &shared {
+            println!("cargo::rerun-if-changed={}", p.display());
+        }
+        out.push((code, shared, app));
+    }
+    if out.is_empty() {
+        return Err(format!("{} has no locale with a {APP_CATALOG}", dir.display()));
+    }
+    out.sort();
+    Ok(out)
 }
 
 fn read<T>(path: &std::path::Path, fallback: &str, parse: impl Fn(&str) -> Result<T, String>) -> Option<T> {

@@ -50,6 +50,9 @@ impl PdfCraftApp {
             ("scroll_speed", _) => {
                 self.scroll_speed = scroll_speed::ScrollSpeed::parse(value).ok_or("scroll_speed must be slow, normal, or fast")?;
             }
+            ("invert_middle_drag", _) => {
+                self.invert_middle_drag = value.parse::<bool>().map_err(|_| "invert_middle_drag must be true or false")?;
+            }
             ("animation_effects", _) => {
                 self.animation_effects = motion::AnimationEffects::parse(value).ok_or("animation_effects must be system, on, or off")?;
             }
@@ -104,6 +107,7 @@ impl PdfCraftApp {
                     "advanced" => Some(Dialog::Properties(PropsTab::Advanced)),
                     "space-audit" => Some(Dialog::Properties(PropsTab::SpaceAudit)),
                     "shortcuts" => Some(Dialog::Shortcuts),
+                    "editing-tips" => Some(Dialog::EditingTips),
                     "split" => Some(Dialog::Split),
                     "protect" => Some(Dialog::Protect),
                     "page-boxes" => Some(Dialog::PageBoxes),

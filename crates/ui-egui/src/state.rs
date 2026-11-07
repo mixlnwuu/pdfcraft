@@ -106,6 +106,8 @@ pub enum Dialog {
     Properties(PropsTab),
     About,
     Shortcuts,
+    /// Thai edition: Help › Editing tips (Ctrl+E / Ctrl+T), also shown once with a first document.
+    EditingTips,
     Split,
     /// Pages ▸ Number pages… (page labels).
     NumberPages,
@@ -253,6 +255,43 @@ pub struct TextClip {
 
 /// How far each paste of a copied text box is offset from the last, in points.
 pub(crate) const PASTE_STEP: f64 = 12.0;
+
+/// A picture of the page itself copied (⌘C, ⌘X, or Copy / Cut in its menu; Thai edition): where it
+/// is and its whole box (display space), so that pasting it, while the clipboard still holds the
+/// pixels copied with it, gives the same picture at the same size instead of a new one sized by its
+/// pixels.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PageImageClip {
+    pub doc: pdfcraft_engine::DocId,
+    pub page: usize,
+    pub index: usize,
+    /// The image object it draws, to tell that `index` still is this picture.
+    pub object: Option<pdfcraft_cos::ObjRef>,
+    pub rect: [f64; 4],
+    /// How many times it was pasted: each paste on its own page lands a step further down and right.
+    pub pastes: u32,
+}
+
+/// One of several things copied together (Thai edition): a text box (an added one, or a paragraph
+/// of the page as a box in its look; display space), an added picture, or a picture of the page.
+#[derive(Clone, Debug, PartialEq)]
+pub enum MultiItem {
+    Text(pdfcraft_engine::AddedText),
+    Added { index: usize, content: pdfcraft_engine::AddedContent },
+    PageImage { index: usize, rect: [f64; 4] },
+}
+
+/// Several objects selected together in Edit text & images and copied with ⌘C (Thai edition):
+/// where they were, what each is with its user-space box (to select the pasted ones), and the text
+/// put on the system clipboard for them, by which ⌘V knows the clipboard still holds them.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MultiClip {
+    pub doc: pdfcraft_engine::DocId,
+    pub page: usize,
+    pub items: Vec<(MultiItem, pdfcraft_engine::EditableObject)>,
+    pub marker: String,
+    pub pastes: u32,
+}
 
 /// An added picture copied with ⌘C in Edit a PDF (Thai edition), with the text put on the system
 /// clipboard for it, by which ⌘V knows the clipboard still holds it.

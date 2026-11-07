@@ -210,6 +210,11 @@ pub const COMMANDS: &[CommandSpec] = &[
     // Thai edition: rulers along the document and a grid over the pages (View menu checkboxes).
     c("view.rulers", "Rulers", None, None, Document, "ruler"),
     c("view.grid", "Grid", None, None, Document, "grid-3x3"),
+    // Thai edition: smart guides shown while moving boxes, and boxes snapping to them.
+    c("view.smart_guides", "Smart Guides", None, None, Document, "align-center"),
+    c("view.snap", "Snap to Guides", None, None, Document, "move"),
+    // Thai edition: remove the guides dragged out of the rulers.
+    c("view.clear_guides", "Clear Guides", None, None, Document, "eraser"),
     c("view.layout.cover", "Show cover page in two-page view", None, None, TwoPageView, "bookmark"),
     // Acrobat's view modes, a page display and a zoom at once (the rail's Page display menu).
     c("view.fit_width_scrolling", "Fit to width scrolling", None, None, Document, "arrow-left-right"),
@@ -404,6 +409,8 @@ pub const COMMANDS: &[CommandSpec] = &[
     c("page.number", "Number pages…", PAGES, None, Assembly, "hash"),
     c("page.properties", "Page properties…", PAGES, None, Modification, "info"),
     c("help.shortcuts", "Keyboard shortcuts", HELP, None, Nothing, "circle-help"),
+    // Thai edition: the Ctrl+E / Ctrl+T tips a first document opens with.
+    c("help.editing_tips", "Editing tips", HELP, None, Nothing, "circle-help"),
     c("help.app_page", "PdfCraft web page", HELP, None, Nothing, "globe"),
     c("help.github", "PdfCraft on GitHub", HELP, None, Nothing, "code-xml"),
     c("help.check_updates", "Check for updates…", HELP, None, Nothing, "cloud"),

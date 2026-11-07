@@ -24,6 +24,60 @@ pub fn is_thai(c: char) -> bool {
     ('\u{0E00}'..='\u{0E7F}').contains(&c)
 }
 
+/// The Thai letter or mark a glyph position variant of the Windows Thai fonts stands for (Thai
+/// edition). Those fonts (Angsana New, Cordia New, Tahoma, ...) keep each tone mark, upper vowel
+/// and lower vowel moved down or left, and a letter without its descender, at private-use code
+/// points from U+F700, and a PDF their text is set in often maps glyphs there in its ToUnicode
+/// ("ได้" read as "ได" + U+F70B). Checked against such a PDF: อยู่ หมู่ (U+F70A), ข้า ได้ ให้
+/// (U+F70B), ศัพท์ (U+F70E), ปี (U+F702), ปัจจุบัน (U+F710), เป็น (U+F712).
+fn presentation_base(c: char) -> Option<char> {
+    Some(match c {
+        // Moved down (above a letter with no upper vowel).
+        '\u{F70A}' => '\u{0E48}',
+        '\u{F70B}' => '\u{0E49}',
+        '\u{F70C}' => '\u{0E4A}',
+        '\u{F70D}' => '\u{0E4B}',
+        '\u{F70E}' => '\u{0E4C}',
+        // Moved down and left.
+        '\u{F705}' => '\u{0E48}',
+        '\u{F706}' => '\u{0E49}',
+        '\u{F707}' => '\u{0E4A}',
+        '\u{F708}' => '\u{0E4B}',
+        '\u{F709}' => '\u{0E4C}',
+        // Moved left (beside a letter with a tall ascender).
+        '\u{F713}' => '\u{0E48}',
+        '\u{F714}' => '\u{0E49}',
+        '\u{F715}' => '\u{0E4A}',
+        '\u{F716}' => '\u{0E4B}',
+        '\u{F717}' => '\u{0E4C}',
+        '\u{F710}' => '\u{0E31}',
+        '\u{F701}' => '\u{0E34}',
+        '\u{F702}' => '\u{0E35}',
+        '\u{F703}' => '\u{0E36}',
+        '\u{F704}' => '\u{0E37}',
+        '\u{F712}' => '\u{0E47}',
+        '\u{F711}' => '\u{0E4D}',
+        // Lower vowels moved down, under a letter with a descender.
+        '\u{F718}' => '\u{0E38}',
+        '\u{F719}' => '\u{0E39}',
+        '\u{F71A}' => '\u{0E3A}',
+        // Letters without their descender, over a lower vowel.
+        '\u{F70F}' => '\u{0E0D}',
+        '\u{F700}' => '\u{0E10}',
+        _ => return None,
+    })
+}
+
+/// `text` with the Windows Thai fonts' private-use glyph variants ([`presentation_base`]) as
+/// the Thai letters and marks they are, so the text can be retyped, drawn in another font,
+/// searched or copied (Thai edition). Text without them comes back as it is.
+pub fn from_presentation_forms(text: &str) -> std::borrow::Cow<'_, str> {
+    if !text.chars().any(|c| presentation_base(c).is_some()) {
+        return std::borrow::Cow::Borrowed(text);
+    }
+    std::borrow::Cow::Owned(text.chars().map(|c| presentation_base(c).unwrap_or(c)).collect())
+}
+
 /// Whether `text` has Thai that the standard fonts can't draw.
 pub fn has_thai(text: &str) -> bool {
     text.chars().any(is_thai)
@@ -565,6 +619,18 @@ fn type3(doc: &mut Document, clusters: &[&ShapedCluster], outlines: &HashMap<(Sh
 
 #[cfg(test)]
 mod tests {
+
+    /// Thai edition: the Windows Thai fonts' glyph variants read back as Thai.
+    #[test]
+    fn presentation_forms_read_as_thai() {
+        assert_eq!(super::from_presentation_forms("\u{0E44}\u{0E14}\u{F70B}"), "ได้");
+        assert_eq!(super::from_presentation_forms("\u{0E40}\u{0E1B}\u{F712}\u{0E19}"), "เป็น");
+        assert_eq!(super::from_presentation_forms("\u{0E1B}\u{F702}"), "ปี");
+        assert_eq!(super::from_presentation_forms("\u{0E28}\u{0E31}\u{0E1E}\u{0E17}\u{F70E}"), "ศัพท์");
+        assert_eq!(super::from_presentation_forms("\u{0E2D}\u{0E22}\u{0E39}\u{F70A}"), "อยู่");
+        assert!(matches!(super::from_presentation_forms("ไม่มี"), std::borrow::Cow::Borrowed("ไม่มี")));
+        assert_eq!(super::from_presentation_forms("\u{F7FF}"), "\u{F7FF}", "other private-use characters stay");
+    }
     use super::*;
 
     fn latin(s: &str, size: f64) -> f64 {

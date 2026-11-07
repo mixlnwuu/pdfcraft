@@ -20,24 +20,29 @@ mod as_docx;
 mod as_html;
 mod as_markdown;
 mod as_rtf;
+mod bands;
+mod docx_flow;
 mod layout;
+mod lists;
+mod ruled;
 
 pub use as_docx::docx;
 pub(crate) use as_docx::hex;
 #[cfg(test)]
 use as_docx::{MAX_MEDIA, docx_table};
 pub(crate) use as_html::esc;
-pub use as_html::html;
 #[cfg(test)]
 use as_html::{allowed, base64};
+pub use as_html::{html, html_simple};
 pub use as_markdown::markdown;
 #[cfg(test)]
 use as_markdown::{emphasis, paragraph};
 pub use as_rtf::rtf;
-pub use layout::{Block, Cell, Image, Page, Table};
+pub use layout::{Block, Cell, HAlign, Image, Page, Shape, Table, TableBorder};
 #[cfg(test)]
 use layout::{LOOKUP_STEPS, MAX_COLS, body_size};
 pub(crate) use layout::{Run, paragraphs, tables};
+pub use lists::{centred_lines, list_items};
 
 #[cfg(test)]
 mod tests;

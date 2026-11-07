@@ -1,295 +1,14 @@
-[[asset]]
-path = "crates/ui-egui/src/i18n/el.tsv"
-title = "Greek interface translation catalog"
-author = "Camthalion77 and contributors"
-source = "Contributor-original: clean-room translations of PdfCraft English UI labels; 2026-10-18 page-gap labels are contributor-original AI-assisted translations from English, not separately native-reviewed; 2026-10-22 secured-document notice labels are contributor-original AI-assisted translations from English, not separately native-reviewed; the 2026-10-22 reply-count label is an AI-assisted translation from English, not separately native-reviewed"
-licence = "MIT OR Apache-2.0"
-licence_file = "LICENSE-MIT"
-kind = "translation"
-usage = "Greek UI strings, compiled in by crates/ui-egui/src/i18n.rs"
-
 # ATTRIBUTION.toml: one entry per asset (AGENTS.md §1). The source of truth for provenance and licences.
 # ATTRIBUTION.md is generated from this file: `cargo xtask assets --write`. Checked by `cargo xtask assets` (part of `xtask ci`).
 #
 # [[asset]]    a file in this repository (committed or vendored); `sha256` must match the file.
-#              Translation catalogs (kind = "translation", crates/ui-egui/src/i18n/*.tsv) are project files
-#              under the project licence and carry no `sha256`: git history records their provenance.
 # [[bundled]]  a file compiled into PdfCraft by a Cargo dependency (its crate version must match Cargo.lock).
 # [[fetched]]  downloaded at build time by xtask (never committed), pinned by `sha256`.
-# [[build_input]] an optional build input outside this repository (e.g. craft-fonts via CRAFT_FONTS_DIR);
+# [[build_input]] an optional build input outside this repository (craft-fonts via CRAFT_FONTS_DIR, craft-i18n via CRAFT_I18N_DIR);
 #              never committed or downloaded here, its own repository attributes each file.
 #
 # licence: SPDX expression from the allowlist in AGENTS.md §1.2. adobe_data = true marks the closed list of
 # Adobe-authored non-visual technical data allowed by AGENTS.md §1.1.
-
-[[asset]]
-path = "crates/ui-egui/src/i18n/zh-hans.tsv"
-title = "Simplified Chinese interface translation catalog"
-author = "PdfCraft contributors"
-source = "Contributor-original: clean-room translations of PdfCraft's English UI labels, no proprietary localisation resources; 2026-10-18 page-gap labels are contributor-original AI-assisted translations from English, not separately native-reviewed; 2026-10-22 secured-document notice labels are contributor-original AI-assisted translations from English, not separately native-reviewed; the 2026-10-22 reply-count label is an AI-assisted translation from English, not separately native-reviewed"
-licence = "MIT OR Apache-2.0"
-licence_file = "LICENSE-MIT"
-kind = "translation"
-usage = "Simplified Chinese UI strings, compiled in by crates/ui-egui/src/i18n.rs"
-
-[[asset]]
-path = "crates/ui-egui/src/i18n/zh-hant.tsv"
-title = "Traditional Chinese (Taiwan) interface translation catalog"
-author = "PdfCraft contributors"
-source = "Contributor-original: clean-room translations of PdfCraft's English UI labels, no proprietary localisation resources; 2026-10-18 page-gap labels are contributor-original AI-assisted translations from English, not separately native-reviewed; 2026-10-22 secured-document notice labels are contributor-original AI-assisted translations from English, not separately native-reviewed; the 2026-10-22 reply-count label is an AI-assisted translation from English, not separately native-reviewed"
-licence = "MIT OR Apache-2.0"
-licence_file = "LICENSE-MIT"
-kind = "translation"
-usage = "Traditional Chinese UI strings, compiled in by crates/ui-egui/src/i18n.rs"
-
-[[asset]]
-path = "crates/ui-egui/src/i18n/cs.tsv"
-title = "Czech interface translation catalog"
-author = "PdfCraft contributors"
-source = "Contributor-original: clean-room translations of PdfCraft's English UI labels, no proprietary localisation resources; 2026-10-18 page-gap labels are contributor-original AI-assisted translations from English, not separately native-reviewed; 2026-10-22 signature-check and standard-identification wordings are contributor-original AI-assisted translations from English, not separately native-reviewed; 2026-10-22 secured-document notice labels are contributor-original AI-assisted translations from English, not separately native-reviewed; the 2026-10-22 reply-count label is an AI-assisted translation from English, not separately native-reviewed"
-licence = "MIT OR Apache-2.0"
-licence_file = "LICENSE-MIT"
-kind = "translation"
-usage = "Czech UI strings, compiled in by crates/ui-egui/src/i18n.rs"
-
-[[asset]]
-path = "crates/ui-egui/src/i18n/pt-br.tsv"
-title = "Brazilian Portuguese interface translation catalog"
-author = "André Cardoso (andrecards), PdfCraft contributors"
-source = "Clean-room translations of PdfCraft's English UI labels, no proprietary localisation resources: the ~1,826-entry gist posted in issue #288 (https://gist.github.com/andrecards/ac388c25fba17312ce83207f8b7b467e), completed and reviewed by PdfCraft contributors; 2026-10-18 page-gap labels are contributor-original AI-assisted translations from English, not separately native-reviewed; 2026-10-22 text-field-table limit messages are contributor-original AI-assisted translations from English, not separately native-reviewed; 2026-10-22 secured-document notice labels are contributor-original AI-assisted translations from English, not separately native-reviewed; the 2026-10-22 reply-count label is an AI-assisted translation from English, not separately native-reviewed"
-licence = "MIT OR Apache-2.0"
-licence_file = "LICENSE-MIT"
-kind = "translation"
-usage = "Brazilian Portuguese UI strings, compiled in by crates/ui-egui/src/i18n.rs"
-
-[[asset]]
-path = "crates/ui-egui/src/i18n/es.tsv"
-title = "Spanish interface translation catalog"
-author = "PdfCraft contributors"
-source = "Contributor-original: clean-room translations of PdfCraft's English UI labels, no proprietary localisation resources; the 2026-10-20 coverage additions are AI-assisted and not separately native-reviewed; 2026-10-18 page-gap labels are contributor-original AI-assisted translations from English, not separately native-reviewed; 2026-10-22 signature-check wordings are contributor-original AI-assisted translations from English, not separately native-reviewed; 2026-10-22 secured-document notice labels are contributor-original AI-assisted translations from English, not separately native-reviewed; the 2026-10-22 reply-count label is an AI-assisted translation from English, not separately native-reviewed"
-licence = "MIT OR Apache-2.0"
-licence_file = "LICENSE-MIT"
-kind = "translation"
-usage = "Spanish UI strings, compiled in by crates/ui-egui/src/i18n.rs"
-
-[[asset]]
-path = "crates/ui-egui/src/i18n/fr.tsv"
-title = "French interface translation catalog"
-author = "PdfCraft contributors"
-source = "Contributor-original: clean-room translations of PdfCraft's English UI labels, no proprietary localisation resources; 2026-10-18 page-gap labels are contributor-original AI-assisted translations from English, not separately native-reviewed; 2026-10-22 secured-document notice labels are contributor-original AI-assisted translations from English, not separately native-reviewed; the 2026-10-22 reply-count label is an AI-assisted translation from English, not separately native-reviewed"
-licence = "MIT OR Apache-2.0"
-licence_file = "LICENSE-MIT"
-kind = "translation"
-usage = "French UI strings, compiled in by crates/ui-egui/src/i18n.rs"
-
-[[asset]]
-path = "crates/ui-egui/src/i18n/de.tsv"
-title = "German interface translation catalog"
-author = "PdfCraft contributors"
-source = "Contributor-original: clean-room translations of PdfCraft's English UI labels, no proprietary localisation resources; 2026-10-18 page-gap labels are contributor-original AI-assisted translations from English, not separately native-reviewed; 2026-10-22 secured-document notice labels are contributor-original AI-assisted translations from English, not separately native-reviewed; the 2026-10-22 reply-count label is an AI-assisted translation from English, not separately native-reviewed"
-licence = "MIT OR Apache-2.0"
-licence_file = "LICENSE-MIT"
-kind = "translation"
-usage = "German UI strings, compiled in by crates/ui-egui/src/i18n.rs"
-
-[[asset]]
-path = "crates/ui-egui/src/i18n/lo.tsv"
-title = "Lao interface translation catalog"
-author = "@bounkirdni-2025"
-source = "Contributor-original: clean-room translations of PdfCraft English UI labels, no proprietary localisation resources; 2026-10-22 page-gap labels are contributor-original AI-assisted translations from English, not separately native-reviewed; 2026-10-22 secured-document notice labels are contributor-original AI-assisted translations from English, not separately native-reviewed; the 2026-10-22 reply-count label is an AI-assisted translation from English, not separately native-reviewed"
-licence = "MIT OR Apache-2.0"
-licence_file = "LICENSE-MIT"
-kind = "translation"
-usage = "Lao UI strings, compiled in by crates/ui-egui/src/i18n.rs"
-
-[[asset]]
-path = "crates/ui-egui/src/i18n/te.tsv"
-title = "Telugu interface translation catalog"
-author = "PdfCraft contributors"
-source = "Contributor-original: clean-room translations of PdfCraft's English UI labels, no proprietary localisation resources; 2026-10-18 page-gap labels are contributor-original AI-assisted translations from English, not separately native-reviewed; 2026-10-22 secured-document notice labels are contributor-original AI-assisted translations from English, not separately native-reviewed; the 2026-10-22 reply-count label is an AI-assisted translation from English, not separately native-reviewed"
-licence = "MIT OR Apache-2.0"
-licence_file = "LICENSE-MIT"
-kind = "translation"
-usage = "Telugu UI strings, compiled in by crates/ui-egui/src/i18n.rs"
-
-[[asset]]
-path = "crates/ui-egui/src/i18n/it.tsv"
-title = "Italian interface translation catalog"
-author = "PdfCraft contributors"
-source = "Contributor-original: clean-room translations of PdfCraft's English UI labels, no proprietary localisation resources; 2026-10-18 page-gap labels are contributor-original AI-assisted translations from English, not separately native-reviewed; 2026-10-22 secured-document notice labels are contributor-original AI-assisted translations from English, not separately native-reviewed; the 2026-10-22 reply-count label is an AI-assisted translation from English, not separately native-reviewed"
-licence = "MIT OR Apache-2.0"
-licence_file = "LICENSE-MIT"
-kind = "translation"
-usage = "Italian UI strings, compiled in by crates/ui-egui/src/i18n.rs"
-
-[[asset]]
-path = "crates/ui-egui/src/i18n/pl.tsv"
-title = "Polish interface translation catalog"
-author = "PdfCraft contributors"
-source = "Contributor-original: clean-room translations of PdfCraft's English UI labels, no proprietary localisation resources; 2026-10-18 page-gap labels are contributor-original AI-assisted translations from English, not separately native-reviewed; 2026-10-22 signature-check wordings are contributor-original AI-assisted translations from English, not separately native-reviewed; 2026-10-22 secured-document notice labels are contributor-original AI-assisted translations from English, not separately native-reviewed; the 2026-10-22 reply-count label is an AI-assisted translation from English, not separately native-reviewed"
-licence = "MIT OR Apache-2.0"
-licence_file = "LICENSE-MIT"
-kind = "translation"
-usage = "Polish UI strings, compiled in by crates/ui-egui/src/i18n.rs"
-
-[[asset]]
-path = "crates/ui-egui/src/i18n/ru.tsv"
-title = "Russian interface translation catalog"
-author = "PdfCraft contributors"
-source = "Contributor-original: clean-room translations of PdfCraft's English UI labels, no proprietary localisation resources; 2026-10-18 page-gap labels are contributor-original AI-assisted translations from English, not separately native-reviewed; 2026-10-22 secured-document notice labels are contributor-original AI-assisted translations from English, not separately native-reviewed; the 2026-10-22 reply-count label is an AI-assisted translation from English, not separately native-reviewed"
-licence = "MIT OR Apache-2.0"
-licence_file = "LICENSE-MIT"
-kind = "translation"
-usage = "Russian UI strings, compiled in by crates/ui-egui/src/i18n.rs"
-
-[[asset]]
-path = "crates/ui-egui/src/i18n/hu.tsv"
-title = "Hungarian interface translation catalog"
-author = "PdfCraft contributors"
-source = "Contributor-original: clean-room translations of PdfCraft's English UI labels, no proprietary localisation resources; 2026-10-18 page-gap labels are contributor-original AI-assisted translations from English, not separately native-reviewed; 2026-10-22 secured-document notice labels are contributor-original AI-assisted translations from English, not separately native-reviewed; the 2026-10-22 reply-count label is an AI-assisted translation from English, not separately native-reviewed"
-licence = "MIT OR Apache-2.0"
-licence_file = "LICENSE-MIT"
-kind = "translation"
-usage = "Hungarian UI strings, compiled in by crates/ui-egui/src/i18n.rs"
-
-[[asset]]
-path = "crates/ui-egui/src/i18n/bg.tsv"
-title = "Bulgarian interface translation catalog"
-author = "PdfCraft contributors"
-source = "Contributor-original: clean-room translations of PdfCraft's English UI labels, no proprietary localisation resources; 2026-10-18 page-gap labels are contributor-original AI-assisted translations from English, not separately native-reviewed; 2026-10-22 secured-document notice labels are contributor-original AI-assisted translations from English, not separately native-reviewed; the 2026-10-22 reply-count label is an AI-assisted translation from English, not separately native-reviewed"
-licence = "MIT OR Apache-2.0"
-licence_file = "LICENSE-MIT"
-kind = "translation"
-usage = "Bulgarian UI strings, compiled in by crates/ui-egui/src/i18n.rs"
-
-[[asset]]
-path = "crates/ui-egui/src/i18n/kk.tsv"
-title = "Kazakh interface translation catalog"
-author = "PdfCraft contributors"
-source = "Contributor-original: clean-room translations of the English UI labels into Kazakh, no proprietary localisation resources; 2026-10-18 page-gap labels are contributor-original AI-assisted translations from English, not separately native-reviewed; 2026-10-22 secured-document notice labels are contributor-original AI-assisted translations from English, not separately native-reviewed; the 2026-10-22 reply-count label is an AI-assisted translation from English, not separately native-reviewed"
-licence = "MIT OR Apache-2.0"
-licence_file = "LICENSE-MIT"
-kind = "translation"
-usage = "Kazakh UI strings, compiled in by crates/ui-egui/src/i18n.rs"
-
-[[asset]]
-path = "crates/ui-egui/src/i18n/ja.tsv"
-title = "Japanese interface translation catalog"
-author = "PdfCraft contributors"
-source = "Contributor-original: clean-room translations of PdfCraft's English UI labels, no proprietary localisation resources; 2026-10-18 page-gap labels are contributor-original AI-assisted translations from English, not separately native-reviewed; 2026-10-22 secured-document notice labels are contributor-original AI-assisted translations from English, not separately native-reviewed; the 2026-10-22 reply-count label is an AI-assisted translation from English, not separately native-reviewed"
-licence = "MIT OR Apache-2.0"
-licence_file = "LICENSE-MIT"
-kind = "translation"
-usage = "Japanese UI strings, compiled in by crates/ui-egui/src/i18n.rs"
-
-[[asset]]
-path = "crates/ui-egui/src/i18n/uk.tsv"
-title = "Ukrainian interface translation catalog"
-author = "PdfCraft contributors"
-source = "Contributor-original: clean-room translations of PdfCraft's English UI labels, no proprietary localisation resources; 2026-10-18 page-gap labels are contributor-original AI-assisted translations from English, not separately native-reviewed; 2026-10-22 secured-document notice labels are contributor-original AI-assisted translations from English, not separately native-reviewed; the 2026-10-22 reply-count label is an AI-assisted translation from English, not separately native-reviewed"
-licence = "MIT OR Apache-2.0"
-licence_file = "LICENSE-MIT"
-kind = "translation"
-usage = "Ukrainian UI strings, compiled in by crates/ui-egui/src/i18n.rs"
-
-[[asset]]
-path = "crates/ui-egui/src/i18n/ar.tsv"
-title = "Arabic interface translation catalog"
-author = "PdfCraft contributors"
-source = "Contributor-original: clean-room translations of PdfCraft's English UI labels, no proprietary localisation resources; 2026-10-18 page-gap labels are contributor-original AI-assisted translations from English, not separately native-reviewed; 2026-10-22 secured-document notice labels are contributor-original AI-assisted translations from English, not separately native-reviewed; the 2026-10-22 reply-count label is an AI-assisted translation from English, not separately native-reviewed"
-licence = "MIT OR Apache-2.0"
-licence_file = "LICENSE-MIT"
-kind = "translation"
-usage = "Arabic UI strings, compiled in by crates/ui-egui/src/i18n.rs"
-
-[[asset]]
-path = "crates/ui-egui/src/i18n/ckb.tsv"
-title = "Central Kurdish (Sorani) interface translation catalog"
-author = "PdfCraft contributors"
-source = "Contributor-original: clean-room translations of PdfCraft's English UI labels, no proprietary localisation resources; 2026-10-22 page-gap labels are contributor-original AI-assisted translations from English, not separately native-reviewed; 2026-10-22 secured-document notice labels are contributor-original AI-assisted translations from English, not separately native-reviewed; the 2026-10-22 reply-count label is an AI-assisted translation from English, not separately native-reviewed"
-licence = "MIT OR Apache-2.0"
-licence_file = "LICENSE-MIT"
-kind = "translation"
-usage = "Central Kurdish UI strings, compiled in by crates/ui-egui/src/i18n.rs"
-
-[[asset]]
-path = "crates/ui-egui/src/i18n/fa.tsv"
-title = "Persian (Farsi) interface translation catalog"
-author = "PdfCraft contributors"
-source = "Contributor-original: clean-room translations of PdfCraft's English UI labels, no proprietary localisation resources; 2026-10-25 initial catalog covering the current 2,776-entry key union, AI-assisted translations from English, not separately native-reviewed"
-licence = "MIT OR Apache-2.0"
-licence_file = "LICENSE-MIT"
-kind = "translation"
-usage = "Persian UI strings, compiled in by crates/ui-egui/src/i18n.rs"
-
-[[asset]]
-path = "crates/ui-egui/src/i18n/tr.tsv"
-title = "Turkish interface translation catalog"
-author = "PdfCraft contributors"
-source = "Contributor-original: clean-room translations of PdfCraft's English UI labels, no proprietary localisation resources; 2026-10-18 page-gap labels are contributor-original AI-assisted translations from English, not separately native-reviewed; 2026-10-22 secured-document notice labels are contributor-original AI-assisted translations from English, not separately native-reviewed; the 2026-10-22 reply-count label is an AI-assisted translation from English, not separately native-reviewed"
-licence = "MIT OR Apache-2.0"
-licence_file = "LICENSE-MIT"
-kind = "translation"
-usage = "Turkish UI strings, compiled in by crates/ui-egui/src/i18n.rs"
-
-[[asset]]
-path = "crates/ui-egui/src/i18n/lt.tsv"
-title = "Lithuanian interface translation catalog"
-author = "PdfCraft contributors"
-source = "Contributor-original: clean-room translations of PdfCraft's English UI labels and user-facing messages; original catalog reviewed by a native Lithuanian-speaking contributor; 2026-10-15 coverage additions are AI-assisted and not separately native-reviewed; 2026-10-18 page-gap labels are contributor-original AI-assisted translations from English, not separately native-reviewed; 2026-10-22 secured-document notice labels are contributor-original AI-assisted translations from English, not separately native-reviewed; the 2026-10-22 reply-count label is an AI-assisted translation from English, not separately native-reviewed"
-licence = "MIT OR Apache-2.0"
-licence_file = "LICENSE-MIT"
-kind = "translation"
-usage = "Lithuanian UI strings, compiled in by crates/ui-egui/src/i18n.rs"
-
-[[asset]]
-path = "crates/ui-egui/src/i18n/hi.tsv"
-title = "Hindi interface translation catalog"
-author = "PdfCraft contributors"
-source = "Contributor-original: clean-room translations of PdfCraft's English UI labels, no proprietary localisation resources; 2026-10-22 page-gap labels are contributor-original AI-assisted translations from English, not separately native-reviewed; 2026-10-22 text-field-table labels are contributor-original AI-assisted translations from English, not separately native-reviewed; 2026-10-22 secured-document notice labels are contributor-original AI-assisted translations from English, not separately native-reviewed; the 2026-10-22 reply-count label is an AI-assisted translation from English, not separately native-reviewed"
-licence = "MIT OR Apache-2.0"
-licence_file = "LICENSE-MIT"
-kind = "translation"
-usage = "Hindi UI strings, compiled in by crates/ui-egui/src/i18n.rs"
-[[asset]]
-path = "crates/ui-egui/src/i18n/id.tsv"
-title = "Indonesian interface translation catalog"
-author = "PdfCraft contributors"
-source = "Contributor-original: clean-room translations of PdfCraft's English UI labels, no proprietary localisation resources; 2026-10-22 page-gap labels are contributor-original AI-assisted translations from English, not separately native-reviewed; 2026-10-22 text-field-table labels are contributor-original AI-assisted translations from English, not separately native-reviewed; 2026-10-22 secured-document notice labels are contributor-original AI-assisted translations from English, not separately native-reviewed; the 2026-10-22 reply-count label is an AI-assisted translation from English, not separately native-reviewed"
-licence = "MIT OR Apache-2.0"
-licence_file = "LICENSE-MIT"
-kind = "translation"
-usage = "Indonesian UI strings, compiled in by crates/ui-egui/src/i18n.rs"
-[[asset]]
-path = "crates/ui-egui/src/i18n/ko.tsv"
-title = "Korean interface translation catalog"
-author = "PdfCraft contributors"
-source = "Contributor-original: clean-room translations of PdfCraft's English UI labels, no proprietary localisation resources; 2026-10-22 page-gap labels are contributor-original AI-assisted translations from English, not separately native-reviewed; 2026-10-22 text-field-table labels are contributor-original AI-assisted translations from English, not separately native-reviewed; 2026-10-22 secured-document notice labels are contributor-original AI-assisted translations from English, not separately native-reviewed; the 2026-10-22 reply-count label is an AI-assisted translation from English, not separately native-reviewed"
-licence = "MIT OR Apache-2.0"
-licence_file = "LICENSE-MIT"
-kind = "translation"
-usage = "Korean UI strings, compiled in by crates/ui-egui/src/i18n.rs"
-
-[[asset]]
-path = "crates/ui-egui/src/i18n/ro.tsv"
-title = "Romanian interface translation catalog"
-author = "PdfCraft contributors"
-source = "Contributor-original: clean-room translations of PdfCraft's English UI labels and user-facing messages; AI-assisted and not yet reviewed line by line by a native Romanian speaker; 2026-10-22 page-gap labels are contributor-original AI-assisted translations from English, not separately native-reviewed; 2026-10-22 text-field-table labels are contributor-original AI-assisted translations from English, not separately native-reviewed; 2026-10-22 secured-document notice labels are contributor-original AI-assisted translations from English, not separately native-reviewed; the 2026-10-22 reply-count label is an AI-assisted translation from English, not separately native-reviewed"
-licence = "MIT OR Apache-2.0"
-licence_file = "LICENSE-MIT"
-kind = "translation"
-usage = "Romanian UI strings, compiled in by crates/ui-egui/src/i18n.rs"
-
-
-[[asset]]
-path = "crates/ui-egui/src/i18n/fi.tsv"
-title = "Finnish interface translation catalog"
-author = "PdfCraft contributors"
-source = "Contributor-original: AI-assisted (Claude Code) clean-room translations of PdfCraft's English UI labels and user-facing messages; not yet proofread by a native Finnish speaker; 2026-10-22 page-gap labels are contributor-original AI-assisted translations from English, not separately native-reviewed; 2026-10-22 text-field-table labels are contributor-original AI-assisted translations from English, not separately native-reviewed; 2026-10-22 secured-document notice labels are contributor-original AI-assisted translations from English, not separately native-reviewed; 2026-10-22 calculation-order, text-format, print, thumbnail, layer, comment-reshape and signature labels (previously English placeholders) are contributor-original AI-assisted translations from English, not separately native-reviewed; the 2026-10-22 reply-count label is an AI-assisted translation from English, not separately native-reviewed"
-licence = "MIT OR Apache-2.0"
-licence_file = "LICENSE-MIT"
-kind = "translation"
-usage = "Finnish UI strings, compiled in by crates/ui-egui/src/i18n.rs"
 
 [[asset]]
 path = "assets/icons/accessibility.svg"
@@ -2437,6 +2156,17 @@ adobe_data = true
 usage = "Advance widths for the fourteen standard fonts, which a PDF may name without embedding. Non-visual data, not a typeface: the item AGENTS.md 1.1 permits, held first-party so generated appearance streams and the renderer agree."
 sha256 = "f225e0b044875b8fa6375b6b5ad935f0d99fcc1ad03ecf9f0baae2cedbfca4d2"
 
+[[asset]]
+path = "crates/prc/src/acof/table.rs"
+title = "PRC Double prefix-code table (as a Rust table)"
+author = "Kristof Ralovich (prc-rs); the code table itself is defined by the PRC format (ISO 14739-1, working draft clause 11.17.2)"
+source = "Rows taken from prc-rs src/double.rs at commit 287b671bb5b31b05efb5ec1b98f7c359b9e4dd7d (https://github.com/ralovich/prc-rs), mechanically reformatted into (code length, code, entry) tuples; checked to be a complete prefix code by the tests in crates/prc/src/acof.rs. Data only: the code that reads the table lives in acof.rs. The MIT notice is kept in the file header."
+licence = "MIT"
+licence_file = "licenses/prc-rs-LICENSE.txt"
+kind = "data"
+usage = "Decodes every PRC Double (coordinates, transforms, colours) in 3D annotations' PRC streams. Non-visual data."
+sha256 = "8e705c5cde6a3ef778e8aca69759e38845b228b3f7f12949e587b19855d2114c"
+
 [[bundled]]
 crate = "epaint_default_fonts"
 version = "0.37.0"
@@ -2784,58 +2514,58 @@ sha256 = "acd98e64795781b2058f07b18475e0ecee2a0fe2b42a49e2f9e37d0d6bf66ce6"
 
 [[asset]]
 path = "assets/app-icon/pdfcraft.svg"
-title = "PdfCraft app icon (master vector)"
-author = "PdfCraft contributors (drawn by the project owner in ArtCraft)"
-source = "Contributor-original (see assets/app-icon/README.md)"
+title = "PdfCraft Thai edition app icon (master vector)"
+author = "Non.sittith (Thai edition cat; tile rendered by thai/brand/icons)"
+source = "Thai edition: rendered from thai/brand/thai-edition-cat-original.png (contributor-original) by thai/brand/icons"
 licence = "MIT OR Apache-2.0"
 licence_file = "assets/app-icon/LICENSE.txt"
 kind = "icon"
-usage = "Master artwork; every other app-icon file is rendered from it (packaging/icons.sh)"
-sha256 = "27745c021830f82c033b0f15f2d8d9f8e099138743297887ff7e2c9e7ed069da"
+usage = "SVG wrapper of the 512 px tile (Thai edition: the icons are rendered from the cat by thai/brand/icons, not from this file)"
+sha256 = "0c1b17a290e8867d3c7f1c522abe1e2cf175224ee878f63f04d7e64b2f5e817f"
 
 [[asset]]
 path = "assets/app-icon/pdfcraft-small.svg"
-title = "PdfCraft app icon (light vector)"
-author = "PdfCraft contributors (drawn by the project owner in ArtCraft)"
-source = "Contributor-original (see assets/app-icon/README.md)"
+title = "PdfCraft Thai edition app icon (light vector)"
+author = "Non.sittith (Thai edition cat; tile rendered by thai/brand/icons)"
+source = "Thai edition: rendered from thai/brand/thai-edition-cat-original.png (contributor-original) by thai/brand/icons"
 licence = "MIT OR Apache-2.0"
 licence_file = "assets/app-icon/LICENSE.txt"
 kind = "icon"
 usage = "README header and assets/app-icon/README.md"
-sha256 = "b524df1a583f8034a5a23836955e4fb423e0149429d695e80d95e5056f408678"
+sha256 = "2895734154bbf17157028d9b04a76b6fc641f0a39c828027b9a2eaaae4648206"
 
 [[asset]]
 path = "assets/app-icon/pdfcraft-1024.png"
-title = "PdfCraft app icon, 1024 px on Apple's icon grid"
-author = "PdfCraft contributors (drawn by the project owner in ArtCraft)"
-source = "Contributor-original (see assets/app-icon/README.md)"
+title = "PdfCraft Thai edition app icon, 1024 px on Apple's icon grid"
+author = "Non.sittith (Thai edition cat; tile rendered by thai/brand/icons)"
+source = "Thai edition: rendered from thai/brand/thai-edition-cat-original.png (contributor-original) by thai/brand/icons"
 licence = "MIT OR Apache-2.0"
 licence_file = "assets/app-icon/LICENSE.txt"
 kind = "icon"
 usage = "Runtime window/Dock icon on macOS (apps/pdfcraft/src/main.rs)"
-sha256 = "68ac6730b8990d07503351d32eacea81e9ec171a7a6f09daf52d6555d8245c8a"
+sha256 = "3005900fa50d3b8894b76e39ae8c29fe971917c487ba1d687c854c21f5ef0757"
 
 [[asset]]
 path = "assets/app-icon/pdfcraft.icns"
-title = "PdfCraft app icon (macOS .icns)"
-author = "PdfCraft contributors (drawn by the project owner in ArtCraft)"
-source = "Contributor-original (see assets/app-icon/README.md)"
+title = "PdfCraft Thai edition app icon (macOS .icns)"
+author = "Non.sittith (Thai edition cat; tile rendered by thai/brand/icons)"
+source = "Thai edition: rendered from thai/brand/thai-edition-cat-original.png (contributor-original) by thai/brand/icons"
 licence = "MIT OR Apache-2.0"
 licence_file = "assets/app-icon/LICENSE.txt"
 kind = "icon"
 usage = "macOS app bundle icon"
-sha256 = "fca7e7a0e34cc5c5ecae5bca97ee896aac68c4a34b088bc3a0b3271484f23974"
+sha256 = "6d9e1bd81dd944c9e5971a6d26cf5bdc42a298b4c2a469e172bdea58ea5489a9"
 
 [[asset]]
 path = "assets/app-icon/pdfcraft.ico"
-title = "PdfCraft app icon (Windows .ico, 16-256 px)"
-author = "PdfCraft contributors (drawn by the project owner in ArtCraft)"
-source = "Contributor-original (see assets/app-icon/README.md)"
+title = "PdfCraft Thai edition app icon (Windows .ico, 16-256 px)"
+author = "Non.sittith (Thai edition cat; tile rendered by thai/brand/icons)"
+source = "Thai edition: rendered from thai/brand/thai-edition-cat-original.png (contributor-original) by thai/brand/icons"
 licence = "MIT OR Apache-2.0"
 licence_file = "assets/app-icon/LICENSE.txt"
 kind = "icon"
 usage = "Embedded in pdfcraft.exe by apps/pdfcraft/build.rs (Explorer, taskbar, Start menu, Alt-Tab)"
-sha256 = "709271d66e07710a3f785ea21b0c85c5228eaf8bebe5058bc0f71f9ef20749eb"
+sha256 = "7210bb3ea560937541725cb98b2b83ce15863535792484be8563ae93b1a9ad1f"
 
 [[asset]]
 path = "assets/app-icon/pdfcraft-document.svg"
@@ -2861,102 +2591,102 @@ sha256 = "910be5e0ecdc94ce00368077ca1bef449bd5d62a75516feeb37884296c6fac4d"
 
 [[asset]]
 path = "assets/app-icon/hicolor/16x16/apps/ai.storyteller.pdfcraft.png"
-title = "PdfCraft app icon, 16 px"
-author = "PdfCraft contributors (drawn by the project owner in ArtCraft)"
-source = "Contributor-original (see assets/app-icon/README.md)"
+title = "PdfCraft Thai edition app icon, 16 px"
+author = "Non.sittith (Thai edition cat; tile rendered by thai/brand/icons)"
+source = "Thai edition: rendered from thai/brand/thai-edition-cat-original.png (contributor-original) by thai/brand/icons"
 licence = "MIT OR Apache-2.0"
 licence_file = "assets/app-icon/LICENSE.txt"
 kind = "icon"
 usage = "Linux hicolor theme icon (packaging/linux/ai.storyteller.pdfcraft.desktop)"
-sha256 = "660d2aace45ec1a28bc7e3708eab71ffee5cb1203f57a6256f7bd7c727193567"
+sha256 = "e4998fd7ad82df18b9c6b0ebbebb8cc153c50068849a1d17aa4d437c93dfdb48"
 
 [[asset]]
 path = "assets/app-icon/hicolor/24x24/apps/ai.storyteller.pdfcraft.png"
-title = "PdfCraft app icon, 24 px"
-author = "PdfCraft contributors (drawn by the project owner in ArtCraft)"
-source = "Contributor-original (see assets/app-icon/README.md)"
+title = "PdfCraft Thai edition app icon, 24 px"
+author = "Non.sittith (Thai edition cat; tile rendered by thai/brand/icons)"
+source = "Thai edition: rendered from thai/brand/thai-edition-cat-original.png (contributor-original) by thai/brand/icons"
 licence = "MIT OR Apache-2.0"
 licence_file = "assets/app-icon/LICENSE.txt"
 kind = "icon"
 usage = "Linux hicolor theme icon (packaging/linux/ai.storyteller.pdfcraft.desktop)"
-sha256 = "1989441bdcc8d1df0d73cfe7eb836e9211abaa0fd7fd6ec7e4634bfcd472995d"
+sha256 = "3630ea169c2f6b1917bd535a1d3d84c5746245d32554e7db6687f4c9f06643af"
 
 [[asset]]
 path = "assets/app-icon/hicolor/32x32/apps/ai.storyteller.pdfcraft.png"
-title = "PdfCraft app icon, 32 px"
-author = "PdfCraft contributors (drawn by the project owner in ArtCraft)"
-source = "Contributor-original (see assets/app-icon/README.md)"
+title = "PdfCraft Thai edition app icon, 32 px"
+author = "Non.sittith (Thai edition cat; tile rendered by thai/brand/icons)"
+source = "Thai edition: rendered from thai/brand/thai-edition-cat-original.png (contributor-original) by thai/brand/icons"
 licence = "MIT OR Apache-2.0"
 licence_file = "assets/app-icon/LICENSE.txt"
 kind = "icon"
 usage = "Linux hicolor theme icon (packaging/linux/ai.storyteller.pdfcraft.desktop)"
-sha256 = "7fd1ac555f7f6b13ef3fba2696dfb86900cfcb7f7b669aece38590bf2306cf2e"
+sha256 = "3e7d6dd73e3d5effab4ee1c2ab6075faf536c9473cd1abf301618a591c05436c"
 
 [[asset]]
 path = "assets/app-icon/hicolor/48x48/apps/ai.storyteller.pdfcraft.png"
-title = "PdfCraft app icon, 48 px"
-author = "PdfCraft contributors (drawn by the project owner in ArtCraft)"
-source = "Contributor-original (see assets/app-icon/README.md)"
+title = "PdfCraft Thai edition app icon, 48 px"
+author = "Non.sittith (Thai edition cat; tile rendered by thai/brand/icons)"
+source = "Thai edition: rendered from thai/brand/thai-edition-cat-original.png (contributor-original) by thai/brand/icons"
 licence = "MIT OR Apache-2.0"
 licence_file = "assets/app-icon/LICENSE.txt"
 kind = "icon"
 usage = "Linux hicolor theme icon (packaging/linux/ai.storyteller.pdfcraft.desktop)"
-sha256 = "784ef3bd9f9e479cb2df22a0aee259a441a9c358390e646639c3a0ed79d41288"
+sha256 = "c7f866a280117a0216e4e5a5e2d93b921044e1c55de4f19c65dcb1147c4219b2"
 
 [[asset]]
 path = "assets/app-icon/hicolor/64x64/apps/ai.storyteller.pdfcraft.png"
-title = "PdfCraft app icon, 64 px"
-author = "PdfCraft contributors (drawn by the project owner in ArtCraft)"
-source = "Contributor-original (see assets/app-icon/README.md)"
+title = "PdfCraft Thai edition app icon, 64 px"
+author = "Non.sittith (Thai edition cat; tile rendered by thai/brand/icons)"
+source = "Thai edition: rendered from thai/brand/thai-edition-cat-original.png (contributor-original) by thai/brand/icons"
 licence = "MIT OR Apache-2.0"
 licence_file = "assets/app-icon/LICENSE.txt"
 kind = "icon"
 usage = "Linux hicolor theme icon (packaging/linux/ai.storyteller.pdfcraft.desktop)"
-sha256 = "deb1a9f849549d3f0652fb6d3c30b6eb6ea54498eaea8c1007d901bbafe7067c"
+sha256 = "c9149b7188643e4e02b9fcef3c851e9d2d2ec8699cebbda6149bb4a04d9311c2"
 
 [[asset]]
 path = "assets/app-icon/hicolor/128x128/apps/ai.storyteller.pdfcraft.png"
-title = "PdfCraft app icon, 128 px"
-author = "PdfCraft contributors (drawn by the project owner in ArtCraft)"
-source = "Contributor-original (see assets/app-icon/README.md)"
+title = "PdfCraft Thai edition app icon, 128 px"
+author = "Non.sittith (Thai edition cat; tile rendered by thai/brand/icons)"
+source = "Thai edition: rendered from thai/brand/thai-edition-cat-original.png (contributor-original) by thai/brand/icons"
 licence = "MIT OR Apache-2.0"
 licence_file = "assets/app-icon/LICENSE.txt"
 kind = "icon"
 usage = "Linux hicolor theme icon (packaging/linux/ai.storyteller.pdfcraft.desktop)"
-sha256 = "1933bbeaea290497facd328e917dafcc433d0c0caa9f1e207aa45ac1e430898c"
+sha256 = "62c22745fd0969e43893bc51cf82a1d12dfe9b49d97a7d94301fdf4adf2c3ab1"
 
 [[asset]]
 path = "assets/app-icon/hicolor/256x256/apps/ai.storyteller.pdfcraft.png"
-title = "PdfCraft app icon, 256 px"
-author = "PdfCraft contributors (drawn by the project owner in ArtCraft)"
-source = "Contributor-original (see assets/app-icon/README.md)"
+title = "PdfCraft Thai edition app icon, 256 px"
+author = "Non.sittith (Thai edition cat; tile rendered by thai/brand/icons)"
+source = "Thai edition: rendered from thai/brand/thai-edition-cat-original.png (contributor-original) by thai/brand/icons"
 licence = "MIT OR Apache-2.0"
 licence_file = "assets/app-icon/LICENSE.txt"
 kind = "icon"
 usage = "Linux hicolor theme icon (packaging/linux/ai.storyteller.pdfcraft.desktop); runtime window icon on Windows and Linux (apps/pdfcraft/src/main.rs)"
-sha256 = "47094c09fb77eb35d465eee46445626a4d78c7ef50629cc7d04a602de3e144e9"
+sha256 = "948a3f6a04c015688f2b23a6c7d2f6e01e5a742649a6d2c0011eb4d8f51f7731"
 
 [[asset]]
 path = "assets/app-icon/hicolor/512x512/apps/ai.storyteller.pdfcraft.png"
-title = "PdfCraft app icon, 512 px"
-author = "PdfCraft contributors (drawn by the project owner in ArtCraft)"
-source = "Contributor-original (see assets/app-icon/README.md)"
+title = "PdfCraft Thai edition app icon, 512 px"
+author = "Non.sittith (Thai edition cat; tile rendered by thai/brand/icons)"
+source = "Thai edition: rendered from thai/brand/thai-edition-cat-original.png (contributor-original) by thai/brand/icons"
 licence = "MIT OR Apache-2.0"
 licence_file = "assets/app-icon/LICENSE.txt"
 kind = "icon"
 usage = "Linux hicolor theme icon (packaging/linux/ai.storyteller.pdfcraft.desktop)"
-sha256 = "dea8010a8b41011aba054d3bfb8b790da57bc958c60869f508e1bbd288d3f280"
+sha256 = "871209f7c2dd9fdcd7f733081c4cdede254ca21f8f8f422ec23ea397414e6a38"
 
 [[asset]]
 path = "assets/app-icon/hicolor/scalable/apps/ai.storyteller.pdfcraft.svg"
-title = "PdfCraft app icon (Linux scalable)"
-author = "PdfCraft contributors (drawn by the project owner in ArtCraft)"
-source = "Contributor-original (see assets/app-icon/README.md)"
+title = "PdfCraft Thai edition app icon (Linux scalable)"
+author = "Non.sittith (Thai edition cat; tile rendered by thai/brand/icons)"
+source = "Thai edition: rendered from thai/brand/thai-edition-cat-original.png (contributor-original) by thai/brand/icons"
 licence = "MIT OR Apache-2.0"
 licence_file = "assets/app-icon/LICENSE.txt"
 kind = "icon"
 usage = "Linux hicolor theme icon (packaging/linux/ai.storyteller.pdfcraft.desktop)"
-sha256 = "27745c021830f82c033b0f15f2d8d9f8e099138743297887ff7e2c9e7ed069da"
+sha256 = "0c1b17a290e8867d3c7f1c522abe1e2cf175224ee878f63f04d7e64b2f5e817f"
 
 [[asset]]
 path = "docs/images/pdfcraft-bookmarks.png"
@@ -3283,6 +3013,17 @@ usage = "Scan & OCR: reads the words it finds (cargo xtask models)"
 sha256 = "86c145c2edb96c8caed5b1ebb8f44d706408922211451c309c625157dd6061c5"
 
 [[build_input]]
+name = "craft-i18n"
+option = "CRAFT_I18N_DIR"
+title = "Interface translations: the craft-i18n catalogs (locales/<code>/common.tsv and pdfcraft.tsv) of the 34 languages PdfCraft offers besides English"
+author = "The craft-i18n translators, including every translator of PdfCraft's former in-repo catalogs (crates/ui-egui/src/i18n/*.tsv, migrated at pdfcraft@ecdd1e6)"
+source = "https://github.com/storytold/craft-i18n (pinned by commit in craft-i18n.rev, which CI, releases and the flatpak manifests read)"
+licence = "MIT OR Apache-2.0"
+attribution = "https://github.com/storytold/craft-i18n/blob/main/ATTRIBUTION.md"
+kind = "translation"
+usage = "Interface text in languages other than English, embedded by crates/ui-egui/build.rs and looked up through craft-libs' craft-i18n crate; a build without CRAFT_I18N_DIR is English only. Clean-room translations from PdfCraft's English interface labels"
+
+[[build_input]]
 name = "craft-fonts"
 option = "CRAFT_FONTS_DIR"
 title = "Japanese fonts: BIZ UDPGothic (Regular, Bold), Shippori Mincho, BIZ UDMincho; native Simplified Chinese font: LXGW WenKai Lite; Arabic font: Noto Sans Arabic"
@@ -3314,26 +3055,6 @@ licence_file = "assets/icons/LICENSE-lucide.txt"
 kind = "icon"
 usage = "UI icon, embedded via crates/ui-egui/src/icon_data.rs"
 sha256 = "d1a443233345724859de8e4fb48968ba91e885e12ddbd710701548bd91b39428"
-
-[[asset]]
-path = "crates/ui-egui/src/i18n/vi.tsv"
-title = "Vietnamese interface translation catalog"
-author = "PdfCraft contributors"
-source = "Contributor-original: clean-room translations of PdfCraft's English UI labels; PhotoCraft and VectorCraft Vietnamese catalogs used only as translation memory when English source and semantic context matched; original catalog reviewed by a native Vietnamese-speaking contributor; 2026-10-15 coverage additions are AI-assisted and not separately native-reviewed; 2026-10-18 page-gap labels are contributor-original AI-assisted translations from English, not separately native-reviewed; 2026-10-22 signature-check wordings are contributor-original AI-assisted translations from English, not separately native-reviewed; 2026-10-22 secured-document notice labels are contributor-original AI-assisted translations from English, not separately native-reviewed; the 2026-10-22 reply-count label is an AI-assisted translation from English, not separately native-reviewed"
-licence = "MIT OR Apache-2.0"
-licence_file = "LICENSE-MIT"
-kind = "translation"
-usage = "Vietnamese UI strings, compiled in by crates/ui-egui/src/i18n.rs"
-
-[[asset]]
-path = "crates/ui-egui/src/i18n/sl.tsv"
-title = "Slovene interface translation catalog"
-author = "PdfCraft contributors"
-source = "Contributor-original: clean-room translations of PdfCraft's English UI labels, no proprietary localisation resources; 2026-10-18 page-gap labels are contributor-original AI-assisted translations from English, not separately native-reviewed; 2026-10-22 secured-document notice labels are contributor-original AI-assisted translations from English, not separately native-reviewed; the 2026-10-22 reply-count label is an AI-assisted translation from English, not separately native-reviewed"
-licence = "MIT OR Apache-2.0"
-licence_file = "LICENSE-MIT"
-kind = "translation"
-usage = "Slovene UI strings, compiled in by crates/ui-egui/src/i18n.rs"
 
 [[asset]]
 
@@ -3381,16 +3102,6 @@ usage = "Thai edition release notes. Shows only the PdfCraft UI in Thai and Luci
 sha256 = "87eb03ec0ba0078c89ecc86d4a24f5e48a23ea336ffdba4b5d11dc2317032cdf"
 
 [[asset]]
-path = "crates/ui-egui/src/i18n/nb.tsv"
-title = "Norwegian Bokmål interface translation catalog"
-author = "PdfCraft contributors"
-source = "Contributor-original: clean-room translations of PdfCraft's English UI labels, no proprietary localisation resources; 2026-10-22 page-gap labels are contributor-original AI-assisted translations from English, not separately native-reviewed; 2026-10-22 secured-document notice labels are contributor-original AI-assisted translations from English, not separately native-reviewed; the 2026-10-22 reply-count label is an AI-assisted translation from English, not separately native-reviewed"
-licence = "MIT OR Apache-2.0"
-licence_file = "LICENSE-MIT"
-kind = "translation"
-usage = "Norwegian Bokmål UI strings, compiled in by crates/ui-egui/src/i18n.rs"
-
-[[asset]]
 path = "assets/icons/superscript.svg"
 title = "Lucide icon \"superscript\""
 author = "Lucide Contributors (portions Cole Bemis, Feather)"
@@ -3435,16 +3146,6 @@ usage = "UI icon, embedded via crates/ui-egui/src/icon_data.rs"
 sha256 = "864ab2f19254e6ac7240bc6a98323197332e8f714d4d3f94831f41309e5ef2f7"
 
 [[asset]]
-path = "crates/ui-egui/src/i18n/sq.tsv"
-title = "Albanian interface translation catalog"
-author = "PdfCraft contributors"
-source = "Contributor-original: clean-room translations of PdfCraft's English UI labels, no proprietary localisation resources; 2026-10-22 page-gap labels are contributor-original AI-assisted translations from English, not separately native-reviewed; 2026-10-22 signature-appearance labels are contributor-original AI-assisted translations from English, not separately native-reviewed; 2026-10-22 text-field-table labels are contributor-original AI-assisted translations from English, not separately native-reviewed; 2026-10-22 secured-document notice labels are contributor-original AI-assisted translations from English, not separately native-reviewed; the 2026-10-22 reply-count label is an AI-assisted translation from English, not separately native-reviewed"
-licence = "MIT OR Apache-2.0"
-licence_file = "LICENSE-MIT"
-kind = "translation"
-usage = "Albanian UI strings, compiled in by crates/ui-egui/src/i18n.rs"
-
-[[asset]]
 path = "crates/ui-egui/src/i18n/th.tsv"
 title = "Thai interface translation catalog"
 author = "PdfCraft contributors"
@@ -3452,17 +3153,8 @@ source = "Contributor-original: clean-room translations of PdfCraft's English UI
 licence = "MIT OR Apache-2.0"
 licence_file = "LICENSE-MIT"
 kind = "translation"
-usage = "Thai UI strings, compiled in by crates/ui-egui/src/i18n.rs"
-
-[[asset]]
-path = "crates/ui-egui/src/i18n/ca.tsv"
-title = "Catalan interface translation catalog"
-author = "PdfCraft contributors"
-source = "Contributor-original: clean-room translations of PdfCraft's English UI labels, written from their meaning; no proprietary localisation resources; 2026-10-22 page-gap labels are contributor-original AI-assisted translations from English, not separately native-reviewed; 2026-10-22 text-field-table labels are contributor-original AI-assisted translations from English, not separately native-reviewed; 2026-10-22 secured-document notice labels are contributor-original AI-assisted translations from English, not separately native-reviewed; the 2026-10-22 reply-count label is an AI-assisted translation from English, not separately native-reviewed"
-licence = "MIT OR Apache-2.0"
-licence_file = "LICENSE-MIT"
-kind = "translation"
-usage = "Catalan UI strings, compiled in by crates/ui-egui/src/i18n.rs"
+usage = "The Thai edition's own Thai UI strings, laid over craft-i18n's Thai catalog by crates/ui-egui/build.rs (thai_edition)"
+sha256 = "61a0ea8321b5e71c63532c95044d27541c867a444ae025cdb1bbbdf760422235"
 
 [[asset]]
 path = "thai/fonts/sarabun/Sarabun-Regular.ttf"

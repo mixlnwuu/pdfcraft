@@ -248,6 +248,29 @@ fn same_rect(a: [f64; 4], b: [f64; 4]) -> bool {
     a.into_iter().zip(b).all(|(a, b)| (a - b).abs() < 1e-3)
 }
 
+fn crop_bounds(image: &pdfcraft_engine::PageImage, xf: &PageXform, info: &DocInfo, page: usize) -> Rect {
+    let full = xf.user_rect(info, page, image.rect.map(|v| v as f32));
+    if full.is_positive() { full } else { xf.user_rect(info, page, image.visible_rect.unwrap_or(image.rect).map(|v| v as f32)) }
+}
+
+/// Whether `p` is on the crop box or one of its handles (#5835). The Done, Cancel and Remove
+/// Crop pills are widgets of their own, so they take their clicks before the canvas does.
+pub(crate) fn crop_controls_contain(
+    image: &pdfcraft_engine::PageImage,
+    mode: &CropMode,
+    xf: &PageXform,
+    info: &DocInfo,
+    page: usize,
+    p: Pos2,
+) -> bool {
+    let b = crop_bounds(image, xf, info, page);
+    let k = xf.user_rect(info, page, mode.keep.map(|v| v as f32)).intersect(b);
+    if !b.is_finite() || !b.is_positive() || !b.size().is_finite() || !k.is_finite() || !k.is_positive() {
+        return false;
+    }
+    k.contains(p) || crop_handles(k).iter().any(|h| h.distance(p) < 10.0)
+}
+
 /// Crop mode for the selected image `i` whose visible frame is `b` (screen). Returns `true`
 /// (the pointer and keys are the crop's while it lasts).
 #[allow(clippy::cognitive_complexity)]
@@ -256,8 +279,7 @@ fn crop_input(cx: &ImageCx<'_>, view: &mut DocView, i: usize, image: &pdfcraft_e
     let painter = ui.painter();
     let Some(mode) = view.image_selection.as_mut().and_then(|s| s.crop.as_mut()) else { return false };
     let hover_pos = ptr.pos;
-    let full_b = xf.user_rect(info, page, image.rect.map(|v| v as f32));
-    let b = if full_b.is_positive() { full_b } else { xf.user_rect(info, page, image.visible_rect.unwrap_or(image.rect).map(|v| v as f32)) };
+    let b = crop_bounds(image, xf, info, page);
     let keep_screen = |keep: [f64; 4]| xf.user_rect(info, page, keep.map(|v| v as f32)).intersect(b);
     let k = keep_screen(mode.keep);
     if !b.is_finite() || !b.is_positive() || !b.size().is_finite() || !k.is_finite() || !k.is_positive() {
@@ -574,6 +596,14 @@ pub(crate) fn fills_page(xf: &PageXform, rect: Rect) -> bool {
     shown.is_positive() && shown.area() >= page.area() * 0.9
 }
 
+/// The picture being cropped on `page`: crop mode owns every press there, the controls beside its
+/// frame included, so the paragraphs under it and the empty page's marquee never take a crop
+/// button's press before the picture does. `None` when no picture on `page` is being cropped.
+pub(crate) fn crop_hit(view: &DocView, page: usize) -> Option<Hit> {
+    let selection = view.image_selection.as_ref().filter(|s| s.page == page && s.crop.is_some())?;
+    Some(Hit::new(Owner::Picture { index: selection.index, part: PicturePart::Body }, Layer::Handle, egui::CursorIcon::Default))
+}
+
 /// The picture under `p` (its shape, not only its box): a click selects it, a drag moves the
 /// selected one. On the text layer, asked before the paragraphs: editable text on top of a
 /// picture takes the press. `ocr_layer`: the page has one, so a scan isn't picked ([`fills_page`]).
@@ -869,11 +899,26 @@ pub(crate) fn image_input(cx: &ImageCx<'_>, images: &[pdfcraft_engine::PageImage
                         let is_corner =
                             matches!(handle, ImageHandle::TopLeft | ImageHandle::TopRight | ImageHandle::BottomLeft | ImageHandle::BottomRight);
                         let shift = ui.input(|inp| inp.modifiers.shift);
-                        if is_corner && !shift {
+                        let keep = is_corner && !shift;
+                        let resized = if keep {
                             apply_resize_proportional(drag.initial_rect, handle, delta)
                         } else {
                             apply_resize(drag.initial_rect, handle, delta)
-                        }
+                        };
+                        // Smart guides (Thai edition): the dragged edges snap as a move does.
+                        let (x, y) = match handle {
+                            ImageHandle::TopLeft => (Some(true), Some(true)),
+                            ImageHandle::TopRight => (Some(false), Some(true)),
+                            ImageHandle::BottomLeft => (Some(true), Some(false)),
+                            ImageHandle::BottomRight => (Some(false), Some(false)),
+                            ImageHandle::TopCenter => (None, Some(true)),
+                            ImageHandle::BottomCenter => (None, Some(false)),
+                            ImageHandle::LeftCenter => (Some(true), None),
+                            ImageHandle::RightCenter => (Some(false), None),
+                        };
+                        let snapped = crate::content_ui::snap_resize(ui, xf.rect, drag.initial_rect, resized, x, y, keep);
+                        crate::content_ui::paint_guides(ui.painter(), xf.rect, drag.initial_rect, snapped);
+                        snapped
                     }
                     // Smart guides (Thai edition): the picture's centre snaps to the page's centre lines.
                     DragTarget::Move => {
@@ -939,7 +984,7 @@ pub(crate) fn image_input(cx: &ImageCx<'_>, images: &[pdfcraft_engine::PageImage
                     let dropped = matches!(drag.target, DragTarget::Move)
                         .then(|| {
                             crate::content_ui::picture_dropped(ui, view, added, page, info, preview, p)
-                                .or_else(|| crate::content_ui::page_picture_dropped(ui, view, page, i, info, target, p))
+                                .or_else(|| crate::content_ui::page_picture_dropped(ui, view, xf, page, i, info, target, p))
                         })
                         .flatten();
                     if let Some(edit) = dropped {

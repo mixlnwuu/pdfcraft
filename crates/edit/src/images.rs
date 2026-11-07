@@ -584,6 +584,10 @@ fn sequence_end(ops: &[Op], i: usize, end: usize, opens: &[&str], close: &str) -
     end
 }
 
+/// The stacking units of `ops[scan_start..scan_end]` that Arrange moves past one another, in
+/// paint order: a `q … Q`, `BT … ET` or marked-content sequence up to its matching close (or the
+/// end of the scan), a single `Do`, `sh` or inline image, or a run of other operators that ends
+/// at a path-painting operator or before the next unit. Units that paint nothing are left out.
 pub(crate) fn content_units(ops: &[Op], scan_start: usize, scan_end: usize) -> Vec<std::ops::Range<usize>> {
     let mut units = Vec::new();
     let mut i = scan_start;
@@ -598,9 +602,9 @@ pub(crate) fn content_units(ops: &[Op], scan_start: usize, scan_end: usize) -> V
             sequence_end(ops, i, scan_end, &["q"], "Q")
         } else if op.is("BT") {
             sequence_end(ops, i, scan_end, &[], "ET")
-        } else if op.is("BI") {
-            sequence_end(ops, i, scan_end, &[], "EI")
-        } else if op.is("Do") || op.is("sh") {
+        } else if op.is("BI") || op.is("Do") || op.is("sh") {
+            // The parser emits a whole inline image (`BI` … `ID` … `EI`) as one `BI` op, so it is a
+            // unit of its own (#3146).
             i.saturating_add(1)
         } else {
             let mut j = i;
@@ -1019,6 +1023,45 @@ fn target_destination_unit<'a>(
     dest.map(|u| (u, forward)).ok_or_else(refused)
 }
 
+/// The ops Arrange looks among for `target`'s unit, inside the `q %PdfCraft … Q` that PdfCraft
+/// wraps a page's content in before it adds an item on top (`place::WRAP_OPEN`; Thai edition):
+/// the wrapper only isolates that content's graphics state, so the page's own units are inside
+/// it, and the whole wrapper is no unit to move (nor one that nests the image in marked content).
+/// `data`: the bytes the ops' spans index. At most a few wrappers deep.
+fn inside_own_wrappers(ops: &[Op], data: &[u8], target: usize, mut start: usize, mut end: usize) -> (usize, usize) {
+    for _ in 0..8 {
+        let units = content_units(ops, start, end);
+        let Some(u) = units.iter().find(|u| u.contains(&target)) else { break };
+        let opens =
+            ops.get(u.start).filter(|o| o.is("q")).and_then(|o| data.get(o.span.start..)).is_some_and(|d| d.starts_with(crate::place::WRAP_OPEN));
+        let closes = u.end.checked_sub(1).and_then(|i| ops.get(i)).is_some_and(|o| o.is("Q"));
+        if !opens || !closes || u.end <= u.start.saturating_add(2) {
+            break;
+        }
+        (start, end) = (u.start.saturating_add(1), u.end.saturating_sub(1));
+    }
+    (start, end)
+}
+
+/// Thai edition: Word interleaves `q … Q` with marked content (a `q` opened in one tagged sequence
+/// and closed in a later one), so the first or last unit may not be balanced. Bring to Front / Send
+/// to Back don't need it: the image then goes in a content stream of its own after (`Some(true)`)
+/// or before (`Some(false)`) everything the page draws, where the whole page's state is known.
+/// `None`: next to `dest_unit` as usual.
+fn edge_destination(
+    ops: &[Op],
+    order: ArrangeOrder,
+    dest_unit: &std::ops::Range<usize>,
+    target_unit: &std::ops::Range<usize>,
+    insert_after: bool,
+) -> Option<bool> {
+    (matches!(order, ArrangeOrder::BringToFront | ArrangeOrder::SendToBack)
+        && dest_unit != target_unit
+        && !balanced_arrange_span(ops, dest_unit.clone())
+        && balanced_arrange_span(ops, 0..ops.len()))
+    .then_some(insert_after)
+}
+
 /// A moved unit must not borrow a graphics or marked-content boundary from its neighbours.
 fn balanced_arrange_span(ops: &[Op], range: std::ops::Range<usize>) -> bool {
     let Some(slice) = ops.get(range) else { return false };
@@ -1201,6 +1244,7 @@ fn arrange_image(
 
     let is_wrapped = is_entire_page_wrapped(&ops);
     let (scan_start, scan_end) = if is_wrapped { (1, ops.len().saturating_sub(1)) } else { (0, ops.len()) };
+    let (scan_start, scan_end) = inside_own_wrappers(&ops, pieces.data(), target, scan_start, scan_end);
     let units = content_units(&ops, scan_start, scan_end);
     let Some((target_idx, target_unit)) = units.iter().enumerate().find(|(_, u)| u.contains(&target)) else {
         return Err(EditError::Invalid("the image content unit could not be located".into()));
@@ -1219,7 +1263,8 @@ fn arrange_image(
     }
 
     let (dest_unit, insert_after) = target_destination_unit(&units, target_idx, target_unit, order, has_other_paint)?;
-    if !balanced_arrange_span(&ops, target_unit.clone()) || !balanced_arrange_span(&ops, dest_unit.clone()) {
+    let edge = edge_destination(&ops, order, dest_unit, target_unit, insert_after);
+    if !balanced_arrange_span(&ops, target_unit.clone()) || (edge.is_none() && !balanced_arrange_span(&ops, dest_unit.clone())) {
         return Err(EditError::Invalid("cannot arrange an image across graphics or marked-content boundaries".into()));
     }
 
@@ -1246,7 +1291,10 @@ fn arrange_image(
     let (mut target_span, scope_start, rem_start, rem_end) = determine_arrange_spans(&ops, target, target_unit, has_other_paint, marked_unit)?;
 
     let missing = || EditError::Invalid("the destination content unit could not be located".into());
-    let (dest_pos, scan_target) = if insert_after {
+    let (dest_pos, scan_target) = if let Some(front) = edge {
+        // Not spliced into a stream (see `edge` below): only the state there matters.
+        (0, if front { ops.len() } else { 0 })
+    } else if insert_after {
         (dest_unit.end.checked_sub(1).and_then(|i| ops.get(i)).ok_or_else(missing)?.span.end, dest_unit.end)
     } else {
         (ops.get(dest_unit.start).ok_or_else(missing)?.span.start, dest_unit.start)
@@ -1260,6 +1308,7 @@ fn arrange_image(
         ops.get(dest_unit.start).map(|op| pieces.piece_of(op.span.start))
     };
     let owned_destination = destination_piece
+        .filter(|_| edge.is_none())
         .filter(|piece| all.get(*piece).is_some_and(|(obj, _)| doc.resolve(obj).as_dict().is_some_and(|d| d.get(b"PCAdded").is_some())));
     if let Some(piece) = owned_destination {
         let whole_unit = ops.iter().enumerate().all(|(index, op)| {
@@ -1434,14 +1483,19 @@ fn arrange_image(
         Vec::new()
     };
 
-    if let Some(piece) = owned_destination {
+    if owned_destination.is_some() || edge.is_some() {
         let changed = pieces.splice([(target_span, removal_replacement)]);
         let contents = crate::text::rewritten_contents(doc, all, changed);
         let mut list = match contents {
             Object::Array(list) => list,
             one => vec![one],
         };
-        let insertion = piece.saturating_add(usize::from(insert_after));
+        let insertion = match (edge, owned_destination) {
+            (Some(true), _) => list.len(),
+            (Some(false), _) => 0,
+            (None, Some(piece)) => piece.saturating_add(usize::from(insert_after)),
+            (None, None) => return Err(EditError::Invalid("the destination content stream is missing".into())),
+        };
         if insertion > list.len() {
             return Err(EditError::Invalid("the destination content stream is missing".into()));
         }
@@ -1685,6 +1739,12 @@ pub(crate) fn selectable_images(
         .enumerate()
         .filter(|(_, image)| !all.get(image.stream).and_then(|(o, _)| o.as_ref()).is_some_and(|r| excluded.contains(&r)))
         .collect())
+}
+
+/// Whether an XObject drawn at or after operator `from` of the page's joined operators shows
+/// inside `rect` (user space).
+pub(crate) fn painted_over(doc: &Document, page: usize, rect: [f64; 4], from: usize) -> Result<bool, EditError> {
+    Ok(page_images(doc, page)?.iter().any(|i| i.op >= from && i.visible_rect.and_then(|v| intersection(v, rect)).is_some()))
 }
 
 fn transform_image(

@@ -245,6 +245,7 @@ impl PdfCraftApp {
             "create.clipboard" => self.create_from_clipboard(),
             "optimize.reduce" => self.reduce_file_size(),
             "help.shortcuts" => self.dialog = Some(Dialog::Shortcuts),
+            "help.editing_tips" => self.dialog = Some(Dialog::EditingTips),
             "help.about" => self.dialog = Some(Dialog::About),
             "help.check_updates" => self.check_for_updates(),
             _ => return None,
@@ -295,6 +296,14 @@ impl PdfCraftApp {
             }
             "view.rulers" => self.show_rulers = !self.show_rulers,
             "view.grid" => self.show_grid = !self.show_grid,
+            "view.smart_guides" => self.show_smart_guides = !self.show_smart_guides,
+            "view.snap" => self.snap_to_guides = !self.snap_to_guides,
+            "view.clear_guides" => {
+                if let Some(v) = active.and_then(|i| self.views.get_mut(i)) {
+                    v.ruler_guides.clear();
+                    v.guide_drag = None;
+                }
+            }
             "view.page_gaps" => {
                 if let Some(view) = active.and_then(|i| self.views.get(i)) {
                     self.set_active_page_gaps(!view.show_page_gaps);
@@ -880,6 +889,9 @@ mod tests {
 
     #[test]
     fn localized_shortcut_labels_follow_language_and_platform() {
+        if !crate::i18n::needs_catalogs() {
+            return;
+        }
         let previous = crate::i18n::current();
         let ctx = egui::Context::default();
         for os in [OperatingSystem::Windows, OperatingSystem::Nix] {

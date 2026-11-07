@@ -22,8 +22,10 @@ mod create;
 mod draw;
 mod info;
 mod lookup;
+mod model3d;
 mod modify;
 mod text_font;
+mod threed;
 mod types;
 
 #[cfg(test)]
@@ -37,6 +39,7 @@ use lookup::{annots, page_ref};
 pub use lookup::{
     has_visible_fill_sign, is_fill_sign, isolate_annotation, isolate_annotations, page_refs, picture_rotation, set_annots, signature_image,
 };
+pub use model3d::{Model3d, Model3dKind, model_3d, model_3d_annotations};
 pub(crate) use modify::n;
 pub use modify::{
     Arrange, add_reply, add_text_replacement, arrange_annotation, arranged_comment, arranged_position, copyable_comment, deletable,
@@ -44,6 +47,7 @@ pub use modify::{
     set_locked, set_marked, set_points, set_rect, set_review_state, set_style, set_text_font, with_replies_and_popups,
 };
 pub use text_font::TextFont;
+pub use threed::{Activation as Activation3d, MAX_MODEL_BYTES, ModelFormat, NewModel3d, PosterPicture, add_3d_model, check_model};
 pub use types::{
     AttachIcon, FillMark, LineEnding, Markup, Meta, NOTE_SIZE, NewAnnotation, NoteIcon, OverlayFont, OverlayLook, ReviewState, Rgb, Shape,
     StampGroup, StampKind, Style, StyleChange, TextReplacement, rect_quad,
@@ -73,6 +77,12 @@ pub enum AnnotError {
     /// with a font that has those characters. The message names the character.
     #[error("{0}")]
     Undrawable(String),
+    /// A 3D model file that is neither U3D (starts with `U3D` and a zero byte) nor PRC (starts `PRC`).
+    #[error("not a 3D model: the file must be U3D (ECMA-363) or PRC (ISO 14739-1)")]
+    NotAModel,
+    /// A 3D model larger than `MAX_MODEL_BYTES`.
+    #[error("the 3D model is {size} bytes; the largest accepted is {max}")]
+    ModelTooLarge { size: usize, max: usize },
     #[error("{0}")]
     Cos(#[from] pdfcraft_cos::CosError),
 }

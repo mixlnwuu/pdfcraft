@@ -36,6 +36,21 @@ if ($add) {
 
 $env:CRAFT_FONTS_DIR = $Fonts
 $env:CRAFT_FONTS_REQUIRED = '1'
+
+# The interface translations (craft-i18n, at the commit upstream pins in craft-i18n.rev). The
+# edition's own Thai (crates\ui-egui\src\i18n\th.tsv) is laid over craft-i18n's Thai by
+# crates\ui-egui\build.rs.
+$I18nRef = (Get-Content (Join-Path $Root 'craft-i18n.rev') -Raw).Trim()
+$I18nWork = Join-Path $Root 'target\thai-i18n'
+$I18n = Join-Path $I18nWork "craft-i18n-$I18nRef"
+if (-not (Test-Path (Join-Path $I18n 'locales\th\pdfcraft.tsv'))) {
+    New-Item -ItemType Directory -Force -Path $I18nWork | Out-Null
+    $zip = Join-Path $I18nWork 'craft-i18n.zip'
+    Invoke-WebRequest "https://github.com/storytold/craft-i18n/archive/$I18nRef.zip" -OutFile $zip -UseBasicParsing
+    Expand-Archive $zip $I18nWork -Force
+}
+$env:CRAFT_I18N_DIR = $I18n
+$env:CRAFT_I18N_REQUIRED = '1'
 $env:CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS = '-C target-feature=+crt-static'
 # Fail (rather than warn) if the icon and version information can't be embedded, as releases do.
 $env:PDFCRAFT_REQUIRE_WINRES = '1'

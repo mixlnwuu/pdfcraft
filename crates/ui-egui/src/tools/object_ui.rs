@@ -66,6 +66,15 @@ impl ObjectSelection {
         self.page.filter(|_| !self.selected.is_empty()).map(|p| (p, self.selected.as_slice()))
     }
 
+    /// The next edit pastes `expected` on `page` (Thai edition): select those afterwards, each
+    /// found by its kind and text nearest to where it is expected, as after a restyle.
+    pub(crate) fn select_after_paste(&mut self, page: usize, expected: Vec<EditableObject>) {
+        self.clear();
+        self.page = Some(page);
+        self.pending = Some(expected);
+        self.restyled = true;
+    }
+
     /// The next edit restyles the selection: keep it selected afterwards (Thai edition).
     pub(crate) fn keep_after_restyle(&mut self) {
         self.pending = Some(self.selected.clone());
@@ -249,8 +258,10 @@ fn painter_input(cx: PageToolContext<'_>, view: &mut DocView) -> bool {
     true
 }
 
-/// The text box a Ctrl+drag of `target` (its user-space `rect`) drops `delta` (screen) away: a
-/// paragraph of the page as an added box in its look, or a copy of an added text box.
+/// The copy a Ctrl+drag of `target` (its user-space `rect`) drops `delta` (screen) away, on the
+/// same page: a paragraph of the page as an added box in its look, a copy of an added text box or
+/// picture, or the page's own picture as an added picture (Thai edition). Each copy is a new added
+/// item.
 #[allow(clippy::too_many_arguments)]
 fn dropped_copy(
     xf: &PageXform,
@@ -260,7 +271,7 @@ fn dropped_copy(
     target: ObjectTarget,
     rect: [f64; 4],
     delta: egui::Vec2,
-) -> Option<pdfcraft_engine::AddedText> {
+) -> Option<Edit> {
     let ph = f64::from(info.pages.get(page)?.height);
     let display = |p: Pos2| {
         let (x, y) = xf.screen_to_view(p);
@@ -269,17 +280,28 @@ fn dropped_copy(
     let from = xf.user_rect(info, page, rect.map(|v| v as f32)).left_bottom();
     let (a, b) = (display(from), display(from + delta));
     let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
-    let mut text = match target.kind {
+    if !(dx.is_finite() && dy.is_finite()) {
+        return None;
+    }
+    let shift = |r: [f64; 4]| [r[0] + dx, r[1] + dy, r[2] + dx, r[3] + dy];
+    let text = match target.kind {
         ObjectKind::Text => crate::edit_text_ui::paragraph_as_added(xf, info, page, doc.text_blocks(page).get(target.index)?)?,
         ObjectKind::Added => match &doc.added().iter().filter(|a| a.page == page).nth(target.index)?.content {
             pdfcraft_engine::AddedContent::Text(t) => t.clone(),
-            pdfcraft_engine::AddedContent::Image(_) => return None,
+            content @ pdfcraft_engine::AddedContent::Image(_) => {
+                let content = content.with_rect(shift(content.rect()));
+                return Some(Edit::MoveContentToPage { page, index: target.index, to_page: page, content, copy: true });
+            }
         },
-        _ => return None,
+        ObjectKind::Image => {
+            // The picture's whole box (past any clip), in display space, moved by the drag.
+            let whole = xf.user_rect(info, page, doc.page_images(page).get(target.index)?.rect.map(|v| v as f32));
+            let (p0, p1) = (display(whole.left_bottom()), display(whole.right_top()));
+            let rect = shift([p0[0], p0[1], p1[0], p1[1]]);
+            return Some(Edit::MovePageImageToPage { page, index: target.index, to_page: page, rect, copy: true });
+        }
     };
-    let r = text.rect;
-    text.rect = [r[0] + dx, r[1] + dy, r[2] + dx, r[3] + dy];
-    Some(text)
+    Some(Edit::AddText { page, text: pdfcraft_engine::AddedText { rect: shift(text.rect), ..text } })
 }
 
 fn screen(xf: &PageXform, info: &DocInfo, page: usize, object: &EditableObject) -> Rect {
@@ -363,10 +385,10 @@ fn gesture_input(s: &mut ObjectSelection, cx: PageToolContext<'_>, view: &mut Do
                     }
                 }
             } else if view.pending_edit.is_none()
-                && let Some(text) = dropped_copy(xf, info, page, doc, target, rect, gesture.now - gesture.start)
+                && let Some(edit) = dropped_copy(xf, info, page, doc, target, rect, gesture.now - gesture.start)
             {
                 view.content.select_added = Some((page, doc.added().iter().filter(|a| a.page == page).count()));
-                view.pending_edit = Some(Edit::AddText { page, text });
+                view.pending_edit = Some(edit);
                 s.clear();
             }
             return true;
@@ -552,10 +574,11 @@ fn input(s: &mut ObjectSelection, cx: PageToolContext<'_>, view: &mut DocView) -
             }
         }
         if let Some(object) = hit
-            && matches!(object.target.kind, ObjectKind::Text | ObjectKind::Added)
+            && matches!(object.target.kind, ObjectKind::Text | ObjectKind::Added | ObjectKind::Image)
             && ui.input(|i| i.modifiers.command && !i.modifiers.shift)
         {
-            // Ctrl on text: a click toggles it on release, a drag drops a copy (Thai edition).
+            // Ctrl on text or a picture: a click toggles it on release, a drag drops a copy (Thai
+            // edition).
             s.gesture = Some(Gesture { start: p, now: p, marquee: false, additive: true, copy: Some((object.target, object.rect)) });
         } else if let Some(object) = hit {
             if let Some(index) = s.selected.iter().position(|o| o.target == object.target) {
@@ -737,27 +760,231 @@ pub(crate) fn delete_keys(ctx: &egui::Context, view: &mut DocView) {
     view.pending_edit = delete_edit(page, view.objects.selected.iter().map(|o| o.target).collect());
 }
 
-/// The edit that deletes `targets` (indexes into one inventory of `page`) as one undo step.
-/// Each deletion renumbers only what follows it in its own inventory, so paragraphs and images
-/// go from the last to the first, and added content, which the source inventories leave out,
-/// after them.
-fn delete_edit(page: usize, mut targets: Vec<ObjectTarget>) -> Option<Edit> {
+/// The edits that delete `targets` (indexes into one inventory of `page`), in an order that keeps
+/// every index right. Each deletion renumbers only what follows it in its own inventory, so
+/// paragraphs and images go from the last to the first, and added content, which the source
+/// inventories leave out, after them.
+fn delete_edits(page: usize, mut targets: Vec<ObjectTarget>) -> Vec<Edit> {
     targets.sort_by_key(|t| (t.kind == ObjectKind::Added, std::cmp::Reverse(t.index)));
     targets.dedup();
-    let mut edits: Vec<Edit> = targets
+    targets
         .into_iter()
         .map(|t| match t.kind {
             ObjectKind::Text => Edit::EditTextBlock { page, block: t.index, text: String::new(), style: pdfcraft_engine::BlockStyle::default() },
             ObjectKind::Image => Edit::EditPageImage { page, index: t.index, change: pdfcraft_engine::ImageEdit::Delete },
             ObjectKind::Added => Edit::DeleteContent { page, index: t.index },
         })
-        .collect();
+        .collect()
+}
+
+/// The edit that deletes `targets` as one undo step.
+fn delete_edit(page: usize, targets: Vec<ObjectTarget>) -> Option<Edit> {
+    let mut edits = delete_edits(page, targets);
     if edits.len() > 1 {
         // "Delete content" is an edit label already, so the history reads the same in every language.
         Some(Edit::Batch { label: "Delete content".into(), edits })
     } else {
         edits.pop()
     }
+}
+
+/// Merge text boxes (Thai edition): the text boxes and paragraphs selected together, two or more
+/// and only text, become one added text box where they were: their text in reading order (a
+/// line's pieces left to right, a space between pieces apart, the lines top to bottom), in the
+/// look of the first, over the box they cover. One undo step. The edit, and the page and index
+/// the new box will have among the page's added items, to select it.
+pub(crate) fn merge_edit(view: &DocView, doc: &Document) -> Option<(Edit, usize, usize)> {
+    let (page, objects) = view.objects.selection()?;
+    if objects.len() < 2 {
+        return None;
+    }
+    let xf = view.page_xform(page)?;
+    let info = &doc.info;
+    let added: Vec<&pdfcraft_engine::Added> = doc.added().iter().filter(|a| a.page == page).collect();
+    let blocks = doc.text_blocks(page);
+    let mut pieces: Vec<pdfcraft_engine::AddedText> = Vec::with_capacity(objects.len());
+    for o in objects {
+        let text = match o.target.kind {
+            ObjectKind::Text => crate::edit_text_ui::paragraph_as_added(&xf, info, page, blocks.get(o.target.index)?)?,
+            ObjectKind::Added => match &added.get(o.target.index)?.content {
+                pdfcraft_engine::AddedContent::Text(t) => t.clone(),
+                pdfcraft_engine::AddedContent::Image(_) => return None,
+            },
+            ObjectKind::Image => return None,
+        };
+        if !text.rect.iter().all(|v| v.is_finite()) {
+            return None;
+        }
+        pieces.push(text);
+    }
+    let merged = merged_text(pieces)?;
+    let width = f64::from(info.pages.get(page)?.width);
+    let deleted_added = objects.iter().filter(|o| o.target.kind == ObjectKind::Added).count();
+    let index = added.len().checked_sub(deleted_added)?;
+    let mut edits = delete_edits(page, objects.iter().map(|o| o.target).collect());
+    edits.push(Edit::AddText { page, text: pdfcraft_engine::fitted_text(&merged, width) });
+    Some((Edit::Batch { label: "Merge text boxes".into(), edits }, page, index))
+}
+
+/// Text boxes (display space, y up) as one: lines of the pieces whose middles are level, top to
+/// bottom; in a line, left to right, with a space between pieces set apart. The first piece's
+/// look, the box around them all.
+fn merged_text(mut pieces: Vec<pdfcraft_engine::AddedText>) -> Option<pdfcraft_engine::AddedText> {
+    let mid = |t: &pdfcraft_engine::AddedText| (t.rect[1] + t.rect[3]) / 2.0;
+    pieces.sort_by(|a, b| mid(b).total_cmp(&mid(a)).then(a.rect[0].total_cmp(&b.rect[0])));
+    let mut lines: Vec<Vec<pdfcraft_engine::AddedText>> = Vec::new();
+    for p in pieces {
+        let level = |l: &Vec<pdfcraft_engine::AddedText>| l.first().is_some_and(|f| (mid(f) - mid(&p)).abs() <= f.size.min(p.size).max(1.0) * 0.5);
+        match lines.last_mut() {
+            Some(line) if level(line) => line.push(p),
+            _ => lines.push(vec![p]),
+        }
+    }
+    let mut text = String::new();
+    for (i, line) in lines.iter_mut().enumerate() {
+        line.sort_by(|a, b| a.rect[0].total_cmp(&b.rect[0]));
+        if i > 0 {
+            text.push('\n');
+        }
+        let mut right: Option<f64> = None;
+        for p in line.iter() {
+            if let Some(r) = right
+                && p.rect[0] - r > p.size.max(1.0) * 0.15
+                && !text.ends_with(char::is_whitespace)
+            {
+                text.push(' ');
+            }
+            text.push_str(p.text.trim_end_matches('\n'));
+            right = Some(right.map_or(p.rect[2], |r| r.max(p.rect[2])));
+        }
+    }
+    let all = lines.iter().flatten();
+    let rect = all.fold([f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY], |r, p| {
+        [r[0].min(p.rect[0]), r[1].min(p.rect[1]), r[2].max(p.rect[2]), r[3].max(p.rect[3])]
+    });
+    let first = lines.first()?.first()?.clone();
+    (rect.iter().all(|v| v.is_finite()) && !text.trim().is_empty()).then_some(pdfcraft_engine::AddedText { text, rect, ..first })
+}
+
+/// Split into lines (Thai edition): the one text box or paragraph selected, of two lines or more,
+/// becomes a text box per line, each where its line is, in the same look; one undo step. A
+/// paragraph of the page splits by the rows it shows (a first line set in keeps its place); an
+/// added box by the lines it was typed in. The edit, and the boxes expected afterwards (to select
+/// them).
+pub(crate) fn split_edit(view: &DocView, doc: &Document) -> Option<(Edit, usize, Vec<EditableObject>)> {
+    // The one object selected: among the objects, an added item selected with a click, or the
+    // paragraph whose frame is up (unchanged).
+    let (page, target) = view
+        .objects
+        .single_selected()
+        .or_else(|| {
+            view.content.selected.filter(|_| view.content.draft.is_none()).map(|(p, i)| (p, ObjectTarget { kind: ObjectKind::Added, index: i }))
+        })
+        .or_else(|| {
+            view.line_editor.as_ref().filter(|e| !e.has_changes()).map(|e| (e.page, ObjectTarget { kind: ObjectKind::Text, index: e.block }))
+        })?;
+    let xf = view.page_xform(page)?;
+    let info = &doc.info;
+    let mut boxes: Vec<pdfcraft_engine::AddedText> = Vec::new();
+    match target.kind {
+        ObjectKind::Text => {
+            let block = doc.text_blocks(page).get(target.index)?.clone();
+            let lines = doc.text_lines(page);
+            let texts: Vec<&str> = block.editor_text.split('\n').collect();
+            if block.rows.len() < 2 || texts.len() != block.rows.len() {
+                return None;
+            }
+            for (row, text) in block.rows.iter().zip(texts) {
+                if text.trim().is_empty() {
+                    continue;
+                }
+                let rect = row
+                    .iter()
+                    .filter_map(|i| lines.get(*i))
+                    .map(|l| l.rect)
+                    .reduce(|a, b| [a[0].min(b[0]), a[1].min(b[1]), a[2].max(b[2]), a[3].max(b[3])])?;
+                let one = pdfcraft_engine::TextBlock { rect, editor_text: text.to_string(), text: text.to_string(), ..block.clone() };
+                boxes.push(crate::edit_text_ui::paragraph_as_added(&xf, info, page, &one)?);
+            }
+        }
+        ObjectKind::Added => {
+            let added = doc.added().iter().filter(|a| a.page == page).nth(target.index)?;
+            let pdfcraft_engine::AddedContent::Text(t) = &added.content else { return None };
+            let rows: Vec<&str> = t.text.split('\n').collect();
+            if rows.len() < 2 {
+                return None;
+            }
+            let row_h = (t.rect[3] - t.rect[1]) / rows.len() as f64;
+            for (i, row) in rows.iter().enumerate() {
+                if row.trim().is_empty() {
+                    continue;
+                }
+                let top = t.rect[3] - row_h * i as f64;
+                boxes.push(pdfcraft_engine::AddedText { text: (*row).to_string(), rect: [t.rect[0], top - row_h, t.rect[2], top], ..t.clone() });
+            }
+        }
+        ObjectKind::Image => return None,
+    }
+    if boxes.len() < 2 || boxes.iter().any(|b| !b.rect.iter().all(|v| v.is_finite())) {
+        return None;
+    }
+    let width = f64::from(info.pages.get(page)?.width);
+    let mut edits = delete_edits(page, vec![target]);
+    let mut expected = Vec::with_capacity(boxes.len());
+    for b in boxes {
+        let b = pdfcraft_engine::fitted_text(&b, width);
+        // Display space is user space flipped on an upright page; near enough to find each again.
+        expected.push(EditableObject {
+            target: ObjectTarget { kind: ObjectKind::Added, index: 0 },
+            rect: [b.rect[0], b.rect[1], b.rect[2], b.rect[3]],
+            content_type: "text",
+            text: Some(b.text.clone()),
+        });
+        edits.push(Edit::AddText { page, text: b });
+    }
+    Some((Edit::Batch { label: "Split into lines".into(), edits }, page, expected))
+}
+
+/// Split into lines in the page's right-click menu, for the one text box or paragraph selected
+/// (Thai edition): `true` when it was shown.
+pub(crate) fn split_menu(ui: &mut egui::Ui, view: &mut DocView, doc: &Document, allowed: bool) -> bool {
+    if view.line_editor.as_ref().is_some_and(|e| e.has_changes()) || view.objects.count() > 1 {
+        return false;
+    }
+    let Some((edit, page, expected)) = split_edit(view, doc) else { return false };
+    if ui.add_enabled(allowed, egui::Button::new(tl!("Split into lines"))).clicked() {
+        view.pending_edit = Some(edit);
+        view.line_editor = None;
+        (view.content.selected, view.content.menu) = (None, None);
+        view.objects.select_after_paste(page, expected);
+        ui.close();
+    }
+    ui.separator();
+    true
+}
+
+/// What the page's right-click menu offers for several objects selected together (Thai edition):
+/// Merge text boxes, when they can be merged, and Delete. `true` when something was shown.
+pub(crate) fn selection_menu(ui: &mut egui::Ui, view: &mut DocView, doc: &Document, allowed: bool) -> bool {
+    if view.line_editor.is_some() || view.objects.count() < 2 {
+        return false;
+    }
+    if let Some((edit, page, index)) = merge_edit(view, doc)
+        && ui.add_enabled(allowed, egui::Button::new(tl!("Merge text boxes"))).clicked()
+    {
+        view.pending_edit = Some(edit);
+        view.content.select_added = Some((page, index));
+        ui.close();
+    }
+    let delete = egui::Button::new(tl!("Delete")).shortcut_text(crate::i18n::key_name("Delete"));
+    if ui.add_enabled(allowed, delete).clicked()
+        && let Some(page) = view.objects.page
+    {
+        view.pending_edit = delete_edit(page, view.objects.selected.iter().map(|o| o.target).collect());
+        ui.close();
+    }
+    ui.separator();
+    true
 }
 
 pub(crate) fn paint(painter: &egui::Painter, xf: &PageXform, page: usize, info: &DocInfo, selection: &ObjectSelection) {

@@ -493,3 +493,343 @@ fn screen_contains(h: &Harness<'static, PdfCraftApp>, o: &EditableObject, p: Pos
     );
     r.expand(2.0).contains(p)
 }
+
+/// Thai edition: a paragraph copied with ⌘C and pasted with ⌘V comes out the same box as a
+/// Ctrl+drag copy of it: same size, font, size and look, only moved.
+#[test]
+fn a_pasted_paragraph_keeps_the_size_and_look_of_a_dragged_copy() {
+    let mut h = harness();
+    let p = at(&h, 55.0, 70.0);
+    let added = |h: &Harness<'static, PdfCraftApp>| {
+        let app = h.state();
+        app.session
+            .get(app.views[0].id)
+            .unwrap()
+            .added()
+            .iter()
+            .filter_map(|a| match &a.content {
+                pdfcraft_engine::AddedContent::Text(t) => Some(t.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    let notes = added(&h).len();
+    drag_with(&mut h, p, p + egui::vec2(0.0, 160.0), Modifiers::COMMAND);
+    let dragged = added(&h).last().cloned().expect("the dragged copy");
+    click(&mut h, p, Modifiers::NONE);
+    h.event(egui::Event::Copy);
+    h.run_steps(2);
+    h.event(egui::Event::Paste(dragged.text.clone()));
+    h.run_steps(4);
+    let all = added(&h);
+    assert_eq!(all.len(), notes + 2, "pasted once");
+    let pasted = all.last().unwrap();
+    let size = |r: [f64; 4]| (r[2] - r[0], r[3] - r[1]);
+    let ((w0, h0), (w1, h1)) = (size(dragged.rect), size(pasted.rect));
+    assert!((w0 - w1).abs() < 0.01 && (h0 - h1).abs() < 0.01, "same box: {:?} vs {:?}", dragged.rect, pasted.rect);
+    let look = |t: &pdfcraft_engine::AddedText| pdfcraft_engine::AddedText { rect: [0.0; 4], ..t.clone() };
+    assert_eq!(look(pasted), look(&dragged), "same text, font and look");
+}
+
+/// Thai edition: text boxes selected together (here three on one line and one under them, as
+/// Word's PDFs set a line word by word) merge into one text box where they were, from the
+/// page's right-click menu: their text in reading order, one undo step.
+#[test]
+fn selected_text_boxes_merge_into_one_in_place() {
+    let mut h = harness();
+    let id = h.state().views[0].id;
+    for (text, rect) in [
+        ("aaa", [60.0, 300.0, 90.0, 314.0]),
+        ("bbb", [100.0, 300.0, 130.0, 314.0]),
+        ("ccc", [140.0, 300.0, 170.0, 314.0]),
+        ("ddd", [60.0, 282.0, 90.0, 296.0]),
+    ] {
+        let t = AddedText { text: text.into(), rect, size: 12.0, ..Default::default() };
+        assert!(h.state_mut().apply_edit(Edit::AddText { page: 0, text: t }));
+    }
+    crate::support::settle(&mut h);
+    let before = added_texts(&h).len();
+    // Click the first, Shift+click the others.
+    for (k, (x, y)) in [(75.0, 193.0), (115.0, 193.0), (155.0, 193.0), (75.0, 211.0)].into_iter().enumerate() {
+        let p = at(&h, x, y);
+        click(&mut h, p, if k == 0 { Modifiers::NONE } else { Modifiers::SHIFT });
+    }
+    h.get_by_label("4 objects selected");
+    let p = at(&h, 115.0, 193.0);
+    h.event(egui::Event::PointerButton { pos: p, button: egui::PointerButton::Secondary, pressed: true, modifiers: Modifiers::NONE });
+    h.event(egui::Event::PointerButton { pos: p, button: egui::PointerButton::Secondary, pressed: false, modifiers: Modifiers::NONE });
+    h.run_steps(3);
+    h.get_by_label("Merge text boxes").click();
+    crate::support::settle(&mut h);
+    let after = added_texts(&h);
+    assert_eq!(after.len(), before - 3, "four boxes became one: {after:?}");
+    let (text, rect) = after.iter().find(|(t, _)| t.contains("aaa")).cloned().expect("the merged box");
+    assert_eq!(text, "aaa bbb ccc\nddd");
+    assert!((rect[0] - 60.0).abs() < 0.5 && (rect[3] - 314.0).abs() < 0.5, "where they were: {rect:?}");
+    let doc = h.state().session.get(id).unwrap();
+    assert_eq!(doc.can_undo(), Some("Merge text boxes"), "one step");
+    assert!(h.state_mut().execute("edit.undo"));
+    crate::support::settle(&mut h);
+    assert_eq!(added_texts(&h).len(), before, "undo brings them back");
+}
+
+/// Thai edition: the page's own paragraphs merge too, with added boxes: the paragraphs leave the
+/// page's text and the merged box holds their text in their look.
+#[test]
+fn page_paragraphs_and_added_boxes_merge() {
+    let mut h = harness();
+    let before = objects(&h);
+    let keep = before.iter().find(|o| o.text.as_deref() == Some("Keep here")).expect("the paragraph").rect;
+    let p = at(&h, ((keep[0] + keep[2]) / 2.0) as f32, (500.0 - (keep[1] + keep[3]) / 2.0) as f32);
+    let t = AddedText { text: "More".into(), rect: [keep[2] + 10.0, keep[1], keep[2] + 50.0, keep[3]], size: 12.0, ..Default::default() };
+    assert!(h.state_mut().apply_edit(Edit::AddText { page: 0, text: t }));
+    crate::support::settle(&mut h);
+    click(&mut h, p, Modifiers::NONE);
+    let q = at(&h, (keep[2] + 30.0) as f32, (500.0 - (keep[1] + keep[3]) / 2.0) as f32);
+    click(&mut h, q, Modifiers::SHIFT);
+    h.get_by_label("2 objects selected");
+    h.event(egui::Event::PointerButton { pos: p, button: egui::PointerButton::Secondary, pressed: true, modifiers: Modifiers::NONE });
+    h.event(egui::Event::PointerButton { pos: p, button: egui::PointerButton::Secondary, pressed: false, modifiers: Modifiers::NONE });
+    h.run_steps(3);
+    h.get_by_label("Merge text boxes").click();
+    crate::support::settle(&mut h);
+    assert!(
+        objects(&h).iter().all(|o| o.text.as_deref() != Some("Keep here") || o.target.kind != pdfcraft_engine::ObjectKind::Text),
+        "the paragraph left the page's text"
+    );
+    let merged = added_texts(&h).into_iter().find(|(t, _)| t.contains("Keep here")).expect("merged");
+    assert_eq!(merged.0, "Keep here More");
+    assert!((merged.1[0] - keep[0]).abs() < 1.0, "where it was: {:?} vs {keep:?}", merged.1);
+}
+
+/// Thai edition: several objects selected together are copied with ⌘C and pasted with ⌘V at once:
+/// a paragraph of the page and an added box both come out as text boxes in their look and size,
+/// laid out as they were, a step down and right, in one undo step, and the pasted ones selected.
+#[test]
+fn several_selected_objects_copy_and_paste_together() {
+    let mut h = harness();
+    let id = h.state().views[0].id;
+    let before = objects(&h);
+    let keep = before.iter().find(|o| o.text.as_deref() == Some("Keep here")).expect("the paragraph").rect;
+    let note = added_texts(&h).into_iter().find(|(t, _)| t == "Added note").expect("the note").1;
+    let p = at(&h, ((keep[0] + keep[2]) / 2.0) as f32, (500.0 - (keep[1] + keep[3]) / 2.0) as f32);
+    let q = at(&h, ((note[0] + note[2]) / 2.0) as f32, (500.0 - (note[1] + note[3]) / 2.0) as f32);
+    click(&mut h, p, Modifiers::NONE);
+    click(&mut h, q, Modifiers::SHIFT);
+    h.get_by_label("2 objects selected");
+    let notes = added_texts(&h).len();
+    h.event(egui::Event::Copy);
+    h.run_steps(2);
+    let marker = h.state().multi_clip_marker().expect("both copied");
+    assert_eq!(marker, "Added note\nKeep here", "their text for other apps, top to bottom");
+    h.event(egui::Event::Paste(marker));
+    crate::support::settle(&mut h);
+    let after = added_texts(&h);
+    assert_eq!(after.len(), notes + 2, "both pasted: {after:?}");
+    let size = |r: [f64; 4]| (r[2] - r[0], r[3] - r[1]);
+    let pasted_note = after
+        .iter()
+        .filter(|(t, _)| t == "Added note")
+        .map(|(_, r)| *r)
+        .find(|r| (r[0] - note[0] - 12.0).abs() < 0.01)
+        .expect("the note, a step right");
+    assert!((pasted_note[3] - (note[3] - 12.0)).abs() < 0.01 && (size(pasted_note).0 - size(note).0).abs() < 0.01, "{pasted_note:?} vs {note:?}");
+    let pasted_keep = after.iter().find(|(t, _)| t == "Keep here").map(|(_, r)| *r).expect("the paragraph as a box");
+    assert!((pasted_keep[0] - keep[0] - 12.0).abs() < 1.0, "laid out as it was: {pasted_keep:?} vs {keep:?}");
+    assert_eq!(h.state().session.get(id).unwrap().can_undo(), Some("Paste"), "one step");
+    h.get_by_label("2 objects selected");
+    assert!(h.state_mut().execute("edit.undo"));
+    crate::support::settle(&mut h);
+    assert_eq!(added_texts(&h).len(), notes);
+}
+
+fn right_click(h: &mut Harness<'static, PdfCraftApp>, p: Pos2) {
+    h.event(egui::Event::PointerButton { pos: p, button: egui::PointerButton::Secondary, pressed: true, modifiers: Modifiers::NONE });
+    h.event(egui::Event::PointerButton { pos: p, button: egui::PointerButton::Secondary, pressed: false, modifiers: Modifiers::NONE });
+    h.run_steps(3);
+}
+
+/// Two added boxes, selected together, for the menu tests: where each one's middle is on screen.
+fn two_boxes_selected(h: &mut Harness<'static, PdfCraftApp>) -> (Pos2, Pos2) {
+    for (text, rect) in [("one", [60.0, 300.0, 90.0, 314.0]), ("two", [100.0, 300.0, 130.0, 314.0])] {
+        let t = AddedText { text: text.into(), rect, size: 12.0, ..Default::default() };
+        assert!(h.state_mut().apply_edit(Edit::AddText { page: 0, text: t }));
+    }
+    crate::support::settle(h);
+    let (a, b) = (at(h, 75.0, 193.0), at(h, 115.0, 193.0));
+    click(h, a, Modifiers::NONE);
+    click(h, b, Modifiers::SHIFT);
+    h.get_by_label("2 objects selected");
+    (a, b)
+}
+
+/// Thai edition: several objects selected together are deleted from the page's right-click menu
+/// too, in one step.
+#[test]
+fn the_right_click_menu_deletes_a_selection() {
+    let mut h = harness();
+    let id = h.state().views[0].id;
+    let before = added_texts(&h).len();
+    let (a, _) = two_boxes_selected(&mut h);
+    right_click(&mut h, a);
+    h.get_by_label("Delete Delete").click();
+    crate::support::settle(&mut h);
+    let after = added_texts(&h);
+    assert_eq!(after.len(), before, "both gone: {after:?}");
+    assert_eq!(h.state().session.get(id).unwrap().can_undo(), Some("Delete content"));
+}
+
+/// Thai edition: Copy and Paste in the page's right-click menu copy and paste several selected
+/// objects together, as Ctrl+C and Ctrl+V do.
+#[test]
+fn the_right_click_menu_copies_and_pastes_a_selection() {
+    let mut h = harness();
+    h.state_mut().system_clipboard = false;
+    let before = added_texts(&h).len();
+    let (a, _) = two_boxes_selected(&mut h);
+    right_click(&mut h, a);
+    h.get_by_label("Copy Ctrl+C").click();
+    h.run_steps(3);
+    assert!(h.state().multi_clip_marker().is_some(), "both copied");
+    let empty = at(&h, 300.0, 250.0);
+    right_click(&mut h, empty);
+    h.get_by_label("Paste Ctrl+V").click();
+    crate::support::settle(&mut h);
+    let after = added_texts(&h);
+    assert_eq!(after.len(), before + 4, "both pasted: {after:?}");
+    assert!(after.iter().any(|(t, r)| t == "one" && (r[0] - 72.0).abs() < 0.01), "a step right of where it was: {after:?}");
+}
+
+/// Thai edition: Edit text & images is a row of the Edit PDF panel again, for whoever doesn't use
+/// Ctrl+E or the floating toolbar.
+#[test]
+fn edit_text_and_images_is_a_row_of_the_edit_panel() {
+    let mut h = harness();
+    h.state_mut().quick_tool = pdfcraft_ui_egui::QuickTool::Select;
+    h.run_steps(3);
+    h.get_by_label("Edit text & images").click();
+    h.run_steps(3);
+    assert_eq!(h.state().quick_tool, pdfcraft_ui_egui::QuickTool::EditText);
+}
+
+/// Thai edition: an added text box of three lines splits into a box per line from the page's
+/// right-click menu, each where its line was, in one undo step.
+#[test]
+fn an_added_box_splits_into_its_lines() {
+    let mut h = harness();
+    let id = h.state().views[0].id;
+    let t = AddedText { text: "one\ntwo\nthree".into(), rect: [60.0, 260.0, 140.0, 314.0], size: 12.0, ..Default::default() };
+    assert!(h.state_mut().apply_edit(Edit::AddText { page: 0, text: t }));
+    crate::support::settle(&mut h);
+    let before = added_texts(&h).len();
+    let r = added_texts(&h).into_iter().find(|(t, _)| t.starts_with("one")).unwrap().1;
+    let p = at(&h, 80.0, (500.0 - r[3] + 6.0) as f32);
+    click(&mut h, p, Modifiers::NONE);
+    right_click(&mut h, p);
+    h.get_by_label("Split into lines").click();
+    crate::support::settle(&mut h);
+    let after = added_texts(&h);
+    assert_eq!(after.len(), before + 2, "{after:?}");
+    let tops: Vec<f64> = ["one", "two", "three"].iter().map(|w| after.iter().find(|(t, _)| t == w).expect(w).1[3]).collect();
+    assert!(tops[0] > tops[1] && tops[1] > tops[2], "top to bottom where they were: {tops:?}");
+    assert!((tops[0] - r[3]).abs() < 0.5, "the first line keeps its top");
+    assert_eq!(h.state().session.get(id).unwrap().can_undo(), Some("Split into lines"));
+}
+
+/// Thai edition: a paragraph of the page splits by the rows it shows, each row's box where the
+/// row is.
+#[test]
+fn a_page_paragraph_splits_by_its_rows() {
+    let content = "BT /F1 12 Tf 14 TL 80 300 Td (Row one here) Tj T* (Row two here) Tj T* (Row three here) Tj ET";
+    let stream = format!("<< /Length {} >>\nstream\n{content}\nendstream", content.len());
+    let objects = [
+        "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".into(),
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 400 500] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>".into(),
+        stream,
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".into(),
+    ];
+    let mut pdf = b"%PDF-1.7\n".to_vec();
+    let mut offsets = Vec::new();
+    for (i, o) in objects.iter().enumerate() {
+        offsets.push(pdf.len());
+        pdf.extend_from_slice(format!("{} 0 obj\n{o}\nendobj\n", i + 1).as_bytes());
+    }
+    let xref = pdf.len();
+    pdf.extend_from_slice(format!("xref\n0 {}\n0000000000 65535 f \n", objects.len() + 1).as_bytes());
+    for o in offsets {
+        pdf.extend_from_slice(format!("{o:010} 00000 n \n").as_bytes());
+    }
+    pdf.extend_from_slice(format!("trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n", objects.len() + 1).as_bytes());
+    let mut h = Harness::builder().with_size(egui::vec2(1400.0, 900.0)).build_eframe(move |_cc| {
+        let mut app = PdfCraftApp::new();
+        app.set_option("language", "en").unwrap();
+        app.open_bytes("rows.pdf", None, pdf.clone()).unwrap();
+        app.set_option("zoom", "100").unwrap();
+        assert!(app.execute("edit.edit_text"));
+        app
+    });
+    crate::support::settle(&mut h);
+    let block = objects_of(&h).into_iter().find(|o| o.text.as_deref().is_some_and(|t| t.contains("Row one"))).expect("one paragraph");
+    let p = at(&h, 120.0, 500.0 - 304.0);
+    click(&mut h, p, Modifiers::NONE);
+    right_click(&mut h, p);
+    h.get_by_label("Split into lines").click();
+    crate::support::settle(&mut h);
+    let after = added_texts(&h);
+    assert_eq!(after.len(), 3, "a box per row: {after:?}");
+    let tops: Vec<f64> =
+        ["Row one here", "Row two here", "Row three here"].iter().map(|w| after.iter().find(|(t, _)| t == w).expect(w).1[3]).collect();
+    assert!(tops[0] > tops[1] && tops[1] > tops[2], "each where its row was: {tops:?}");
+    assert!(after.iter().all(|(_, r)| (r[0] - 80.0).abs() < 1.0), "at the paragraph's left: {after:?}");
+    assert!(objects_of(&h).iter().all(|o| o.target.kind != pdfcraft_engine::ObjectKind::Text), "the paragraph left the page's text: {block:?}");
+}
+
+fn objects_of(h: &Harness<'static, PdfCraftApp>) -> Vec<EditableObject> {
+    objects(h)
+}
+
+/// Thai edition: a paragraph set in a Windows Thai font whose PDF maps a tone mark to the font's
+/// private-use variant ("ได้" as "ได" + U+F70B) splits into lines too: the new boxes hold the
+/// Thai it is, which their font can draw. It failed with "the standard fonts can't draw U+F70B".
+#[test]
+fn a_paragraph_with_thai_presentation_forms_splits() {
+    let content = "BT /F1 12 Tf 14 TL 80 300 Td (ab) Tj T* (ab) Tj ET";
+    let cmap = "/CIDInit /ProcSet findresource begin 12 dict begin begincmap /CMapName /T def 1 begincodespacerange <00> <FF> endcodespacerange 2 beginbfchar <61> <0E14> <62> <F70B> endbfchar endcmap CMapName currentdict /CMap defineresource pop end end";
+    let objects = [
+        "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".into(),
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 400 500] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>".into(),
+        format!("<< /Length {} >>\nstream\n{content}\nendstream", content.len()),
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /ToUnicode 6 0 R >>".into(),
+        format!("<< /Length {} >>\nstream\n{cmap}\nendstream", cmap.len()),
+    ];
+    let mut pdf = b"%PDF-1.7\n".to_vec();
+    let mut offsets = Vec::new();
+    for (i, o) in objects.iter().enumerate() {
+        offsets.push(pdf.len());
+        pdf.extend_from_slice(format!("{} 0 obj\n{o}\nendobj\n", i + 1).as_bytes());
+    }
+    let xref = pdf.len();
+    pdf.extend_from_slice(format!("xref\n0 {}\n0000000000 65535 f \n", objects.len() + 1).as_bytes());
+    for o in offsets {
+        pdf.extend_from_slice(format!("{o:010} 00000 n \n").as_bytes());
+    }
+    pdf.extend_from_slice(format!("trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n", objects.len() + 1).as_bytes());
+    let mut h = Harness::builder().with_size(egui::vec2(1400.0, 900.0)).build_eframe(move |_cc| {
+        let mut app = PdfCraftApp::new();
+        app.set_option("language", "en").unwrap();
+        app.open_bytes("pua.pdf", None, pdf.clone()).unwrap();
+        app.set_option("zoom", "100").unwrap();
+        assert!(app.execute("edit.edit_text"));
+        app
+    });
+    crate::support::settle(&mut h);
+    let p = at(&h, 85.0, 500.0 - 304.0);
+    click(&mut h, p, Modifiers::NONE);
+    right_click(&mut h, p);
+    h.get_by_label("Split into lines").click();
+    crate::support::settle(&mut h);
+    let after = added_texts(&h);
+    assert_eq!(after.iter().map(|(t, _)| t.as_str()).collect::<Vec<_>>(), ["\u{0E14}\u{0E49}", "\u{0E14}\u{0E49}"], "the Thai tone mark, not U+F70B");
+}

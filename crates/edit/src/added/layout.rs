@@ -352,6 +352,22 @@ pub fn rotated_twin(t: &AddedText) -> AddedText {
     AddedText { rect: [0.0, -t.size, length, 0.0], direction: TextDirection::Horizontal, ..t.clone() }
 }
 
+/// How much wider than its text (points) a box may be and still count as hugging it.
+const HUG_SLACK: f64 = 3.0;
+
+/// Whether `t`'s box hugs its text (Thai edition): horizontal, not wrapped, and no wider than
+/// [`fitted_text`] would make it. Such a box follows its text as it is typed or restyled; a box
+/// made wider (or narrower) by hand keeps its width, and its text is aligned inside it.
+pub fn hugs_text(t: &AddedText, page_width: f64) -> bool {
+    if t.direction != TextDirection::Horizontal || text_is_wrapped(t) {
+        return false;
+    }
+    let own = norm(t.rect);
+    let fit = norm(fitted_text(t, page_width).rect);
+    let (w, fw) = (own[2] - own[0], fit[2] - fit[0]);
+    w.is_finite() && fw.is_finite() && w <= fw + HUG_SLACK
+}
+
 /// Whether `t`'s box is narrow enough to wrap one of its paragraphs.
 pub fn text_is_wrapped(t: &AddedText) -> bool {
     match t.direction {

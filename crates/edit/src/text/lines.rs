@@ -207,8 +207,9 @@ pub fn lift_paragraph(doc: &mut Document, page: usize, block: usize) -> Result<V
         keep.insert(*i, Op::new("TJ", vec![Object::Array(vec![n(shift)])]));
         layer.push(Op::new("q", vec![]));
         layer.push(Op::new("cm", placed.ctm.iter().map(|v| n(*v)).collect()));
-        for name in &state.ext_gstate {
-            layer.push(Op::new("gs", vec![Object::Name(name.clone())]));
+        // Each ExtGState from where it was selected, so a soft mask stays where it was.
+        for sel in &state.ext_gstate {
+            sel.push_ops(&mut layer, placed.ctm);
         }
         layer.extend(state.stroke.iter().cloned());
         if let Some(w) = state.line_width {
@@ -347,7 +348,13 @@ fn text_lines_in(doc: &Document, p: &pdfcraft_model::Page, actual_text: bool) ->
             if spaced {
                 l.text.push(' ');
             }
+            // Blanks set back over the line drawn so far are no space in its text (Thai edition).
+            if last.is_some_and(|(_, pen)| pen.set_back(&s)) {
+                s.text = s.text.trim_start().to_string();
+            }
+            let from = l.text.len();
             l.text.push_str(&s.text);
+            join_sara_am(&mut l.text, from);
             l.rect = [l.rect[0].min(s.rect[0]), l.rect[1].min(s.rect[1]), l.rect[2].max(s.rect[2]), l.rect[3].max(s.rect[3])];
             l.frame = union(l.frame, s.frame);
             l.ink.extend(s.ink.iter().copied());
@@ -445,7 +452,7 @@ fn compatible_word(line: &TextLine, shown: &Shown) -> bool {
 
 /// The line `s` continues, or a new one: `last` is the previous run of the same stream
 /// (`bt`, baseline, end x, size).
-fn add_shown(lines: &mut Vec<TextLine>, last: &mut Option<Pen>, s: Shown, stream: usize) {
+fn add_shown(lines: &mut Vec<TextLine>, last: &mut Option<Pen>, mut s: Shown, stream: usize) {
     let joins = last.is_some_and(|pen| {
         let bt = pen.bt;
         lines.last().is_some_and(|l| l.scope == s.scope && l.paint == s.paint && l.logical_order == s.logical_order)
@@ -467,7 +474,13 @@ fn add_shown(lines: &mut Vec<TextLine>, last: &mut Option<Pen>, s: Shown, stream
         if spaced {
             l.text.push(' ');
         }
+        // Blanks set back over the line drawn so far are no space in its text (Thai edition).
+        if last.is_some_and(|pen| pen.set_back(&s)) {
+            s.text = s.text.trim_start().to_string();
+        }
+        let from = l.text.len();
         l.text.push_str(&s.text);
+        join_sara_am(&mut l.text, from);
         l.rect = [l.rect[0].min(s.rect[0]), l.rect[1].min(s.rect[1]), l.rect[2].max(s.rect[2]), l.rect[3].max(s.rect[3])];
         l.frame = union(l.frame, s.frame);
         l.ink.extend(s.ink.iter().copied());
@@ -730,4 +743,44 @@ pub(super) fn reading_lines(doc: &Document, page: usize) -> Result<(Vec<TextLine
     }
     lines.retain(|l| !l.text.trim().is_empty());
     Ok((lines, w.budget.truncated))
+}
+
+/// Thai edition: Nikhahit then Sara Aa is Sara Am (ำ), as Word draws it (see `pdfcraft_fonts`'
+/// `repair_word_sara_am`), even when the two glyphs come in separate runs. Only the text from
+/// byte `from` on (and the character before it) is looked at, so calling it after each append
+/// stays linear.
+pub(super) fn join_sara_am(text: &mut String, from: usize) {
+    const SPLIT: &str = "\u{0E4D}\u{0E32}";
+    let mut start = from.min(text.len()).saturating_sub(SPLIT.len() / 2);
+    while start > 0 && !text.is_char_boundary(start) {
+        start -= 1;
+    }
+    let Some(tail) = text.get(start..) else { return };
+    if tail.contains(SPLIT) {
+        let joined = tail.replace(SPLIT, "\u{0E33}");
+        text.truncate(start);
+        text.push_str(&joined);
+    }
+}
+
+#[cfg(test)]
+mod sara_am_tests {
+    #[test]
+    fn nikhahit_and_sara_aa_read_as_sara_am_across_runs() {
+        let mut t = String::from("\u{0E08}\u{0E4D}");
+        let from = t.len();
+        t.push_str("\u{0E32}\u{0E01}\u{0E31}\u{0E14}");
+        super::join_sara_am(&mut t, from);
+        assert_eq!(t, "จำกัด");
+        let mut t = String::from("กา");
+        super::join_sara_am(&mut t, 0);
+        assert_eq!(t, "กา", "a lone Sara Aa stays");
+        // A start past the end (nothing appended) or inside a character is safe.
+        let mut t = String::from("\u{0E4D}\u{0E32}");
+        super::join_sara_am(&mut t, 99);
+        assert_eq!(t, "\u{0E4D}\u{0E32}", "only text from `from` on is joined");
+        let mut t = String::from("ก\u{0E4D}\u{0E32}");
+        super::join_sara_am(&mut t, 4);
+        assert_eq!(t, "ก\u{0E33}");
+    }
 }

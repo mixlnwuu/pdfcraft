@@ -39,6 +39,16 @@ list (author, source, license) is in ATTRIBUTION.md.
   GPL). See thai/fonts/th-sarabun-psk/LICENSE.txt, packaged in FONT-LICENSES.txt (and, in the
   portable zip, LICENSE-th-sarabun-psk.txt) beside the Windows executables. The font files are
   available unmodified in this repository at thai/fonts/th-sarabun-psk/.
+- prc-rs (https://github.com/ralovich/prc-rs): the PRC 3D reader's `Double` code table and a few
+  reading choices (crates/prc; Thai edition notes it here, as the table ships in the executables).
+  MIT licence, also in licenses/prc-rs-LICENSE.txt:
+    Copyright (c) 2025,2026 Kristof Ralovich
+
+    Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the “Software”), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 - hayro (rendering, via crates.io) — Apache-2.0 OR MIT. Its `embed-fonts` feature bundles the Foxit
   standard-14 Type 1 fonts under BSD-3-Clause ("Copyright 2014 PDFium Authors"), and hayro-cmap bundles
   Adobe CMap resources under BSD-3-Clause.

@@ -795,3 +795,76 @@ fn low_codes_resolve_to_the_covering_range() {
     assert_eq!(covered, [5, 6, 7, 100, 101]);
     assert_eq!((u.covering(0xFFFF).is_some(), u.covering(0x1_0001).is_some(), u.covering(0x1_0002).is_none()), (true, true, true));
 }
+
+/// Thai edition: Word's export of AngsanaUPC labels the Sara Aa glyph ำ and the Nikhahit glyph (no
+/// width) a space, with no า anywhere. Read back, า is า, the two glyphs of ำ are ํ then า, and
+/// writing ำ uses them again, so the font is kept.
+#[test]
+fn words_mislabelled_sara_am_reads_and_writes_as_thai() {
+    let mut doc = Document::new_empty();
+    // CID 0x9C ก (380), 0xB5 the Sara Aa glyph labelled ำ (285), 0xCE the Nikhahit labelled a
+    // space (no width), 0x03 a real space (165).
+    let w = vec![
+        Object::Int(3),
+        Object::Array(vec![Object::Int(165)]),
+        Object::Int(0x9C),
+        Object::Array(vec![Object::Int(380)]),
+        Object::Int(0xB5),
+        Object::Array(vec![Object::Int(285)]),
+        Object::Int(0xCE),
+        Object::Array(vec![Object::Int(0)]),
+    ];
+    let tu = "begincmap\n4 beginbfchar\n<0003> <0020>\n<009C> <0E01>\n<00B5> <0E33>\n<00CE> <0020>\nendbfchar\nendcmap";
+    let f = composite(&mut doc, "", w, tu);
+    let m = Metrics::from_dict(&doc, &f);
+    // กา, then กำ (ก, Nikhahit, Sara Aa), then a real space.
+    assert_eq!(m.decode(&[0, 0x9C, 0, 0xB5]), "\u{0E01}\u{0E32}", "Sara Aa is า");
+    assert_eq!(m.decode(&[0, 0x9C, 0, 0xCE, 0, 0xB5]), "\u{0E01}\u{0E4D}\u{0E32}", "the two glyphs of ำ");
+    assert_eq!(m.decode(&[0, 3]), " ", "a space with a width stays a space");
+    assert_eq!(m.encode("\u{0E01}\u{0E33}"), Some(vec![0, 0x9C, 0, 0xCE, 0, 0xB5]), "ำ is written as Word drew it");
+    assert_eq!(m.encode("\u{0E01}\u{0E32}"), Some(vec![0, 0x9C, 0, 0xB5]));
+}
+
+/// A Thai font that labels its glyphs right is left as it is.
+#[test]
+fn a_thai_font_with_sara_aa_keeps_its_sara_am() {
+    let mut doc = Document::new_empty();
+    let w = vec![Object::Int(0x9C), Object::Array(vec![Object::Int(380), Object::Int(285), Object::Int(300), Object::Int(0)])];
+    let tu = "begincmap\n4 beginbfchar\n<009C> <0E01>\n<009D> <0E32>\n<009E> <0E33>\n<009F> <0020>\nendbfchar\nendcmap";
+    let f = composite(&mut doc, "", w, tu);
+    let m = Metrics::from_dict(&doc, &f);
+    assert_eq!(m.decode(&[0, 0x9C, 0, 0x9E]), "\u{0E01}\u{0E33}");
+    assert_eq!(m.decode(&[0, 0x9F]), " ");
+}
+
+/// Thai edition: a Word font that draws a tone mark in a raised and a lowered form (both labelled
+/// as the plain mark) writes the lowered one onto a consonant with no vowel above and the raised
+/// one over a vowel or before Sara Am, as Word did; a mark over ป takes the form furthest left.
+#[test]
+fn thai_tone_marks_take_the_form_that_fits() {
+    let mut m = Metrics::fallback();
+    // Code 1: the raised form; code 2: the lowered one; code 3: raised and shifted left.
+    m.thai_marks.insert('\u{0E49}', vec![(1, [-200, 560, -40, 700]), (2, [-200, 380, -40, 520]), (3, [-320, 560, -160, 700])]);
+    let chars = |s: &str| s.chars().collect::<Vec<_>>();
+    assert_eq!(m.thai_mark_code(&chars("\u{0E02}\u{0E49}\u{0E32}"), 1), Some(2), "ข้า");
+    assert_eq!(m.thai_mark_code(&chars("\u{0E19}\u{0E34}\u{0E49}"), 2), Some(1), "นิ้");
+    assert_eq!(m.thai_mark_code(&chars("\u{0E19}\u{0E49}\u{0E33}"), 1), Some(1), "น้ำ");
+    assert_eq!(m.thai_mark_code(&chars("\u{0E1B}\u{0E35}\u{0E49}"), 2), Some(3), "over ป: left");
+    assert_eq!(m.thai_mark_code(&chars("\u{0E02}\u{0E48}"), 1), None, "one form only");
+}
+
+/// Thai edition: writing text again picks each tone mark's form by where it sits, through
+/// `encode`, not only the lowest code labelled with the mark.
+#[test]
+fn thai_text_is_written_with_the_fitting_tone_mark_forms() {
+    let mut doc = Document::new_empty();
+    let w = vec![Object::Int(16), Object::Array((0..5).map(|_| Object::Int(500)).collect())];
+    let tu = "/CIDInit /ProcSet findresource begin 12 dict begin begincmap\n1 begincodespacerange <0000> <FFFF> endcodespacerange\n\
+              5 beginbfchar\n<0010> <0E02>\n<0011> <0E49>\n<0012> <0E49>\n<0013> <0E32>\n<0014> <0E34>\nendbfchar\nendcmap end end";
+    let f = composite(&mut doc, "", w, tu);
+    let mut m = Metrics::from_dict(&doc, &f);
+    // As the embedded program would say: code 0x11 raised, 0x12 lowered.
+    m.thai_marks.insert('\u{0E49}', vec![(0x11, [-200, 560, -40, 700]), (0x12, [-200, 380, -40, 520])]);
+    assert_eq!(m.encode("\u{0E02}\u{0E49}\u{0E32}"), Some(vec![0, 0x10, 0, 0x12, 0, 0x13]), "ข้า: lowered");
+    assert_eq!(m.encode("\u{0E02}\u{0E34}\u{0E49}"), Some(vec![0, 0x10, 0, 0x14, 0, 0x11]), "ขิ้: raised");
+}

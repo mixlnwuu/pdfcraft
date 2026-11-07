@@ -3,6 +3,8 @@
 //! (images keep their proportions), double-click text to retype it, format it from the panel,
 //! Delete to remove it. Each change is one undoable engine edit.
 
+#[cfg(not(target_arch = "wasm32"))]
+use crate::file_filter::AddFilterAnyCase as _;
 use crate::widgets::Tip as _;
 use egui::{Color32, CornerRadius, Pos2, Rect, Stroke};
 use pdfcraft_engine::{Added, AddedContent, AddedText, Arrange, Edit, FontFamily, TextAlign};
@@ -283,8 +285,12 @@ impl MoveBackground {
         let r = screen_rect(xf, info, page, from);
         let to = if let Some((_, grab, start)) = cv.grab {
             let Some(p) = pointer else { return };
-            let d = if grab == Grab::Move { snap_to_centre(ui, xf.rect, r, p - start) } else { p - start };
-            dragged(r, grab, d, self.picture)
+            match grab {
+                Grab::Move => dragged(r, grab, snap_to_centre(ui, xf.rect, r, p - start), self.picture),
+                Grab::Corner(left, top) => {
+                    snap_resize(ui, xf.rect, r, dragged(r, grab, p - start, self.picture), Some(left), Some(top), self.picture)
+                }
+            }
         } else if let Some(to) = self.settling {
             let to = screen_rect(xf, info, page, to);
             // A moved text box keeps its top edge (its height follows its lines).
@@ -351,6 +357,40 @@ const SNAP: f32 = 6.0;
 /// Smart guides' colour, as in Photoshop.
 const GUIDE: Color32 = Color32::from_rgb(0xFF, 0x2E, 0xC8);
 
+/// The page's centre lines' colour: the green they had before the smart guides, so they stand
+/// apart from the lines to other boxes (Thai edition, the owner's choice).
+pub(crate) const CENTRE_GUIDE: Color32 = Color32::from_rgb(0x2E, 0xB8, 0x5C);
+
+/// Once a box has snapped to a guide it stays on it until the pointer pulls this far (screen
+/// points) away, so it feels held, as Photoshop's guides do (Thai edition).
+const RELEASE: f32 = 14.0;
+
+/// How long (seconds) without a snapped move before a hold is forgotten: the next drag starts free.
+const HOLD_FORGET: f64 = 0.4;
+
+/// Whether smart guides show and boxes snap to them (View ▸ Smart Guides, Snap to Guides; Thai
+/// edition), for this frame.
+pub(crate) fn set_guide_options(ctx: &egui::Context, show: bool, snap: bool) {
+    ctx.data_mut(|d| d.insert_temp(egui::Id::unique("guide-options"), (show, snap)));
+}
+
+/// Whether things snap this frame: Snap to Guides is on and Alt is not held (Thai edition).
+pub(crate) fn snapping(ui: &egui::Ui) -> bool {
+    guide_options(ui.ctx()).1 && !ui.input(|i| i.modifiers.alt)
+}
+
+fn guide_options(ctx: &egui::Context) -> (bool, bool) {
+    ctx.data(|d| d.get_temp::<(bool, bool)>(egui::Id::unique("guide-options"))).unwrap_or((true, true))
+}
+
+/// The guide a moving box holds on to along each axis: the guide's position, and which of the
+/// box's lines (left/centre/right or top/middle/bottom) sits on it.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct Hold {
+    pub x: Option<(f32, usize)>,
+    pub y: Option<(f32, usize)>,
+}
+
 /// What else is on `page` (screen boxes) for smart guides to line a moved box up with, kept for
 /// this frame (Thai edition).
 pub(crate) fn set_snap_targets(ctx: &egui::Context, page: Rect, boxes: Vec<Rect>) {
@@ -361,6 +401,42 @@ pub(crate) fn set_snap_targets(ctx: &egui::Context, page: Rect, boxes: Vec<Rect>
 /// (Thai edition).
 pub(crate) fn set_snap_grid(ctx: &egui::Context, page: Rect, step: Option<f32>) {
     ctx.data_mut(|d| d.insert_temp(grid_id(page), step));
+}
+
+/// The ruler guides over `page` (screen x of the upright ones, y of the level ones), for boxes to
+/// snap to as well (Thai edition).
+pub(crate) fn set_snap_lines(ctx: &egui::Context, page: Rect, xs: Vec<f32>, ys: Vec<f32>) {
+    ctx.data_mut(|d| d.insert_temp(lines_id(page), std::sync::Arc::new((xs, ys))));
+}
+
+fn lines_id(page: Rect) -> egui::Id {
+    egui::Id::unique(("snap-lines", page.min.x.to_bits(), page.min.y.to_bits()))
+}
+
+/// The ruler guides set for `page` this frame.
+fn snap_lines(ctx: &egui::Context, page: Rect) -> std::sync::Arc<(Vec<f32>, Vec<f32>)> {
+    ctx.data(|d| d.get_temp(lines_id(page))).unwrap_or_default()
+}
+
+/// A ruler guide being dragged to `at` (screen x or y, Thai edition): snapped onto the nearest of
+/// `lines` (page edges and centre, boxes' edges and centres) within [`SNAP`], and held there until
+/// it is pulled [`RELEASE`] away, as a moved box is. Returns where it goes and the line it sits on.
+/// Alt held, or Snap to Guides off, moves it freely.
+pub(crate) fn snap_line(ui: &egui::Ui, at: f32, lines: &[f32]) -> (f32, Option<f32>) {
+    let ctx = ui.ctx();
+    let id = egui::Id::unique("snap-hold-guide");
+    if ui.input(|i| i.modifiers.alt) || !guide_options(ctx).1 || !at.is_finite() {
+        ctx.data_mut(|g| g.remove::<(Option<(f32, usize)>, f64)>(id));
+        return (at, None);
+    }
+    let now = ui.input(|i| i.time);
+    let mut held = ctx.data(|g| g.get_temp::<(Option<(f32, usize)>, f64)>(id)).filter(|(_, t)| now - t <= HOLD_FORGET).and_then(|(h, _)| h);
+    let out = snap_axis(&[at], lines.iter().copied(), &mut held);
+    ctx.data_mut(|g| g.insert_temp(id, (held, now)));
+    match out {
+        Some(shift) => (at + shift, held.map(|(g, _)| g)),
+        None => (at, None),
+    }
 }
 
 fn grid_id(page: Rect) -> egui::Id {
@@ -382,11 +458,18 @@ fn snap_targets(ctx: &egui::Context, page: Rect, from: Rect) -> Vec<Rect> {
 /// one of its edges or its centre lands on another box's edge or centre, or on the page's centre
 /// lines, when it comes within [`SNAP`] of one. Alt held moves freely.
 pub(crate) fn snap_to_centre(ui: &egui::Ui, page: Rect, r: Rect, d: egui::Vec2) -> egui::Vec2 {
-    if ui.input(|i| i.modifiers.alt) {
+    let ctx = ui.ctx();
+    if ui.input(|i| i.modifiers.alt) || !guide_options(ctx).1 {
         return d;
     }
-    let grid = ui.ctx().data(|g| g.get_temp::<Option<f32>>(grid_id(page))).flatten();
-    snap_delta(page, r, d, &snap_targets(ui.ctx(), page, r), grid)
+    let grid = ctx.data(|g| g.get_temp::<Option<f32>>(grid_id(page))).flatten();
+    // The hold of this drag, unless the last snapped move was a while ago (another drag).
+    let id = egui::Id::unique("snap-hold");
+    let now = ui.input(|i| i.time);
+    let mut hold = ctx.data(|g| g.get_temp::<(Hold, f64)>(id)).filter(|(_, at)| now - at <= HOLD_FORGET).map(|(h, _)| h).unwrap_or_default();
+    let out = snap_delta_held(page, r, d, &snap_targets(ctx, page, r), grid, &snap_lines(ctx, page), &mut hold);
+    ctx.data_mut(|g| g.insert_temp(id, (hold, now)));
+    out
 }
 
 /// The lines a box lines up on along one axis: its two edges and its centre.
@@ -398,51 +481,181 @@ fn lines_y(r: Rect) -> [f32; 3] {
     [r.top(), r.center().y, r.bottom()]
 }
 
-/// The nearest guide to any of `moving` within [`SNAP`]: how far to shift onto it.
-fn nearest(moving: [f32; 3], guides: impl Iterator<Item = f32>) -> Option<f32> {
-    let mut best: Option<f32> = None;
+/// The nearest guide to any of `moving` within [`SNAP`]: how far to shift onto it, the guide,
+/// and which of `moving` goes onto it.
+fn nearest(moving: &[f32], guides: impl Iterator<Item = f32>) -> Option<(f32, f32, usize)> {
+    let mut best: Option<(f32, f32, usize)> = None;
     for g in guides {
-        for m in moving {
+        for (k, &m) in moving.iter().enumerate() {
             let shift = g - m;
-            if shift.abs() <= SNAP && best.is_none_or(|b| shift.abs() < b.abs()) {
-                best = Some(shift);
+            if shift.abs() <= SNAP && best.is_none_or(|b| shift.abs() < b.0.abs()) {
+                best = Some((shift, g, k));
             }
         }
     }
     best
 }
 
+/// Along one axis: a guide within reach snaps (and is held), else the held guide keeps the box
+/// while its line stays within [`RELEASE`] of it; past that the hold lets go.
+fn snap_axis(moving: &[f32], guides: impl Iterator<Item = f32>, held: &mut Option<(f32, usize)>) -> Option<f32> {
+    if let Some((shift, g, k)) = nearest(moving, guides) {
+        *held = Some((g, k));
+        return Some(shift);
+    }
+    let shift = held.and_then(|(g, k)| moving.get(k).map(|m| g - m)).filter(|s| s.abs() <= RELEASE);
+    if shift.is_none() {
+        *held = None;
+    }
+    shift
+}
+
 /// [`snap_to_centre`] without the Alt key, lining up with `others` too, and with the grid lines
 /// `grid` apart from the page's top left when the grid shows.
+#[cfg(test)]
 fn snap_delta(page: Rect, r: Rect, d: egui::Vec2, others: &[Rect], grid: Option<f32>) -> egui::Vec2 {
+    snap_delta_held(page, r, d, others, grid, &(Vec::new(), Vec::new()), &mut Hold::default())
+}
+
+/// [`snap_delta`], held on to the guides in `hold` (see [`RELEASE`]) and updating it.
+fn snap_delta_held(
+    page: Rect,
+    r: Rect,
+    d: egui::Vec2,
+    others: &[Rect],
+    grid: Option<f32>,
+    (rx, ry): &(Vec<f32>, Vec<f32>),
+    hold: &mut Hold,
+) -> egui::Vec2 {
     let moved = r.translate(d);
     // The grid lines nearest the box's edges.
     let near = |origin: f32, edges: [f32; 2]| -> Vec<f32> {
         grid.filter(|s| s.is_finite() && *s >= 1.0).map_or_else(Vec::new, |s| edges.iter().map(|m| origin + ((m - origin) / s).round() * s).collect())
     };
-    let xs = std::iter::once(page.center().x).chain(others.iter().flat_map(|o| lines_x(*o))).chain(near(page.left(), [moved.left(), moved.right()]));
-    let ys = std::iter::once(page.center().y).chain(others.iter().flat_map(|o| lines_y(*o))).chain(near(page.top(), [moved.top(), moved.bottom()]));
+    let xs = std::iter::once(page.center().x)
+        .chain(others.iter().flat_map(|o| lines_x(*o)))
+        .chain(near(page.left(), [moved.left(), moved.right()]))
+        .chain(rx.iter().copied());
+    let ys = std::iter::once(page.center().y)
+        .chain(others.iter().flat_map(|o| lines_y(*o)))
+        .chain(near(page.top(), [moved.top(), moved.bottom()]))
+        .chain(ry.iter().copied());
     let mut out = d;
-    if let Some(shift) = nearest(lines_x(moved), xs) {
+    if let Some(shift) = snap_axis(&lines_x(moved), xs, &mut hold.x) {
         out.x += shift;
     }
-    if let Some(shift) = nearest(lines_y(moved), ys) {
+    if let Some(shift) = snap_axis(&lines_y(moved), ys, &mut hold.y) {
         out.y += shift;
     }
     out
 }
 
+/// Smart guides while resizing (Thai edition): the box `from` (screen) resized to `to` by its
+/// edges `x` and `y` (`Some(true)`: the left or top edge moves, `Some(false)`: the right or
+/// bottom one, `None`: that axis doesn't change), with the moving edges snapped onto other boxes'
+/// edges and centres, the page's centre lines and the grid, and held there as a move is (see
+/// [`RELEASE`]). `keep_aspect`: a picture's corner keeps its proportions, so only the edge
+/// nearer a guide snaps and the other follows. Alt held resizes freely.
+pub(crate) fn snap_resize(ui: &egui::Ui, page: Rect, from: Rect, to: Rect, x: Option<bool>, y: Option<bool>, keep_aspect: bool) -> Rect {
+    let ctx = ui.ctx();
+    if ui.input(|i| i.modifiers.alt) || !guide_options(ctx).1 {
+        return to;
+    }
+    let grid = ctx.data(|g| g.get_temp::<Option<f32>>(grid_id(page))).flatten();
+    let id = egui::Id::unique("snap-hold-resize");
+    let now = ui.input(|i| i.time);
+    let mut hold = ctx.data(|g| g.get_temp::<(Hold, f64)>(id)).filter(|(_, at)| now - at <= HOLD_FORGET).map(|(h, _)| h).unwrap_or_default();
+    let out = snap_resized_held(page, to, (x, y), keep_aspect, &snap_targets(ctx, page, from), (grid, &snap_lines(ctx, page)), &mut hold);
+    ctx.data_mut(|g| g.insert_temp(id, (hold, now)));
+    out
+}
+
+/// [`snap_resize`] without the Alt key, lining up with `others`, held in `hold`.
+fn snap_resized_held(
+    page: Rect,
+    to: Rect,
+    (x, y): (Option<bool>, Option<bool>),
+    keep_aspect: bool,
+    others: &[Rect],
+    (grid, (rx, ry)): (Option<f32>, &(Vec<f32>, Vec<f32>)),
+    hold: &mut Hold,
+) -> Rect {
+    if !(to.is_positive() && to.is_finite()) {
+        return to;
+    }
+    let near = |origin: f32, edge: f32| grid.filter(|s| s.is_finite() && *s >= 1.0).map(|s| origin + ((edge - origin) / s).round() * s);
+    let edge_x = x.map(|left| if left { to.left() } else { to.right() });
+    let edge_y = y.map(|top| if top { to.top() } else { to.bottom() });
+    let sx = edge_x.and_then(|e| {
+        let guides =
+            std::iter::once(page.center().x).chain(others.iter().flat_map(|o| lines_x(*o))).chain(near(page.left(), e)).chain(rx.iter().copied());
+        snap_axis(&[e], guides, &mut hold.x)
+    });
+    let sy = edge_y.and_then(|e| {
+        let guides =
+            std::iter::once(page.center().y).chain(others.iter().flat_map(|o| lines_y(*o))).chain(near(page.top(), e)).chain(ry.iter().copied());
+        snap_axis(&[e], guides, &mut hold.y)
+    });
+    if x.is_none() {
+        hold.x = None;
+    }
+    if y.is_none() {
+        hold.y = None;
+    }
+    if let (true, Some(left), Some(top)) = (keep_aspect, x, y) {
+        // The nearer guide wins; the other side follows from the box's proportions, around the
+        // corner opposite the one dragged.
+        let (w, h) = (to.width(), to.height());
+        let wide = |a: f32| {
+            let nw = w + if left { -a } else { a };
+            (nw, h * nw / w)
+        };
+        let tall = |b: f32| {
+            let nh = h + if top { -b } else { b };
+            (w * nh / h, nh)
+        };
+        let (nw, nh) = match (sx, sy) {
+            (Some(a), Some(b)) if a.abs() <= b.abs() => wide(a),
+            (Some(a), None) => wide(a),
+            (_, Some(b)) => tall(b),
+            (None, None) => return to,
+        };
+        if !(nw.is_finite() && nh.is_finite() && nw >= 1.0 && nh >= 1.0) {
+            return to;
+        }
+        let (ax, ay) = (if left { to.right() } else { to.left() }, if top { to.bottom() } else { to.top() });
+        let corner = Pos2::new(if left { ax - nw } else { ax + nw }, if top { ay - nh } else { ay + nh });
+        return Rect::from_two_pos(Pos2::new(ax, ay), corner);
+    }
+    let mut out = to;
+    match (x, sx) {
+        (Some(true), Some(s)) => out.min.x += s,
+        (Some(false), Some(s)) => out.max.x += s,
+        _ => {}
+    }
+    match (y, sy) {
+        (Some(true), Some(s)) => out.min.y += s,
+        (Some(false), Some(s)) => out.max.y += s,
+        _ => {}
+    }
+    if out.width() >= 1.0 && out.height() >= 1.0 { out } else { to }
+}
+
 /// The guides a box moved from `from` to `r` sits on: the page's centre lines across the page,
 /// and a line from it to each other box it lines up with.
 pub(crate) fn paint_guides(painter: &egui::Painter, page: Rect, from: Rect, r: Rect) {
+    if !guide_options(painter.ctx()).0 {
+        return;
+    }
     let stroke = Stroke::new(1.0, GUIDE);
+    let centre = Stroke::new(1.0, CENTRE_GUIDE);
     let on = |a: f32, b: f32| (a - b).abs() < 0.5;
     let pc = page.center();
     if on(r.center().x, pc.x) {
-        painter.line_segment([Pos2::new(pc.x, page.top()), Pos2::new(pc.x, page.bottom())], stroke);
+        painter.line_segment([Pos2::new(pc.x, page.top()), Pos2::new(pc.x, page.bottom())], centre);
     }
     if on(r.center().y, pc.y) {
-        painter.line_segment([Pos2::new(page.left(), pc.y), Pos2::new(page.right(), pc.y)], stroke);
+        painter.line_segment([Pos2::new(page.left(), pc.y), Pos2::new(page.right(), pc.y)], centre);
     }
     for o in snap_targets(painter.ctx(), page, from) {
         for x in lines_x(o) {
@@ -461,6 +674,9 @@ pub(crate) fn paint_guides(painter: &egui::Painter, page: Rect, from: Rect, r: R
 /// How far a box has been moved, in points, beside the pointer `at` (screen move `d`), as
 /// Photoshop shows it (Thai edition).
 pub(crate) fn paint_offset(painter: &egui::Painter, xf: &PageXform, at: Pos2, d: egui::Vec2) {
+    if !guide_options(painter.ctx()).0 {
+        return;
+    }
     let ((x0, y0), (x1, y1)) = (xf.screen_to_view(at - d), xf.screen_to_view(at));
     let (dx, dy) = (x1 - x0, y1 - y0);
     if !(dx.is_finite() && dy.is_finite()) || d.length() < 1.0 {
@@ -574,7 +790,10 @@ pub(crate) fn page_input(
                     (Grab::Move, None) => snap_to_centre(ui, xf.rect, from, end - start),
                     _ => end - start,
                 };
-                let r = dragged(from, grab, d, keep);
+                let mut r = dragged(from, grab, d, keep);
+                if let Grab::Corner(left, top) = grab {
+                    r = snap_resize(ui, xf.rect, from, r, Some(left), Some(top), keep);
+                }
                 let (p0, p1) = (to_display(&txf, info, to_page, r.left_bottom()), to_display(&txf, info, to_page, r.right_top()));
                 let mut rect = [p0[0], p0[1], p1[0], p1[1]];
                 if let AddedContent::Text(t) = &a.content
@@ -714,9 +933,11 @@ pub(crate) fn page_input(
         if let Some(edit) = cv.finish_draft(added, info) {
             view.pending_edit = Some(edit);
         }
-        // A box with lines aligned on their own keeps its width: they are aligned in it.
-        let auto =
-            !pdfcraft_engine::text_is_wrapped(t) && t.aligns.iter().all(Option::is_none) || t.direction != pdfcraft_engine::TextDirection::Horizontal;
+        // A box with lines aligned on their own keeps its width: they are aligned in it. So does a
+        // box made wider than its text (Thai edition): its text is aligned inside it.
+        let page_width = info.pages.get(page).map_or(f64::INFINITY, |p| f64::from(p.width));
+        let auto = pdfcraft_engine::hugs_text(t, page_width) && t.aligns.iter().all(Option::is_none)
+            || t.direction != pdfcraft_engine::TextDirection::Horizontal;
         cv.draft = Some(TextDraft {
             page,
             index: Some(i),
@@ -869,13 +1090,17 @@ pub(crate) fn paint_page(
             && let (Some((gp, g, start)), Some(p)) = (cv.grab, pointer)
             && gp == page
         {
-            let d = if g == Grab::Move { snap_to_centre(ui, xf.rect, r, p - start) } else { p - start };
+            let picture = matches!(a.content, AddedContent::Image(_));
             let from = r;
-            r = dragged(r, g, d, matches!(a.content, AddedContent::Image(_)));
-            if g == Grab::Move {
-                paint_guides(painter, xf.rect, from, r);
-                paint_offset(painter, xf, p, d);
+            match g {
+                Grab::Move => {
+                    let d = snap_to_centre(ui, xf.rect, r, p - start);
+                    r = dragged(r, g, d, picture);
+                    paint_offset(painter, xf, p, d);
+                }
+                Grab::Corner(left, top) => r = snap_resize(ui, xf.rect, from, dragged(r, g, p - start, picture), Some(left), Some(top), picture),
             }
+            paint_guides(painter, xf.rect, from, r);
         }
         if selected
             && cv.grab.is_none()
@@ -918,21 +1143,31 @@ pub(crate) fn picture_dropped(
 }
 
 /// The page's own picture `index`, dragged from `page` (`target`: its whole box on screen, `p`:
-/// the pointer) and dropped on another page, goes there, or with Ctrl a copy of it does (Thai
-/// edition).
+/// the pointer) and dropped on another page, goes there, or with Ctrl a copy of it does; with
+/// Ctrl, a drop on its own page leaves it and adds the copy there (Thai edition). `None`: a plain
+/// drop on its own page, which the caller moves.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn page_picture_dropped(
     ui: &egui::Ui,
     view: &mut DocView,
+    xf: &PageXform,
     page: usize,
     index: usize,
     info: &DocInfo,
     target: Rect,
     p: Pos2,
 ) -> Option<Edit> {
-    let (to_page, txf) = view.other_page_at(page, p)?;
+    let copy = ui.input(|i| i.modifiers.command);
+    // Another page takes it (moved, or copied with Ctrl); on its own page only Ctrl makes a copy,
+    // as with added pictures and text (Thai edition); a plain move there is the caller's.
+    let (to_page, txf) = match view.other_page_at(page, p) {
+        Some(other) => other,
+        None if copy => (page, *xf),
+        None => return None,
+    };
     let (p0, p1) = (to_display(&txf, info, to_page, target.left_bottom()), to_display(&txf, info, to_page, target.right_top()));
     view.image_selection = None;
-    Some(Edit::MovePageImageToPage { page, index, to_page, rect: [p0[0], p0[1], p1[0], p1[1]], copy: ui.input(|i| i.modifiers.command) })
+    Some(Edit::MovePageImageToPage { page, index, to_page, rect: [p0[0], p0[1], p1[0], p1[1]], copy })
 }
 
 /// The image controller owns image selection; the added-content panel follows the same XObject.
@@ -1289,9 +1524,18 @@ pub(crate) fn restyled(old: &AddedText, new: AddedText, page_width: Option<f64>)
             let r = pdfcraft_engine::added_text_rect(old);
             pdfcraft_engine::fitted_text(&AddedText { rect: [r[0], r[3] - new.size, r[0] + w.max(1.0), r[3]], ..new }, w)
         }
-        Some(w) if !pdfcraft_engine::text_is_wrapped(old) => pdfcraft_engine::fitted_text(&new, w),
+        // Aligning moves the text inside its box, which keeps its size (Thai edition, the owner's
+        // choice): refitting would hug the text again and leave nothing to align it in.
+        _ if only_alignment_changed(old, &new) => new,
+        // Only a box that hugs its text follows it; one made wider by hand keeps its width.
+        Some(w) if pdfcraft_engine::hugs_text(old, w) => pdfcraft_engine::fitted_text(&new, w),
         _ => new,
     }
+}
+
+/// Whether `new` differs from `old` in its alignment only.
+fn only_alignment_changed(old: &AddedText, new: &AddedText) -> bool {
+    (new.align != old.align || new.aligns != old.aligns) && AddedText { align: old.align, aligns: old.aligns.clone(), ..new.clone() } == *old
 }
 
 /// The Add text font menu: the bundled families, then the fonts installed on this machine, with
@@ -1536,6 +1780,9 @@ pub(crate) struct LookPreview {
     pub underline: Option<bool>,
     /// Which way the text runs (Thai edition); a paragraph of the page turned becomes an added box.
     pub direction: Option<pdfcraft_engine::TextDirection>,
+    /// The alignment of the whole box (Thai edition): its text moves inside the box, which keeps
+    /// its size.
+    pub align: Option<TextAlign>,
 }
 
 impl LookPreview {
@@ -1565,6 +1812,10 @@ impl LookPreview {
         }
         if let Some(d) = self.direction {
             look.direction = d;
+        }
+        if let Some(a) = self.align {
+            look.align = a;
+            look.aligns.clear();
         }
     }
 }
@@ -1744,7 +1995,7 @@ impl crate::PdfCraftApp {
             Some(_) => {}
             None => {
                 let dialog = rfd::AsyncFileDialog::new()
-                    .add_filter(tl!("Images"), &["png", "jpg", "jpeg", "tif", "tiff", "gif", "bmp", "jp2", "j2k", "jpx"])
+                    .add_filter_any_case(tl!("Images"), &["png", "jpg", "jpeg", "tif", "tiff", "gif", "bmp", "jp2", "j2k", "jpx"])
                     .set_title(title);
                 let target = self.active_ids().map(|(_, id)| id);
                 self.ask_one(crate::pickers::Ask::File(dialog), target, read);
@@ -1816,6 +2067,7 @@ impl crate::PdfCraftApp {
             self.last_copied_image = Some((w, h, rgba));
             Ok((w, h))
         });
+        self.page_image_clip = copied.is_ok().then(|| self.page_image_clip_of(id, page, index)).flatten();
         match copied {
             Ok((w, h)) => {
                 self.notify_fmt("The image has been copied ({w} × {h} pixels)", &[("w", &w.to_string()), ("h", &h.to_string())]);
@@ -1826,6 +2078,76 @@ impl crate::PdfCraftApp {
                 false
             }
         }
+    }
+
+    /// What to remember of the page's picture `index` on `page` when it is copied: its whole box
+    /// in display space (Thai edition).
+    fn page_image_clip_of(&self, doc: pdfcraft_engine::DocId, page: usize, index: usize) -> Option<crate::state::PageImageClip> {
+        let d = self.session.get(doc)?;
+        let image = d.page_images(page).into_iter().nth(index)?;
+        let info = d.info.pages.get(page)?;
+        let [x0, y0, x1, y1] = image.rect;
+        let corners = [(x0, y0), (x1, y1), (x0, y1), (x1, y0)].map(|(x, y)| {
+            let v = info.user_to_view(x as f32, y as f32);
+            [f64::from(v[0]), f64::from(info.height) - f64::from(v[1])]
+        });
+        let xs = corners.map(|c| c[0]);
+        let ys = corners.map(|c| c[1]);
+        let rect = [
+            xs.iter().copied().fold(f64::INFINITY, f64::min),
+            ys.iter().copied().fold(f64::INFINITY, f64::min),
+            xs.iter().copied().fold(f64::NEG_INFINITY, f64::max),
+            ys.iter().copied().fold(f64::NEG_INFINITY, f64::max),
+        ];
+        (rect.iter().all(|v| v.is_finite()) && rect[2] > rect[0] && rect[3] > rect[1]).then_some(crate::state::PageImageClip {
+            doc,
+            page,
+            index,
+            object: image.object,
+            rect,
+            pastes: 0,
+        })
+    }
+
+    /// Paste the copied page picture (Thai edition) onto `page`: the same picture at the same size,
+    /// a step down and right on its own page, where it was on another, or centred at `at`. While
+    /// the picture is still there it is copied as it is (its image object, as Ctrl+drag does);
+    /// after a cut, or into another document, its pixels go in at its size. `false` when there is
+    /// nothing of it to paste (the caller pastes the pixels as before).
+    fn paste_page_image_clip(&mut self, id: pdfcraft_engine::DocId, page: usize, at: Option<[f64; 2]>, bytes: &[u8], name: &str) -> bool {
+        let Some(clip) = self.page_image_clip.clone() else { return false };
+        let Some(doc) = self.session.get(id) else { return false };
+        let Some(info) = doc.info.pages.get(page) else { return false };
+        let [x0, y0, x1, y1] = clip.rect;
+        let (w, h) = (x1 - x0, y1 - y0);
+        let rect = if let Some(at) = at {
+            let v = info.user_to_view(at[0] as f32, at[1] as f32).map(f64::from);
+            let c = [v[0], f64::from(info.height) - v[1]];
+            [c[0] - w / 2.0, c[1] - h / 2.0, c[0] + w / 2.0, c[1] + h / 2.0]
+        } else {
+            let same_page = clip.doc == id && clip.page == page;
+            let steps = if same_page { clip.pastes.saturating_add(1) } else { clip.pastes };
+            let shift = crate::state::PASTE_STEP * f64::from(steps.min(40));
+            [x0 + shift, y0 - shift, x1 + shift, y1 - shift]
+        };
+        if !rect.iter().all(|v| v.is_finite()) {
+            return false;
+        }
+        let still_there = clip.doc == id
+            && clip.object.is_some()
+            && doc.page_images(clip.page).into_iter().nth(clip.index).is_some_and(|im| im.object == clip.object);
+        let edit = if still_there {
+            Edit::MovePageImageToPage { page: clip.page, index: clip.index, to_page: page, rect, copy: true }
+        } else {
+            Edit::AddImage { page, rect: Some(rect), name: name.to_string(), bytes: std::sync::Arc::new(bytes.to_vec()) }
+        };
+        let Some((i, _)) = self.active_ids() else { return false };
+        if self.paste_image_edit(i, id, page, edit)
+            && let Some(c) = self.page_image_clip.as_mut()
+        {
+            c.pastes = c.pastes.saturating_add(1);
+        }
+        true
     }
 
     /// The picture's visible box on its page, in user space.
@@ -2000,14 +2322,19 @@ impl crate::PdfCraftApp {
             return false;
         }
 
+        // Whether what is pasted is the picture last copied here (Thai edition: a page picture copied
+        // pastes at its size, `page_image_clip`).
+        let mut copied_here = false;
         let image_data: Option<(String, Vec<u8>)> = match clipboard {
             Some(crate::create_ui::Clip::Image { width, height, rgba }) => {
                 let is_same = self
                     .last_copied_image
                     .as_ref()
                     .is_some_and(|(w, h, bytes)| *w as usize == width && *h as usize == height && bytes.as_slice() == rgba.as_slice());
+                copied_here = is_same && self.last_copied_file.is_none();
                 if !is_same {
                     self.last_copied_file = None;
+                    self.page_image_clip = None;
                     self.last_copied_image = Some((width as u32, height as u32, rgba.clone()));
                 }
                 crate::create_ui::png_from_rgba(width, height, &rgba).ok().map(|b| ("pasted_image.png".to_string(), b))
@@ -2017,6 +2344,7 @@ impl crate::PdfCraftApp {
                 if matches!(system, Some(crate::create_ui::Clip::Text(_))) || (system_authoritative && system.is_none()) {
                     self.last_copied_image = None;
                     self.last_copied_file = None;
+                    self.page_image_clip = None;
                     self.notify_tr("No image on clipboard to paste");
                     return false;
                 }
@@ -2033,16 +2361,19 @@ impl crate::PdfCraftApp {
                     if is_same_as_last && let Some((name, bytes)) = self.last_copied_file.clone() {
                         Some((name, bytes))
                     } else if is_same_as_last && let Some((w, h, rgba)) = self.last_copied_image.clone() {
+                        copied_here = true;
                         crate::create_ui::png_from_rgba(w as usize, h as usize, &rgba).ok().map(|b| ("pasted_image.png".to_string(), b))
                     } else {
                         // System clipboard has a newer / external image!
                         self.last_copied_file = None;
+                        self.page_image_clip = None;
                         self.last_copied_image = Some((img_width as u32, img_height as u32, img_bytes.clone()));
                         crate::create_ui::png_from_rgba(img_width, img_height, &img_bytes).ok().map(|b| ("clipboard_image.png".to_string(), b))
                     }
                 } else if let Some((name, bytes)) = self.last_copied_file.clone() {
                     Some((name, bytes))
                 } else if let Some((w, h, rgba)) = self.last_copied_image.clone() {
+                    copied_here = true;
                     crate::create_ui::png_from_rgba(w as usize, h as usize, &rgba).ok().map(|b| ("pasted_image.png".to_string(), b))
                 } else {
                     None
@@ -2054,6 +2385,9 @@ impl crate::PdfCraftApp {
             self.notify_tr("No image on clipboard to paste");
             return false;
         };
+        if copied_here && rect.is_none() && self.paste_page_image_clip(id, page, at, &bytes, &name) {
+            return true;
+        }
 
         let target_rect = if let Some(r) = rect {
             Some(r)
@@ -2079,32 +2413,36 @@ impl crate::PdfCraftApp {
             None
         };
 
+        self.paste_image_edit(i, id, page, pdfcraft_engine::Edit::AddImage { page, rect: target_rect, name, bytes: std::sync::Arc::new(bytes) })
+    }
+
+    /// Apply `edit`, which pastes a picture onto `page` as an added one, then select what it
+    /// added in Edit text & images.
+    fn paste_image_edit(&mut self, i: usize, id: pdfcraft_engine::DocId, page: usize, edit: Edit) -> bool {
         let added_before: std::collections::HashSet<_> =
             self.session.get(id).into_iter().flat_map(|doc| doc.added()).filter(|item| item.page == page).map(|item| item.obj).collect();
-        if self.apply_edit(pdfcraft_engine::Edit::AddImage { page, rect: target_rect, name, bytes: std::sync::Arc::new(bytes) }) {
-            let selection = self.session.get(id).and_then(|doc| {
-                let mut inserted =
-                    doc.added().iter().filter(|item| item.page == page).enumerate().filter(|(_, item)| !added_before.contains(&item.obj));
-                let (added_idx, item) = inserted.next()?;
-                if inserted.next().is_some() {
-                    return None;
-                }
-                let AddedContent::Image(image) = &item.content else { return None };
-                let pasted_idx = doc.page_images(page).iter().rposition(|placed| placed.object == Some(image.image))?;
-                Some((added_idx, pasted_idx))
-            });
-            if let Some(v) = self.views.get_mut(i) {
-                v.current = page;
-                v.content.selected = selection.map(|(added, _)| (page, added));
-                v.content.select_added = v.content.selected;
-                v.image_selection = selection.map(|(_, image)| crate::edit_text_ui::ImageSelection::at(page, image));
-            }
-            self.quick_tool = crate::QuickTool::EditText;
-            self.notify_tr("Image pasted");
-            true
-        } else {
-            false
+        if !self.apply_edit(edit) {
+            return false;
         }
+        let selection = self.session.get(id).and_then(|doc| {
+            let mut inserted = doc.added().iter().filter(|item| item.page == page).enumerate().filter(|(_, item)| !added_before.contains(&item.obj));
+            let (added_idx, item) = inserted.next()?;
+            if inserted.next().is_some() {
+                return None;
+            }
+            let AddedContent::Image(image) = &item.content else { return None };
+            let pasted_idx = doc.page_images(page).iter().rposition(|placed| placed.object == Some(image.image))?;
+            Some((added_idx, pasted_idx))
+        });
+        if let Some(v) = self.views.get_mut(i) {
+            v.current = page;
+            v.content.selected = selection.map(|(added, _)| (page, added));
+            v.content.select_added = v.content.selected;
+            v.image_selection = selection.map(|(_, image)| crate::edit_text_ui::ImageSelection::at(page, image));
+        }
+        self.quick_tool = crate::QuickTool::EditText;
+        self.notify_tr("Image pasted");
+        true
     }
 }
 
@@ -2323,6 +2661,118 @@ mod snap_tests {
         assert_eq!(r.translate(d).top(), 85.0);
         // Without the grid it moves as dragged.
         assert_eq!(snap_delta(page, r, vec2(35.0, 8.0), &[], None), vec2(35.0, 8.0));
+    }
+
+    /// Thai edition (the owner's choice): aligning moves the text inside its box, which keeps its
+    /// size; a box made wider than its text keeps its width when restyled; one that hugs its text
+    /// still follows it.
+    #[test]
+    fn aligning_keeps_the_box_and_only_hugging_boxes_follow_their_text() {
+        use super::{AddedText, TextAlign, restyled};
+        let hug = pdfcraft_engine::fitted_text(
+            &AddedText { text: "Hello".into(), rect: [100.0, 100.0, 400.0, 114.0], size: 12.0, ..Default::default() },
+            600.0,
+        );
+        assert!(pdfcraft_engine::hugs_text(&hug, 600.0));
+        let wide = AddedText { rect: [100.0, 100.0, 400.0, 114.0], ..hug.clone() };
+        assert!(!pdfcraft_engine::hugs_text(&wide, 600.0));
+        for old in [&hug, &wide] {
+            let centred = restyled(old, AddedText { align: TextAlign::Center, ..old.clone() }, Some(600.0));
+            assert_eq!(centred.rect, old.rect, "aligning keeps the box");
+            assert_eq!(centred.align, TextAlign::Center);
+        }
+        let bigger = restyled(&wide, AddedText { size: 18.0, ..wide.clone() }, Some(600.0));
+        assert_eq!(bigger.rect, wide.rect, "a wide box keeps its width");
+        let bigger = restyled(&hug, AddedText { size: 18.0, ..hug.clone() }, Some(600.0));
+        assert!(bigger.rect[2] - bigger.rect[0] > hug.rect[2] - hug.rect[0], "a hugging box grows with its text");
+    }
+
+    /// No ruler guides.
+    const NO_LINES: (Vec<f32>, Vec<f32>) = (Vec::new(), Vec::new());
+
+    /// Thai edition: a moved box snaps onto a ruler guide dragged out of the rulers, and a resized
+    /// edge does too.
+    #[test]
+    fn boxes_snap_to_ruler_guides() {
+        use super::{Hold, snap_delta_held, snap_resized_held};
+        let page = Rect::from_min_size(pos2(0.0, 0.0), vec2(1000.0, 1000.0));
+        let r = Rect::from_min_size(pos2(100.0, 400.0), vec2(50.0, 20.0));
+        let lines = (vec![255.0], vec![700.0]);
+        // Its left edge 4 short of the upright guide at 255, its bottom 3 short of the level one.
+        let d = snap_delta_held(page, r, vec2(151.0, 277.0), &[], None, &lines, &mut Hold::default());
+        assert_eq!(r.translate(d).left(), 255.0);
+        assert_eq!(r.translate(d).bottom(), 700.0);
+        // Without the guides it moves as dragged.
+        assert_eq!(snap_delta_held(page, r, vec2(151.0, 277.0), &[], None, &NO_LINES, &mut Hold::default()), vec2(151.0, 277.0));
+        let to = Rect::from_min_max(r.min, pos2(252.0, 420.0));
+        let out = snap_resized_held(page, to, (Some(false), None), false, &[], (None, &lines), &mut Hold::default());
+        assert_eq!(out.right(), 255.0);
+    }
+
+    /// Thai edition: a box that snapped to a guide is held on it while the drag pulls a little
+    /// past the catch distance, as in Photoshop, and lets go further out.
+    #[test]
+    fn a_snapped_box_is_held_until_pulled_clearly_away() {
+        use super::{Hold, snap_delta_held};
+        let page = Rect::from_min_size(pos2(0.0, 0.0), vec2(1000.0, 1000.0));
+        let other = Rect::from_min_size(pos2(300.0, 100.0), vec2(300.0, 40.0));
+        let r = Rect::from_min_size(pos2(100.0, 400.0), vec2(50.0, 20.0));
+        let mut hold = Hold::default();
+        // Its left edge 4 from the other's left (300): it snaps, and holds the guide.
+        let d = snap_delta_held(page, r, vec2(196.0, 0.0), &[other], None, &NO_LINES, &mut hold);
+        assert_eq!(r.translate(d).left(), 300.0);
+        assert!(hold.x.is_some());
+        // 10 past it, beyond the catch distance but within the hold: still on the guide.
+        let d = snap_delta_held(page, r, vec2(210.0, 0.0), &[other], None, &NO_LINES, &mut hold);
+        assert_eq!(r.translate(d).left(), 300.0, "held");
+        // Without the hold the same move snaps to nothing.
+        assert_eq!(snap_delta(page, r, vec2(210.0, 0.0), &[other], None).x, 210.0);
+        // 20 past it: let go, and the hold is gone.
+        let d = snap_delta_held(page, r, vec2(220.0, 0.0), &[other], None, &NO_LINES, &mut hold);
+        assert_eq!(d.x, 220.0);
+        assert!(hold.x.is_none());
+    }
+
+    /// Thai edition: a box resized by a corner or a side snaps only the edges being dragged onto
+    /// the guides; the edges that stay put stay put.
+    #[test]
+    fn a_resized_box_snaps_the_dragged_edges() {
+        use super::{Hold, snap_resized_held};
+        let page = Rect::from_min_size(pos2(0.0, 0.0), vec2(1000.0, 1000.0));
+        let other = Rect::from_min_max(pos2(300.0, 100.0), pos2(500.0, 180.0));
+        let snap = |to: Rect, edges, keep| snap_resized_held(page, to, edges, keep, &[other], (None, &NO_LINES), &mut Hold::default());
+        // The bottom-right corner dragged to 4 short of the other's right edge, far from any
+        // horizontal guide: the right edge lands on 500, the rest as dragged.
+        let to = Rect::from_min_max(pos2(100.0, 400.0), pos2(496.0, 437.0));
+        assert_eq!(snap(to, (Some(false), Some(false)), false), Rect::from_min_max(pos2(100.0, 400.0), pos2(500.0, 437.0)));
+        // A left side dragged 3 past the other's left edge: only the left edge moves onto it.
+        let to = Rect::from_min_max(pos2(297.0, 400.0), pos2(700.0, 437.0));
+        assert_eq!(snap(to, (Some(true), None), false), Rect::from_min_max(pos2(300.0, 400.0), pos2(700.0, 437.0)));
+        // A right side doesn't snap its left edge, even when that one is near a guide.
+        assert_eq!(snap(to, (Some(false), None), false), to);
+        // Beyond the snapping distance it resizes as dragged.
+        let to = Rect::from_min_max(pos2(100.0, 400.0), pos2(500.0 - SNAP - 1.0, 437.0));
+        assert_eq!(snap(to, (Some(false), Some(false)), false), to);
+    }
+
+    /// Thai edition: a picture resized by a corner keeps its proportions: the edge nearer a guide
+    /// snaps and the other follows, around the corner that stays put.
+    #[test]
+    fn a_picture_resized_by_a_corner_keeps_its_proportions_when_it_snaps() {
+        use super::{Hold, snap_resized_held};
+        let page = Rect::from_min_size(pos2(0.0, 0.0), vec2(1000.0, 1000.0));
+        let other = Rect::from_min_max(pos2(300.0, 100.0), pos2(500.0, 180.0));
+        let mut hold = Hold::default();
+        // 2:1, its top-left fixed at (100, 400), the corner dragged to 4 short of x = 500.
+        let to = Rect::from_min_max(pos2(100.0, 400.0), pos2(496.0, 598.0));
+        let out = snap_resized_held(page, to, (Some(false), Some(false)), true, &[other], (None, &NO_LINES), &mut hold);
+        assert_eq!(out.min, to.min, "the opposite corner stays");
+        assert_eq!(out.right(), 500.0);
+        assert!((out.width() / out.height() - 2.0).abs() < 1e-4, "still 2:1: {out:?}");
+        // Held while pulled a little past the guide.
+        let to = Rect::from_min_max(pos2(100.0, 400.0), pos2(510.0, 605.0));
+        let out = snap_resized_held(page, to, (Some(false), Some(false)), true, &[other], (None, &NO_LINES), &mut hold);
+        assert_eq!(out.right(), 500.0, "held");
     }
 }
 

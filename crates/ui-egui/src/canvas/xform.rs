@@ -11,6 +11,12 @@ impl DocView {
         self.viewport_screen
     }
 
+    /// The guides dragged out of the rulers (Thai edition): their page, whether upright, and where
+    /// they are across the page shown (a fraction of its width or height).
+    pub fn ruler_guides(&self) -> Vec<(usize, bool, f32)> {
+        self.ruler_guides.iter().map(|g| (g.page, g.upright, g.at)).collect()
+    }
+
     /// Pages drawn last frame and their screen rectangles.
     pub fn visible_page_rects(&self) -> Vec<(usize, Rect)> {
         self.screen_xforms.iter().map(|(p, xf)| (*p, xf.rect)).collect()
