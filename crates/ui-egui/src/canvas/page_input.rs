@@ -54,6 +54,7 @@ pub(super) fn page_tool_input(ui: &mut egui::Ui, view: &mut DocView, frame: &mut
         editing_content,
         form,
         info,
+        placing,
         prefs,
         preparing,
         redact_mark,
@@ -128,14 +129,14 @@ pub(super) fn page_tool_input(ui: &mut egui::Ui, view: &mut DocView, frame: &mut
     let over_mark = matches!(tool, QuickTool::Fill(_))
         && (matches!(press, PagePress::Mine(_)) || comments::moving_on(view, i) || !ptr.any_down && top(under.iter().cloned(), tool).is_some());
     tool_input(ui, view, frame, slot, &pcx, press, over_mark);
-    let on_field = if preparing {
+    let on_field = if preparing && !placing {
         let o = crate::prepare::page_input(cx, form, field_tool, prepare_allowed, press, view);
         frame.out.field_props |= o.properties;
         frame.out.field_placed |= o.placed;
         frame.out.open_table = frame.out.open_table.or(o.table);
         o.consumed || field_tool.is_some()
     } else {
-        tool == QuickTool::Select && crate::forms_ui::page_input(cx, form, can_fill, press, released_over, view)
+        tool == QuickTool::Select && !placing && crate::forms_ui::page_input(cx, form, can_fill, press, released_over, view)
     };
     // Redact draws boxes off text; so does Highlight (an area highlight, as in Acrobat).
     let area_tool = tool == QuickTool::Redact && can_modify || tool == QuickTool::Comment(comments::CommentTool::Highlight) && allowed;
@@ -162,7 +163,7 @@ pub(super) fn page_tool_input(ui: &mut egui::Ui, view: &mut DocView, frame: &mut
         }
         view.content.selected = None;
     }
-    let on_content = !on_objects && editing_content && can_modify && {
+    let on_content = !on_objects && !placing && editing_content && can_modify && {
         source_blocked
             || crate::content_ui::page_input(
                 cx,
@@ -222,7 +223,16 @@ pub(super) fn page_tool_input(ui: &mut egui::Ui, view: &mut DocView, frame: &mut
     // selection rectangle, added content, which still decide for themselves) is not also a
     // commenting tool's, as before.
     let taken = on_objects || on_edit_text || on_link || on_content || boxing || on_field;
-    let on_comment = comments::page_input(ui, resp, &pcx, press, taken, view);
+    // The cover box's eyedropper (Thai edition): a click takes the colour the page shows there.
+    let picking = tool == QuickTool::Comment(comments::CommentTool::Cover) && prefs.eyedropper && !taken;
+    if picking && let Some(p) = pointer.filter(|p| xf.rect.contains(*p)) {
+        view.cursor.claim(Layer::ToolArea, egui::CursorIcon::Crosshair);
+        if resp.clicked() {
+            let (vx, vy) = xf.screen_to_view(p);
+            view.comments.picked_colour = doc.colour_at(i, [vx, vy]);
+        }
+    }
+    let on_comment = !picking && comments::page_input(ui, resp, &pcx, press, taken, view);
     let consumed = taken || on_comment;
     let hover = pointer.and_then(|p| claim_under(&hits, view, p, frame.env.unobstructed));
     PageInput { consumed, area_tool, hover, released_over }
@@ -282,6 +292,7 @@ fn tool_input(
         fill_text_size,
         fill_text_font,
         fill_text_color,
+        fill_text_border,
         ..
     } = frame.env;
     let PageSlot { i, xf, .. } = *slot;
@@ -312,6 +323,7 @@ fn tool_input(
             text_size: fill_text_size,
             text_font: fill_text_font,
             text_color: fill_text_color,
+            text_border: fill_text_border,
             signature: signature.as_ref(),
             initials: initials.as_ref(),
             preview: frame.signature_preview,

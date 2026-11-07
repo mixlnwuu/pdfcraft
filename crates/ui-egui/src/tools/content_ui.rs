@@ -115,6 +115,9 @@ pub struct ContentView {
     pub follow: Option<(usize, pdfcraft_cos::ObjRef)>,
     /// The item (page, index) the page's right-click menu is for, set by a right-click on it.
     pub menu: Option<(usize, usize)>,
+    /// A right-click on a box open for typing, unchanged (Thai edition): the box closed and the
+    /// page's menu is to open here, with its items (Split into lines, Arrange).
+    pub menu_at: Option<Pos2>,
     grab: Option<(usize, Grab, Pos2)>,
     undrawable: UndrawableMemo,
     layout: Option<(AddedText, f32, f64, [f64; 4])>,
@@ -703,9 +706,17 @@ pub(crate) fn page_boxes(
         .into_iter()
         .map(|(_, a)| screen_rect(xf, info, page, a.content.rect()))
         .chain(blocks.iter().map(|b| xf.user_rect_f64(info, page, b.rect)))
-        .chain(images.iter().map(|im| crate::canvas::image_screen_rect(im, xf, info, page)))
+        .chain(images.iter().map(|im| crate::canvas::image_screen_rect(im, xf, info, page)).filter(|r| !backdrop(xf.rect, *r)))
         .filter(|r| r.is_positive() && r.width().is_finite() && r.height().is_finite())
         .collect()
+}
+
+/// A picture covering most of the page (`page`, screen): a scan or a background, whose centre
+/// lies a hair off the page's. Lined up with, it caught boxes just beside the page's centre
+/// lines, in magenta, before they reached the green ones (Thai edition).
+fn backdrop(page: Rect, r: Rect) -> bool {
+    let covered = r.intersect(page);
+    covered.is_positive() && covered.area() >= 0.8 * page.area()
 }
 
 /// The rect while moving or resizing (images keep their proportions).
@@ -1365,6 +1376,8 @@ pub(crate) fn editor(ctx: &egui::Context, view: &mut DocView, info: &DocInfo, ad
     let background_ready = draft.index.is_some_and(|index| view.text_background.ready_added(page, index));
     let tokens = Tokens::get(ctx);
     let (mut commit, mut cancel, mut done) = (false, false, false);
+    // A right-click on the box with nothing typed or restyled in it (Thai edition).
+    let mut menu_at: Option<Pos2> = None;
     let mut undrawable = None;
     let memo = &view.content.undrawable;
     // Clicks outside the document (the Format text panel) keep the text open, as they keep a
@@ -1431,6 +1444,9 @@ pub(crate) fn editor(ctx: &egui::Context, view: &mut DocView, info: &DocInfo, ad
                 }
                 // The editor has no visible label; name it for assistive tech.
                 resp.response.clone().accessible_name(tl!("Added text"));
+                if resp.secondary_clicked() && !t.has_unapplied_typing() {
+                    menu_at = resp.interact_pointer_pos().or_else(|| ui.input(|i| i.pointer.hover_pos()));
+                }
                 if t.focus {
                     resp.request_focus();
                     if let Some(range) = &t.selection {
@@ -1469,6 +1485,20 @@ pub(crate) fn editor(ctx: &egui::Context, view: &mut DocView, info: &DocInfo, ad
         });
     if cancel {
         view.content.draft = None;
+        return (None, false);
+    }
+    // Right-clicked, unchanged: the box closes and the page's menu opens for it as for a box
+    // selected with a click (Thai edition: Split into lines and Arrange only showed after a move).
+    if let Some(pos) = menu_at
+        && let Some(d) = view.content.draft.as_ref()
+        && let Some(i) = d.index
+        && on_page(added, d.page).into_iter().any(|(j, a)| j == i && matches!(&a.content, AddedContent::Text(t) if *t == d.style))
+    {
+        let page = d.page;
+        view.content.draft = None;
+        view.content.selected = Some((page, i));
+        view.content.menu = Some((page, i));
+        view.content.menu_at = Some(pos);
         return (None, false);
     }
     // Text that can't be drawn stays in the editor, with the warning, rather than being lost.
@@ -2607,7 +2637,18 @@ mod wheel_tests {
 mod snap_tests {
     use egui::{Rect, pos2, vec2};
 
-    use super::{SNAP, snap_delta};
+    use super::{SNAP, backdrop, snap_delta};
+
+    /// Thai edition: a scan covering the page is no box to line up with; a picture on part of
+    /// it is.
+    #[test]
+    fn a_page_sized_picture_is_a_backdrop_and_not_a_snap_target() {
+        let page = Rect::from_min_size(pos2(100.0, 50.0), vec2(600.0, 800.0));
+        assert!(backdrop(page, page.expand(2.0).translate(vec2(1.5, 0.0))));
+        assert!(backdrop(page, page.shrink(20.0)));
+        assert!(!backdrop(page, Rect::from_min_size(pos2(120.0, 70.0), vec2(300.0, 200.0))));
+        assert!(!backdrop(page, Rect::from_min_size(pos2(-900.0, 70.0), vec2(300.0, 200.0))));
+    }
 
     /// A box moved to within a few points of the page's centre lines lands on them; farther away
     /// it moves exactly as dragged.

@@ -1046,8 +1046,16 @@ fn the_window_title_marks_a_draft_that_is_not_applied_yet() {
     h.run_steps(2);
     assert_eq!(h.state().window_title, "b.pdf — PdfCraft");
     let i = h.state().active.unwrap();
-    h.state_mut().views[i].fill_text =
-        Some(TypeBox { page: 0, at: [40.0, 200.0], text: "Typed".into(), size: 10.0, font: Default::default(), color: [0.0; 3], focus: false });
+    h.state_mut().views[i].fill_text = Some(TypeBox {
+        page: 0,
+        at: [40.0, 200.0],
+        text: "Typed".into(),
+        size: 10.0,
+        font: Default::default(),
+        color: [0.0; 3],
+        border: pdfcraft_ui_egui::fill_sign::TextBorder::NONE,
+        focus: false,
+    });
     h.run_steps(2);
     let s = h.state();
     assert!(!s.session.get(s.views[i].id).unwrap().dirty, "nothing applied to the document yet");
@@ -1486,6 +1494,138 @@ fn up_and_down_turn_pages_in_single_page_view() {
 }
 
 #[test]
+fn left_and_right_scroll_a_page_wider_than_the_window_before_turning_it() {
+    // A plan zoomed in: → / ← turned the page (#185) and so never showed its other side; the
+    // view moved sideways only by the scroll bar, the wheel or the Hand.
+    use egui::{Key, Modifiers};
+    let mut h = harness();
+    h.state_mut().active = Some(0);
+    h.state_mut().views[0].set_zoom(12.0);
+    h.run_steps(6);
+    let press = |h: &mut Harness<'static, PdfCraftApp>, modifiers, key| {
+        h.key_press_modifiers(modifiers, key);
+        h.run_steps(4);
+        let v = &h.state().views[0];
+        (v.current, v.page_screen_rect(v.current).map(|r| r.left()))
+    };
+    let start = h.state().views[0].page_screen_rect(0).map(|r| r.left()).expect("on screen");
+    let (page, left) = press(&mut h, Modifiers::NONE, Key::ArrowRight);
+    assert_eq!(page, 0, "→ scrolls the wide page rather than turning it");
+    assert!(left.is_some_and(|l| l < start - 10.0), "the page moved left: {left:?} from {start}");
+    // At its right edge the next → turns the page.
+    let mut n = 1;
+    while press(&mut h, Modifiers::NONE, Key::ArrowRight).0 == 0 {
+        n += 1;
+        assert!(n < 500, "→ never reached the right edge");
+    }
+    assert!(n > 3, "→ scrolled across page 1 before turning ({n} presses)");
+    assert_eq!(h.state().views[0].current, 1);
+    // Page 2 starts at its left edge, as reading on across: → scrolls it rather than turning
+    // again at once.
+    let shown = |h: &Harness<'static, PdfCraftApp>, page: usize| {
+        let v = &h.state().views[0];
+        (v.page_screen_rect(page).expect("on screen"), v.viewport_rect())
+    };
+    let (r, view) = shown(&h, 1);
+    assert!(r.left() >= view.left() && r.right() > view.right(), "page 2 from its left edge: {r:?} in {view:?}");
+    assert_eq!(press(&mut h, Modifiers::NONE, Key::ArrowRight).0, 1, "→ scrolls page 2 from its left edge");
+    // ← goes back to that edge and turns back: page 1 comes at its right edge, so the next ← scrolls it.
+    let mut n = 1;
+    while press(&mut h, Modifiers::NONE, Key::ArrowLeft).0 == 1 {
+        n += 1;
+        assert!(n < 50, "← never turned back from page 2");
+    }
+    assert_eq!(h.state().views[0].current, 0);
+    let (r, view) = shown(&h, 0);
+    assert!(r.right() <= view.right() && r.left() < view.left(), "page 1 from its right edge: {r:?} in {view:?}");
+    assert_eq!(press(&mut h, Modifiers::NONE, Key::ArrowLeft).0, 0, "← scrolls page 1 from its right edge");
+    // ⌘→ turns at once.
+    assert_eq!(press(&mut h, Modifiers::COMMAND, Key::ArrowRight).0, 1, "⌘→ turns the page at once");
+    assert_eq!(press(&mut h, Modifiers::COMMAND, Key::ArrowRight).0, 2);
+    // A page that fits across: → turns pages as before.
+    h.state_mut().views[0].fit = pdfcraft_ui_egui::canvas::Fit::Width;
+    h.run_steps(6);
+    assert_eq!(press(&mut h, Modifiers::NONE, Key::ArrowRight).0, 3);
+}
+
+/// Continuous view with pages of different widths: the content is as wide as the widest page, but
+/// on a narrow page that shows whole → turns the page; on the wide one it scrolls first.
+#[test]
+fn left_and_right_follow_the_current_pages_width_in_continuous_view() {
+    use egui::Key;
+    let mut h = Harness::builder().with_size(egui::vec2(1400.0, 900.0)).build_eframe(|_cc| {
+        let mut app = PdfCraftApp::new();
+        app.set_option("language", "en").unwrap();
+        app.open_bytes("mixed.pdf", None, sized_fixture(&[(200, 1200), (3000, 1200), (200, 1200)])).unwrap();
+        app
+    });
+    crate::support::settle(&mut h);
+    h.state_mut().active = Some(0);
+    assert!(h.state().views[0].continuous);
+    // Each page taller than the window, so one is the current page.
+    h.state_mut().views[0].set_zoom(1.0);
+    h.run_steps(6);
+    h.state_mut().views[0].go_to_page(0);
+    h.run_steps(6);
+    let press = |h: &mut Harness<'static, PdfCraftApp>| {
+        h.key_press(Key::ArrowRight);
+        h.run_steps(4);
+        let v = &h.state().views[0];
+        (v.current, v.page_screen_rect(1).map(|r| r.left()))
+    };
+    assert_eq!(h.state().views[0].current, 0);
+    let (page, start) = press(&mut h);
+    assert_eq!(page, 1, "→ on the narrow page shown whole turns it");
+    let (page, left) = press(&mut h);
+    assert_eq!(page, 1, "→ on the wide page scrolls it");
+    assert!(left.zip(start).is_some_and(|(l, s)| l < s - 10.0), "the wide page moved left: {left:?} from {start:?}");
+}
+
+/// A zoomed two-page spread scrolled so its first page ends inside the window and the second is
+/// still wholly to the right of it: → scrolls on to the second page rather than turning the
+/// spread. (Read from the pages on screen alone, the spread seemed to end with its first page.)
+#[test]
+fn right_scrolls_to_a_spreads_second_page_off_screen_before_turning() {
+    use egui::Key;
+    // The page gap (points on screen).
+    const GAP: f32 = 14.0;
+    let build = |zoom: f32| {
+        let mut h = Harness::builder().with_size(egui::vec2(1400.0, 900.0)).build_eframe(move |_cc| {
+            let mut app = PdfCraftApp::new();
+            app.set_option("language", "en").unwrap();
+            app.open_bytes("spread.pdf", None, sized_fixture(&[(600, 800); 4])).unwrap();
+            app.set_option("layout", "two-page").unwrap();
+            // Before the first layout: zoomed about the content's top left, scrolled to it.
+            app.views[0].set_zoom(zoom);
+            app
+        });
+        crate::support::settle(&mut h);
+        h.state_mut().active = Some(0);
+        h.run_steps(4);
+        h
+    };
+    let shown =
+        |h: &Harness<'static, PdfCraftApp>| (h.state().views[0].viewport_rect(), h.state().views[0].page_screen_rect(0).expect("page 1 on screen"));
+    // Zoom until page 1's right edge sits half a gap inside the window's.
+    let mut zoom = 2.0;
+    let mut h = build(zoom);
+    for _ in 0..3 {
+        let (inner, first) = shown(&h);
+        zoom *= (inner.right() - GAP / 2.0 - first.left()) / first.width();
+        h = build(zoom);
+    }
+    let (inner, first) = shown(&h);
+    assert!(first.right() <= inner.right() && first.right() + GAP > inner.right(), "the spread's gap at the window's edge: {first:?} in {inner:?}");
+    assert!(h.state().views[0].page_screen_rect(1).is_none(), "its second page off screen");
+    assert!(h.state().views[0].layout == pdfcraft_ui_egui::canvas::PageLayout::TwoUp && !h.state().views[0].continuous);
+    h.key_press(Key::ArrowRight);
+    h.run_steps(4);
+    let v = &h.state().views[0];
+    assert!(v.current < 2, "→ doesn't turn the spread: page {}", v.current + 1);
+    assert!(v.page_screen_rect(1).is_some(), "it scrolls the second page into view");
+}
+
+#[test]
 fn v_h_and_space_pick_the_quick_tools() {
     // The toolbar's tooltips promise "Select (V)" and "Hand (H)", but the keys did nothing.
     use egui::{Key, Modifiers};
@@ -1899,6 +2039,66 @@ fn a_clicked_picture_is_selected_and_copied_in_its_original_format() {
     h.key_press(egui::Key::Escape);
     h.run_steps(1);
     assert_eq!(h.state().views[i].picked_image, None);
+}
+
+/// Thai edition: a scan with its OCR text is the paper: a click on the page with the Select
+/// tool picks nothing (it tinted the whole page blue until a double click), and the page's text
+/// is still there to select.
+#[test]
+fn a_click_on_a_scan_with_its_text_picks_nothing() {
+    let (_, mut h) = picture_harness();
+    let i = h.state().active.unwrap();
+    let id = h.state().views[i].id;
+    let words = vec![pdfcraft_engine::ocr::PlacedWord {
+        text: "Scanned".into(),
+        origin: [2.0, 2.0],
+        across: [20.0, 0.0],
+        up: [0.0, 6.0],
+        confidence: None,
+        source: "ocrs".into(),
+    }];
+    h.state_mut().session.apply(id, pdfcraft_engine::Edit::AddOcrText { page: 0, words }).unwrap();
+    h.run_steps(4);
+    let at = h.state().views[i].page_screen_rect(0).expect("on screen").center();
+    h.hover_at(at);
+    h.run_steps(1);
+    h.event(egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed: true, modifiers: Default::default() });
+    h.event(egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed: false, modifiers: Default::default() });
+    h.run_steps(2);
+    assert_eq!(h.state().views[i].picked_image, None, "the scan is the paper, not a picture to pick");
+}
+
+/// Thai edition: in Edit text & images, a click on a scan's empty space (the paper under its OCR
+/// text) goes back to the Select tool, as a click on any page's empty space does.
+#[test]
+fn a_click_on_a_scans_empty_space_in_edit_mode_goes_back_to_select() {
+    let (_, mut h) = picture_harness();
+    let i = h.state().active.unwrap();
+    let id = h.state().views[i].id;
+    let words = vec![pdfcraft_engine::ocr::PlacedWord {
+        text: "Scanned".into(),
+        origin: [2.0, 2.0],
+        across: [20.0, 0.0],
+        up: [0.0, 6.0],
+        confidence: None,
+        source: "ocrs".into(),
+    }];
+    h.state_mut().session.apply(id, pdfcraft_engine::Edit::AddOcrText { page: 0, words }).unwrap();
+    assert!(h.state_mut().execute("edit.edit_text"));
+    for _ in 0..30 {
+        h.run_steps(2);
+        if !h.state().render_pending() {
+            break;
+        }
+    }
+    let at = h.state().views[i].page_screen_rect(0).expect("on screen").center();
+    h.hover_at(at);
+    h.run_steps(1);
+    h.event(egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed: true, modifiers: Default::default() });
+    h.event(egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed: false, modifiers: Default::default() });
+    h.run_steps(3);
+    assert_eq!(h.state().quick_tool, pdfcraft_ui_egui::QuickTool::Select, "back to the Select tool");
+    assert!(h.state().views[i].image_selection.is_none(), "the scan isn't selected");
 }
 
 /// A picture picked with the Select tool, then deleted in Edit text & images, leaves no highlight

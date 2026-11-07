@@ -227,7 +227,7 @@ fn words_of(chars: &[(usize, String)], steps: usize, [left, top, right, bottom]:
     for (i, (t, c)) in chars.iter().enumerate() {
         if c == " " {
             if !text.is_empty() {
-                words.push(Word { text: std::mem::take(&mut text), rect: [x(start), top, x(*t), bottom] });
+                words.push(Word::new(std::mem::take(&mut text), [x(start), top, x(*t), bottom], "paddle"));
             }
             continue;
         }
@@ -236,7 +236,7 @@ fn words_of(chars: &[(usize, String)], steps: usize, [left, top, right, bottom]:
         }
         text.push_str(c);
         if i + 1 == chars.len() {
-            words.push(Word { text: std::mem::take(&mut text), rect: [x(start), top, right, bottom] });
+            words.push(Word::new(std::mem::take(&mut text), [x(start), top, right, bottom], "paddle"));
         }
     }
     words
@@ -356,7 +356,7 @@ mod tests {
 
     #[test]
     fn lines_read_top_to_bottom_then_left_to_right() {
-        let line = |text: &str, rect: [f32; 4]| Line { words: vec![Word { text: text.into(), rect }] };
+        let line = |text: &str, rect: [f32; 4]| Line { words: vec![Word::new(text, rect, "paddle")] };
         let order = reading_order(vec![
             line("below", [0.0, 50.0, 100.0, 70.0]),
             line("right", [200.0, 11.0, 300.0, 31.0]),

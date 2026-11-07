@@ -833,3 +833,77 @@ fn a_paragraph_with_thai_presentation_forms_splits() {
     let after = added_texts(&h);
     assert_eq!(after.iter().map(|(t, _)| t.as_str()).collect::<Vec<_>>(), ["\u{0E14}\u{0E49}", "\u{0E14}\u{0E49}"], "the Thai tone mark, not U+F70B");
 }
+
+/// Thai edition: Ctrl+A in Edit text & images selects everything on the page (paragraphs, the
+/// added note and the artwork), and the selection is usable: copied and pasted together, moved
+/// with an arrow key, and deleted with Delete, each in one step.
+#[test]
+fn ctrl_a_selects_everything_on_the_page_to_copy_move_and_delete() {
+    let mut h = harness();
+    let id = h.state().views[0].id;
+    let before = objects(&h);
+    h.key_press_modifiers(Modifiers::COMMAND, Key::A);
+    h.run_steps(3);
+    h.get_by_label(&format!("{} objects selected", before.len()));
+    // Copy and paste: the text comes out as text boxes, all at once.
+    let notes = added_texts(&h).len();
+    h.event(egui::Event::Copy);
+    h.run_steps(2);
+    let marker = h.state().multi_clip_marker().expect("all copied");
+    h.event(egui::Event::Paste(marker));
+    crate::support::settle(&mut h);
+    assert_eq!(added_texts(&h).len(), notes + 3, "the two paragraphs and the note pasted: {:?}", added_texts(&h));
+    assert_eq!(h.state().session.get(id).unwrap().can_undo(), Some("Paste"));
+    assert!(h.state_mut().execute("edit.undo"));
+    crate::support::settle(&mut h);
+    // An arrow key moves everything together.
+    h.key_press_modifiers(Modifiers::COMMAND, Key::A);
+    h.run_steps(3);
+    h.key_press(Key::ArrowRight);
+    crate::support::settle(&mut h);
+    let moved = objects(&h);
+    assert_eq!(moved.len(), before.len());
+    for (a, b) in before.iter().zip(&moved) {
+        assert!(b.rect[0] > a.rect[0] + 0.1, "moved right: {:?} → {:?}", a.rect, b.rect);
+    }
+    // Delete takes it all away in one step.
+    h.key_press_modifiers(Modifiers::COMMAND, Key::A);
+    h.run_steps(3);
+    h.key_press(Key::Delete);
+    crate::support::settle(&mut h);
+    assert!(objects(&h).is_empty(), "{:?}", objects(&h));
+    assert!(h.state_mut().execute("edit.undo"));
+    crate::support::settle(&mut h);
+    assert_eq!(objects(&h).len(), before.len(), "one undo brings it all back");
+}
+
+/// Thai edition: an added box opened for typing (double-clicked) but not changed still gets Split
+/// into lines and Arrange from a right-click, without being moved first.
+#[test]
+fn a_box_open_for_typing_splits_from_the_right_click_menu() {
+    let mut h = harness();
+    let id = h.state().views[0].id;
+    let t = AddedText { text: "one\ntwo\nthree".into(), rect: [60.0, 260.0, 140.0, 314.0], size: 12.0, ..Default::default() };
+    assert!(h.state_mut().apply_edit(Edit::AddText { page: 0, text: t }));
+    crate::support::settle(&mut h);
+    let before = added_texts(&h).len();
+    let r = added_texts(&h).into_iter().find(|(t, _)| t.starts_with("one")).unwrap().1;
+    let p = at(&h, 80.0, (500.0 - r[3] + 6.0) as f32);
+    let start = h.ctx.input(|i| i.time) + 1.0;
+    h.hover_at(p);
+    h.run_steps(1);
+    for (k, pressed) in [true, false, true, false].into_iter().enumerate() {
+        let input = h.input_mut();
+        input.time = Some(start + 0.03 * (k + 1) as f64);
+        input.events.push(egui::Event::PointerButton { pos: p, button: egui::PointerButton::Primary, pressed, modifiers: Modifiers::NONE });
+        h.step();
+    }
+    h.run_steps(3);
+    assert!(h.state().views[0].content.draft.is_some(), "open for typing");
+    right_click(&mut h, p);
+    h.get_by_label("Arrange");
+    h.get_by_label("Split into lines").click();
+    crate::support::settle(&mut h);
+    assert_eq!(added_texts(&h).len(), before + 2);
+    assert_eq!(h.state().session.get(id).unwrap().can_undo(), Some("Split into lines"));
+}

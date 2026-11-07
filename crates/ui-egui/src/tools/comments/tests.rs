@@ -34,6 +34,13 @@ fn a_moved_or_reshaped_line_is_drawn_at_its_new_points() {
     let to = Some(pos2(60.0, 10.0));
     assert_eq!(changing_points(Some(&dragging), None, (0, 3), &line, to_user, to, false), Some(vec![[10.0, 10.0], [60.0, 10.0]]));
     assert_eq!(changing_points(None, None, (0, 3), &line, to_user, to, false), None, "not changing");
+    // Released with the rest of the selection: its own move in the batch.
+    let together = Edit::Batch {
+        label: "Move comments".into(),
+        edits: vec![Edit::MoveAnnotation { page: 0, index: 1, dx: 1.0, dy: 1.0 }, Edit::MoveAnnotation { page: 0, index: 3, dx: 5.0, dy: 20.0 }],
+    };
+    assert_eq!(changing_points(None, Some(&together), (0, 3), &line, to_user, None, false), Some(vec![[15.0, 30.0], [55.0, 30.0]]));
+    assert_eq!(changing_points(None, Some(&together), (0, 2), &line, to_user, None, false), None, "not in the batch");
 }
 
 /// A sticky note on a page turned a quarter is drawn upright beside its `/Rect`: an edit
@@ -408,7 +415,8 @@ fn context_menu_colour_submenu_keeps_its_picker_open_and_a_swatch_closes_the_men
     let mut h = egui_kittest::Harness::new_ui_state(
         |ui, (view, actions): &mut (DocView, Vec<CanvasAction>)| {
             ui.button("Page").context_menu(|ui| {
-                if let Some(a) = context_menu(ui, view, &info, &|_, _| true, &prefs, true, true, true) {
+                let rights = MenuRights { allowed: true, can_paste: false, can_modify: true };
+                if let Some(a) = context_menu(ui, view, &info, &|_, _| true, &prefs, rights) {
                     actions.push(a);
                 }
             });
@@ -486,9 +494,10 @@ fn shift_makes_squares_circles_and_45_degree_lines() {
     // A square or circle on the longer side, whichever way it is dragged.
     assert_eq!(constrained(CommentTool::Rectangle, [0.0, 0.0], [10.0, 4.0]), [10.0, 10.0]);
     assert_eq!(constrained(CommentTool::Oval, [10.0, 10.0], [7.0, 18.0]), [2.0, 18.0]);
-    // A line, or a polygon's side from its last corner, at the nearest 45 degrees, as long.
+    // A line, or a polygon's side from its last corner, at the nearest 45 degrees, to where the
+    // pointer falls on it (level or plumb keeps the pointer's x or y, as upstream's ortho does).
     let level = constrained(CommentTool::Line, [0.0, 0.0], [10.0, 3.0]);
-    assert!((level[0] - 10.0f64.hypot(3.0)).abs() < 1e-9 && level[1] == 0.0, "{level:?}");
+    assert!((level[0] - 10.0).abs() < 1e-9 && level[1] == 0.0, "{level:?}");
     assert_eq!(constrained(CommentTool::Arrow, [5.0, 5.0], [5.5, -20.0])[0], 5.0, "upright");
     let diagonal = constrained(CommentTool::Polygon, [0.0, 0.0], [10.0, 9.0]);
     assert!((diagonal[0] - diagonal[1]).abs() < 1e-9, "{diagonal:?}");
@@ -505,6 +514,24 @@ fn drawn_shapes_ignore_slips() {
         drawn_shape(CommentTool::Arrow, &[[0.0, 0.0], [5.0, 0.0]]),
         Some(Shape::Line { start: LineEnding::None, end: LineEnding::OpenArrow, .. })
     ));
+}
+
+#[test]
+fn shift_click_selects_the_range_from_the_comment_with_the_handles() {
+    let order = [(0, 3), (0, 1), (0, 0), (1, 2), (1, 0)];
+    let mut cv = CommentView::default();
+    cv.select_only((0, 1));
+    cv.select_range(&order, (1, 2));
+    assert_eq!(cv.selection(), vec![(0, 1), (0, 0), (1, 2)], "from the anchor down, the anchor keeps the handles");
+    // Another ⇧-click from the same anchor changes the range, upwards too.
+    cv.select_range(&order, (0, 3));
+    assert_eq!(cv.selection(), vec![(0, 1), (0, 3)]);
+    // Nothing to start from, or a card not in the list: added as by ⌘/Ctrl-click.
+    let mut none = CommentView::default();
+    none.select_range(&order, (0, 0));
+    assert_eq!(none.selection(), vec![(0, 0)]);
+    cv.select_range(&order, (9, 9));
+    assert_eq!(cv.selected, Some((9, 9)));
 }
 
 #[test]

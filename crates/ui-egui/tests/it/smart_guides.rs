@@ -316,3 +316,70 @@ fn the_page_centre_guide_is_green_and_box_guides_stay_magenta() {
     h.drop_at(to);
     h.run_steps(2);
 }
+
+/// A 300 × 300 point page covered by a scan (a grey picture) drawn a point right of centre, as
+/// scans often are.
+fn scanned() -> Vec<u8> {
+    let objects = [
+        "<< /Type /Catalog /Pages 2 0 R >>",
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] /Resources << /XObject << /Im0 5 0 R >> >> /Contents 4 0 R >>",
+        "<< /Length 32 >>\nstream\nq 300 0 0 300 2 0 cm /Im0 Do Q\n\nendstream",
+        "<< /Type /XObject /Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceGray /BitsPerComponent 8 /Length 1 >>\nstream\n\u{e0}\nendstream",
+    ];
+    let mut pdf = b"%PDF-1.7\n".to_vec();
+    let mut offsets = Vec::new();
+    for (i, o) in objects.iter().enumerate() {
+        offsets.push(pdf.len());
+        pdf.extend_from_slice(format!("{} 0 obj\n{o}\nendobj\n", i + 1).as_bytes());
+    }
+    let xref = pdf.len();
+    pdf.extend_from_slice(format!("xref\n0 {}\n0000000000 65535 f \n", objects.len() + 1).as_bytes());
+    for o in offsets {
+        pdf.extend_from_slice(format!("{o:010} 00000 n \n").as_bytes());
+    }
+    pdf.extend_from_slice(format!("trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n", objects.len() + 1).as_bytes());
+    pdf
+}
+
+/// Thai edition: on a scanned page the box snaps onto the page's centre line, not onto the
+/// centre of the scan beneath it (a point off), which drew a magenta guide instead of the green
+/// one and kept the box off centre.
+#[test]
+fn on_a_scanned_page_a_box_snaps_to_the_page_centre_not_the_scans() {
+    let mut h = Harness::builder().with_size(egui::vec2(1400.0, 900.0)).build_eframe(|_cc| {
+        let mut app = PdfCraftApp::new();
+        app.set_option("language", "en").unwrap();
+        app.open_bytes("scan.pdf", None, scanned()).unwrap();
+        app.set_option("zoom", "200").unwrap();
+        app
+    });
+    crate::support::settle(&mut h);
+    let text = pdfcraft_engine::AddedText { text: "Box".into(), rect: [40.0, 200.0, 140.0, 220.0], size: 12.0, ..Default::default() };
+    assert!(h.state_mut().apply_edit(pdfcraft_engine::Edit::AddText { page: 0, text }));
+    assert!(h.state_mut().execute("edit.edit_text"));
+    crate::support::settle(&mut h);
+    let page = h.state().views[0].page_screen_rect(0).expect("on screen");
+    let k = page.width() / 300.0;
+    let at = |x: f64, y: f64| egui::pos2(page.left() + x as f32 * k, page.top() + (300.0 - y as f32) * k);
+    let c = at(90.0, 210.0);
+    h.hover_at(c);
+    h.run_steps(1);
+    h.drag_at(c);
+    h.run_steps(1);
+    h.drop_at(c);
+    h.run_steps(2);
+    // Its centre (x 90) dragged to x 151.5: half a point past the scan's centre (151), 1.5 past
+    // the page's (150).
+    let to = c + egui::vec2(61.5 * k, 0.0);
+    h.drag_at(c);
+    h.run_steps(1);
+    for s in 1..=6 {
+        h.hover_at(c + (to - c) * (s as f32 / 6.0));
+        h.run_steps(1);
+    }
+    h.drop_at(to);
+    h.run_steps(4);
+    let r = added_rects(&h)[0];
+    assert!(((r[0] + r[2]) / 2.0 - 150.0).abs() < 0.05, "centred on the page: {r:?}");
+}

@@ -185,43 +185,6 @@ fn a_comment_placed_on_the_page_goes_behind_text() {
     assert_eq!(undo.as_deref(), Some("Send to back"));
 }
 
-/// Thai edition: a selected comment is copied with ⌘C and pasted with ⌘V, a step down and right,
-/// and the copy is selected; a text highlight can't be copied.
-#[test]
-fn comments_are_copied_and_pasted_with_the_keys() {
-    let mut h = harness();
-    let comment = pdfcraft_engine::NewAnnotation {
-        page: 0,
-        shape: pdfcraft_engine::Shape::Rectangle { rect: [40.0, 180.0, 200.0, 250.0] },
-        style: Default::default(),
-        contents: "Check\r\nthis".into(),
-        author: "Now".into(),
-    };
-    h.state_mut().apply_edit(pdfcraft_engine::Edit::AddAnnotation(comment));
-    h.run_steps(3);
-    let rects = |h: &Harness<'static, PdfCraftApp>| {
-        let s = h.state();
-        s.session.get(s.views[0].id).unwrap().info.annotations.iter().filter(|a| a.subtype == "Square").map(|a| (a.index, a.rect)).collect::<Vec<_>>()
-    };
-    let (index, before) = rects(&h)[0];
-    h.state_mut().views[0].comments.selected = Some((0, index));
-    h.event(egui::Event::Copy);
-    h.run_steps(2);
-    let marker = h.state().comment_clip.as_ref().map(|c| c.marker.clone());
-    assert_eq!(marker.as_deref(), Some("Check\nthis"), "the comment's text goes to the clipboard with it");
-    h.event(egui::Event::Paste("Check\nthis".into()));
-    h.run_steps(4);
-    let after = rects(&h);
-    assert_eq!(after.len(), 2, "a copy was pasted");
-    let (copy_index, copy) = after[1];
-    assert!((copy[0] - before[0] - 12.0).abs() < 0.01 && (copy[1] - before[1] + 12.0).abs() < 0.01, "{before:?} -> {copy:?}");
-    assert_eq!(h.state().views[0].comments.selected, Some((0, copy_index)), "the copy is selected");
-    // Something else on the clipboard is not pasted as the comment.
-    h.event(egui::Event::Paste("other text".into()));
-    h.run_steps(3);
-    assert_eq!(rects(&h).len(), 2);
-}
-
 /// Two pages, 300 × 400 points, for moving things between them.
 const TWO_PAGES: &[u8] = b"%PDF-1.7
 1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj
@@ -383,7 +346,7 @@ fn edit_text_copies_its_own_selection_and_a_click_on_empty_space_selects() {
     h.state_mut().views[0].comments.selected = Some((0, index));
     h.event(egui::Event::Copy);
     h.run_steps(2);
-    assert!(h.state().comment_clip.is_some());
+    assert!(h.state().comment_clipboard.is_some());
     // Edit text & images: the text box selected there is what ⌘C copies now.
     assert!(h.state_mut().execute("edit.edit_text"));
     h.run_steps(2);

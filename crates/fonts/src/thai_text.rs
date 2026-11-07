@@ -120,7 +120,8 @@ pub fn first_undrawable_in(s: &str, faces: Faces) -> Option<char> {
         Faces::Standard { .. } => first_undrawable(s),
         Faces::Whole { face, .. } => {
             let thai = available();
-            s.chars().find(|c| !matches!(c, '\n' | '\r') && !crate::face_has(face, *c) && !crate::win_ansi_encodable(*c) && !(thai && is_thai(*c)))
+            s.chars()
+                .find(|c| !matches!(c, '\n' | '\r') && !crate::script_face_has(face, *c) && !crate::win_ansi_encodable(*c) && !(thai && is_thai(*c)))
         }
     }
 }
@@ -164,7 +165,7 @@ enum Seg {
 fn runs(line: &str, faces: Faces) -> Result<Vec<Run>, GlyphError> {
     let (bold, italic) = faces.style();
     let seg = |c: char| match faces {
-        Faces::Whole { face, .. } if crate::face_has(face, c) => {
+        Faces::Whole { face, .. } if crate::script_face_has(face, c) => {
             if is_thai(c) {
                 Seg::OwnThai
             } else {
@@ -417,10 +418,12 @@ pub fn invisible_font(doc: &mut Document) -> ObjRef {
     descriptor.set(b"Type".to_vec(), Object::name("FontDescriptor"));
     descriptor.set(b"FontName".to_vec(), Object::name(INVISIBLE_NAME));
     descriptor.set(b"Flags".to_vec(), Object::Int(4));
-    descriptor.set(b"FontBBox".to_vec(), Object::Array([0, 0, 1000, 1000].map(Object::Int).to_vec()));
+    // Ascent and descent of Thai ink (tone marks over upper vowels, tails and lower vowels under
+    // the line; Thai edition), so a word's box as text is the box of the scanned word.
+    descriptor.set(b"FontBBox".to_vec(), Object::Array([0, -160, 1000, 760].map(Object::Int).to_vec()));
     descriptor.set(b"ItalicAngle".to_vec(), Object::Int(0));
-    descriptor.set(b"Ascent".to_vec(), Object::Int(1000));
-    descriptor.set(b"Descent".to_vec(), Object::Int(0));
+    descriptor.set(b"Ascent".to_vec(), Object::Int(760));
+    descriptor.set(b"Descent".to_vec(), Object::Int(-160));
     descriptor.set(b"CapHeight".to_vec(), Object::Int(1000));
     descriptor.set(b"StemV".to_vec(), Object::Int(0));
     descriptor.set(b"FontFile2".to_vec(), Object::Ref(program));

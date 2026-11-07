@@ -34,14 +34,14 @@ use geometry::handle_pos;
 #[cfg(test)]
 pub(crate) use geometry::{caret_snap, snapped_caret};
 pub(crate) use geometry::{corner_ratio, page_rotation, resized};
-pub use geometry::{drawn_text_box_rect, text_box_rect};
+pub use geometry::{drawn_text_box_rect, snug_text_box_rect, text_box_rect};
 #[cfg(test)]
 use input::hover_tip;
 pub(crate) use input::{anchor, context, context_hit, describe, hit, keys, moving_on, nudge_keys, page_after_text, page_input};
 pub use menu::{CanvasAction, fill_picker, recent_custom_colours, remember_custom_colour, status_badge, swatch_grid, swatch_grid_hover};
+pub(crate) use menu::{MenuRights, attachment_items, border_colour_button, context_menu, quick_bar_colour, quick_bar_controls};
 #[cfg(test)]
 use menu::{RECENT_CUSTOM, same_colour};
-pub(crate) use menu::{attachment_items, context_menu, quick_bar_controls};
 pub(crate) use paint::paint_page;
 #[cfg(test)]
 use paint::{changing_points, drawn_shape, edited_in_view};
@@ -79,6 +79,9 @@ pub enum CommentTool {
     ReplaceText,
     Attach,
     Eraser,
+    /// Thai edition: a box of one colour on the page (an added picture, not a comment), to hide an
+    /// uneven background behind text; it can go behind the text with Arrange.
+    Cover,
 }
 
 /// The quick-bar flyout groups, in Acrobat's order: Comment ▸, Highlight ▸, Draw ▸.
@@ -102,11 +105,12 @@ pub const GROUPS: [&[CommentTool]; 3] = [
         CommentTool::PolyLine,
         CommentTool::Polygon,
         CommentTool::Cloud,
+        CommentTool::Cover,
         CommentTool::Eraser,
     ],
 ];
 
-pub const ALL: [CommentTool; 20] = [
+pub const ALL: [CommentTool; 21] = [
     CommentTool::FreehandHighlight,
     CommentTool::Eraser,
     CommentTool::ReplaceText,
@@ -127,6 +131,7 @@ pub const ALL: [CommentTool; 20] = [
     CommentTool::Arrow,
     CommentTool::Rectangle,
     CommentTool::Oval,
+    CommentTool::Cover,
 ];
 
 impl CommentTool {
@@ -153,6 +158,7 @@ impl CommentTool {
             Self::ReplaceText => "comment.replace",
             Self::Attach => "comment.attach",
             Self::Eraser => "comment.eraser",
+            Self::Cover => "comment.cover",
         }
     }
 
@@ -184,6 +190,7 @@ impl CommentTool {
             Self::ReplaceText => "Replace text",
             Self::Attach => "Attach file",
             Self::Eraser => "Eraser",
+            Self::Cover => "Cover box",
         }
     }
 
@@ -210,6 +217,7 @@ impl CommentTool {
             Self::ReplaceText => "replace",
             Self::Attach => "paperclip",
             Self::Eraser => "eraser",
+            Self::Cover => "paint-bucket",
         }
     }
 
@@ -229,7 +237,7 @@ impl CommentTool {
 
     /// Tools that draw with a drag gesture.
     pub fn draws(self) -> bool {
-        matches!(self, Self::Ink | Self::FreehandHighlight | Self::Line | Self::Arrow | Self::Rectangle | Self::Oval | Self::Eraser)
+        matches!(self, Self::Ink | Self::FreehandHighlight | Self::Line | Self::Arrow | Self::Rectangle | Self::Oval | Self::Eraser | Self::Cover)
     }
 
     /// Tools that place points one click at a time (double-click or Enter finishes).
@@ -239,12 +247,23 @@ impl CommentTool {
 
     /// Whether the line-thickness control applies.
     pub fn has_width(self) -> bool {
-        self.draws() || self.clicks_points() || matches!(self, Self::TextBox | Self::Callout)
+        (self.draws() && self != Self::Cover) || self.clicks_points() || matches!(self, Self::TextBox | Self::Callout)
+    }
+
+    /// Whether the opacity control applies: not to a cover box, which is a picture of one colour.
+    pub fn has_opacity(self) -> bool {
+        self != Self::Cover
     }
 
     /// Text comments may have no border while retaining visible text or fill.
     fn min_width(self) -> f64 {
         if matches!(self, Self::TextBox | Self::Callout) { 0.0 } else { 0.5 }
+    }
+
+    /// Whether the border-colour control applies to this tool: text boxes and callouts, whose
+    /// border takes the text colour unless it has its own.
+    pub fn has_border_color(self) -> bool {
+        matches!(self, Self::TextBox | Self::Callout)
     }
 
     /// Whether the fill-colour control applies to this tool.
@@ -264,7 +283,7 @@ impl CommentTool {
             Self::Ink => Shape::Ink { strokes: Vec::new() },
             Self::Line => Shape::Line { from: [0.0; 2], to: [0.0; 2], start: LineEnding::None, end: LineEnding::None },
             Self::Arrow => Shape::Line { from: [0.0; 2], to: [0.0; 2], start: LineEnding::None, end: LineEnding::OpenArrow },
-            Self::Rectangle => Shape::Rectangle { rect: [0.0; 4] },
+            Self::Rectangle | Self::Cover => Shape::Rectangle { rect: [0.0; 4] },
             Self::Oval => Shape::Oval { rect: [0.0; 4] },
             Self::Polygon => Shape::Polygon { vertices: Vec::new(), cloud: false },
             Self::Cloud => Shape::Polygon { vertices: Vec::new(), cloud: true },
@@ -309,16 +328,27 @@ pub struct CommentPrefs {
     pub group_tool: [CommentTool; 3],
     /// Hide hover previews on highlight annotations when they contain no comment text beyond the author.
     pub hide_empty_highlight_hover: bool,
+    /// The cover box's eyedropper is armed: the next click on a page takes its colour (Thai
+    /// edition; not kept across launches).
+    pub eyedropper: bool,
 }
 
 impl Default for CommentPrefs {
     fn default() -> Self {
         Self {
             author: login_name(),
-            styles: ALL.iter().map(|t| (*t, Style::default_for(&t.sample()))).collect(),
+            styles: ALL
+                .iter()
+                .map(|t| {
+                    let style = Style::default_for(&t.sample());
+                    // A cover box is white, the colour of most paper (Thai edition).
+                    (*t, if *t == CommentTool::Cover { Style { color: [1.0; 3], ..style } } else { style })
+                })
+                .collect(),
             pinned: false,
             group_tool: [CommentTool::Note, CommentTool::Highlight, CommentTool::Ink],
             hide_empty_highlight_hover: false,
+            eyedropper: false,
         }
     }
 }
@@ -353,10 +383,34 @@ impl CommentPrefs {
         }
     }
 
+    /// The text box tool's border shape (the other tools keep a rectangle).
+    pub fn set_border_shape(&mut self, tool: CommentTool, shape: pdfcraft_engine::BorderShape) {
+        if let Some((_, s)) = self.styles.iter_mut().find(|(t, _)| *t == tool) {
+            s.border_shape = if tool == CommentTool::TextBox { shape } else { pdfcraft_engine::BorderShape::Rectangle };
+        }
+    }
+
+    /// The tool's fill's own opacity (0–100 %) and a text box's or callout's text's (10–100 %),
+    /// for new comments; `None`: as the tool's opacity.
+    pub fn set_part_opacity(&mut self, tool: CommentTool, fill: Option<f64>, text: Option<f64>) {
+        if let Some((_, s)) = self.styles.iter_mut().find(|(t, _)| *t == tool) {
+            s.fill_opacity = fill.filter(|o| o.is_finite() && tool.has_fill()).map(|o| o.clamp(0.0, 1.0));
+            s.text_opacity = text.filter(|o| o.is_finite() && matches!(tool, CommentTool::TextBox | CommentTool::Callout)).map(|o| o.clamp(0.1, 1.0));
+        }
+    }
+
     /// The tool's fill (`None`: no fill).
     pub fn set_fill(&mut self, tool: CommentTool, fill: Option<Rgb>) {
         if let Some((_, s)) = self.styles.iter_mut().find(|(t, _)| *t == tool) {
             s.fill = if tool.has_fill() { fill.filter(|c| c.iter().all(|x| x.is_finite())).map(|c| c.map(|x| x.clamp(0.0, 1.0))) } else { None };
+        }
+    }
+
+    /// The border's own colour for new text boxes and callouts (`None`: the text colour).
+    pub fn set_border_color(&mut self, tool: CommentTool, color: Option<Rgb>) {
+        if let Some((_, s)) = self.styles.iter_mut().find(|(t, _)| *t == tool) {
+            s.border_color =
+                if tool.has_border_color() { color.filter(|c| c.iter().all(|x| x.is_finite())).map(|c| c.map(|x| x.clamp(0.0, 1.0))) } else { None };
         }
     }
 
@@ -389,6 +443,17 @@ pub(crate) fn tool_for_default(a: &Annotation, endings: Option<&[LineEnding]>) -
 
 fn arrow_ending(ending: LineEnding) -> bool {
     matches!(ending, LineEnding::OpenArrow | LineEnding::ClosedArrow | LineEnding::ROpenArrow | LineEnding::RClosedArrow)
+}
+
+/// Typed text (Fill & Sign's, or a typewriter's): no comment tool makes it, so Make Current
+/// Properties Default sets what Fill & Sign gives new text.
+pub(crate) fn typed_text(a: &Annotation) -> bool {
+    a.subtype == "FreeText" && a.intent.as_deref() == Some("FreeTextTypeWriter")
+}
+
+/// Whether Make Current Properties Default has defaults to set from `a`.
+pub(crate) fn defaultable(a: &Annotation) -> bool {
+    tool_for(a).is_some() || typed_text(a)
 }
 
 /// The tool that makes comments like `a` (for Make Current Properties Default).

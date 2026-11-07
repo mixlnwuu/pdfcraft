@@ -82,3 +82,37 @@ pub(crate) fn sample(cos: &pdfcraft_cos::Document, info: &PageInfo, page: usize,
     let ink = if luma(&paper) - luma(&ink) < 0.25 { [0.0; 3] } else { ink };
     Some((paper, ink))
 }
+
+/// The colour (RGB 0–1) the page shows around `at` (view space: points from the displayed page's
+/// top left), as rendered in its true colours: the median of a small square, so one stray dark
+/// pixel or a letter's edge doesn't decide it (Thai edition: the cover box's eyedropper). `None`
+/// when the point is off the page or the page can't be read.
+pub(crate) fn colour_at(cos: &pdfcraft_cos::Document, info: &PageInfo, page: usize, at: [f32; 2]) -> Option<[f64; 3]> {
+    const HALF: f32 = 1.5;
+    const SCALE_AT: f32 = 2.0;
+    if !(at[0].is_finite() && at[1].is_finite()) || at[0] < 0.0 || at[1] < 0.0 || at[0] > info.width || at[1] > info.height {
+        return None;
+    }
+    let clamp = |v: f32, max: f32| v.clamp(0.0, max.max(0.0)).floor() as u32;
+    let (page_w, page_h) = (info.width * SCALE_AT, info.height * SCALE_AT);
+    let (tx0, ty0) = (clamp((at[0] - HALF) * SCALE_AT, page_w), clamp((at[1] - HALF) * SCALE_AT, page_h));
+    let (tx1, ty1) = (clamp((at[0] + HALF) * SCALE_AT, page_w), clamp((at[1] + HALF) * SCALE_AT, page_h));
+    if tx1 <= tx0 || ty1 <= ty0 {
+        return None;
+    }
+    let tile = Tile { x: tx0, y: ty0, w: tx1 - tx0, h: ty1 - ty0 };
+    let bytes = if cos.is_modified() {
+        Arc::new(pdfcraft_cos::write_incremental(cos, &pdfcraft_cos::SaveOptions::default()).ok()?)
+    } else {
+        cos.bytes().clone()
+    };
+    let shot =
+        PageRenderer::new(bytes, RenderConfig::default()).render(RenderRequest { page, scale: SCALE_AT, tile: Some(tile), ..Default::default() });
+    if shot.error.is_some() {
+        return None;
+    }
+    let mut px: Vec<[f64; 3]> = shot.rgba.as_chunks::<4>().0.iter().map(|p| [p[0], p[1], p[2]].map(|c| f64::from(c) / 255.0)).collect();
+    let luma = |c: &[f64; 3]| 0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2];
+    px.sort_by(|a, b| luma(a).total_cmp(&luma(b)));
+    px.get(px.len() / 2).copied()
+}

@@ -511,6 +511,22 @@ pub(crate) fn page_input(cx: PageToolContext<'_>, view: &mut DocView) -> bool {
     {
         return false;
     }
+    // Delete or Backspace removes the selected objects on this page as one edit,
+    // like Edit::DeletePages removes pages. The key is consumed even when the pointer
+    // is off the page, because canvas keys belong to the selection while it exists.
+    if view.objects.page == Some(page)
+        && !view.objects.selected.is_empty()
+        && view.objects.gesture.is_none()
+        && view.pending_edit.is_none()
+        && !ui.ctx().egui_wants_keyboard_input()
+    {
+        let deleted =
+            ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Delete) || i.consume_key(egui::Modifiers::NONE, egui::Key::Backspace));
+        if deleted {
+            view.pending_edit = delete_edit_in(cx.doc, page, view.objects.selected.iter().map(|o| o.target).collect());
+            return true;
+        }
+    }
     let mut selection = std::mem::take(&mut view.objects);
     let result = input(&mut selection, cx, view);
     view.objects = selection;
@@ -746,7 +762,40 @@ pub(crate) fn arrange_menu(ui: &mut egui::Ui, view: &mut DocView, allowed: bool)
     true
 }
 
-pub(crate) fn delete_keys(ctx: &egui::Context, view: &mut DocView) {
+/// Ctrl+A in Edit text & images (Thai edition): every paragraph, added item and picture of
+/// `page` selected together, to copy, paste, move, delete or format at once; not a scan under its
+/// OCR text, which is the paper. `false` when nothing was selected (the notice says why when the
+/// page's objects can't be selected together).
+pub(crate) fn select_all(view: &mut DocView, doc: &Document, page: usize) -> bool {
+    let objects = match view.objects.inventory(doc, page) {
+        Ok(objects) => objects,
+        Err(_) => {
+            view.objects.notice = Some(tl!("This page contains objects that cannot be selected together.").into());
+            return false;
+        }
+    };
+    let ocr = doc.text_blocks(page).iter().any(|b| b.invisible);
+    let area = doc.info.pages.get(page).map_or(0.0, |p| f64::from(p.width) * f64::from(p.height));
+    let paper = |o: &EditableObject| ocr && o.target.kind == ObjectKind::Image && (o.rect[2] - o.rect[0]) * (o.rect[3] - o.rect[1]) >= 0.9 * area;
+    let all: Vec<EditableObject> = objects.into_iter().filter(|o| !paper(o)).collect();
+    if all.is_empty() {
+        return false;
+    }
+    if all.len() > MAX_MOVE_OBJECTS {
+        view.objects.notice = Some(tl!("Select at most 1000 objects at a time.").into());
+        return false;
+    }
+    // One selection at a time: the single-item ones give way.
+    view.content.selected = None;
+    view.image_selection = None;
+    let s = &mut view.objects;
+    s.clear();
+    s.page = Some(page);
+    s.selected = all;
+    true
+}
+
+pub(crate) fn delete_keys(ctx: &egui::Context, view: &mut DocView, doc: &Document) {
     if ctx.egui_wants_keyboard_input() || view.pending_edit.is_some() || view.objects.gesture.is_some() {
         return;
     }
@@ -757,7 +806,7 @@ pub(crate) fn delete_keys(ctx: &egui::Context, view: &mut DocView) {
     }
     // The selection stays until the edit applies: `prepare` clears it when the document changes,
     // and a refused delete (text used as a clipping path) leaves it selected.
-    view.pending_edit = delete_edit(page, view.objects.selected.iter().map(|o| o.target).collect());
+    view.pending_edit = delete_edit_in(doc, page, view.objects.selected.iter().map(|o| o.target).collect());
 }
 
 /// The edits that delete `targets` (indexes into one inventory of `page`), in an order that keeps
@@ -777,9 +826,38 @@ fn delete_edits(page: usize, mut targets: Vec<ObjectTarget>) -> Vec<Edit> {
         .collect()
 }
 
+/// [`delete_edits`] with the page's own paragraphs taken out by their lines, the last first, when
+/// two or more visible ones go (Thai edition): removed one paragraph at a time, the page's text
+/// was regrouped in between, and a row that was not selected (the one below, aligned with the
+/// first) joined a paragraph still to go and went with it. Invisible (OCR) paragraphs keep the
+/// paragraph edit, which also covers the scanned words.
+fn delete_edits_in(doc: &Document, page: usize, targets: Vec<ObjectTarget>) -> Vec<Edit> {
+    let blocks = doc.text_blocks(page);
+    let paragraphs: Vec<&pdfcraft_engine::TextBlock> =
+        targets.iter().filter(|t| t.kind == ObjectKind::Text).filter_map(|t| blocks.get(t.index)).collect();
+    if paragraphs.len() < 2 || paragraphs.iter().any(|b| b.invisible) {
+        return delete_edits(page, targets);
+    }
+    let mut lines: Vec<usize> = paragraphs.iter().flat_map(|b| b.lines.iter().copied()).collect();
+    lines.sort_unstable_by(|a, b| b.cmp(a));
+    lines.dedup();
+    let mut edits: Vec<Edit> = lines.into_iter().map(|line| Edit::EditTextLine { page, line, text: String::new() }).collect();
+    edits.extend(delete_edits(page, targets.into_iter().filter(|t| t.kind != ObjectKind::Text).collect()));
+    edits
+}
+
+/// [`delete_edit`] for the objects of `doc` ([`delete_edits_in`]).
+fn delete_edit_in(doc: &Document, page: usize, targets: Vec<ObjectTarget>) -> Option<Edit> {
+    batch_delete(delete_edits_in(doc, page, targets))
+}
+
 /// The edit that deletes `targets` as one undo step.
+#[cfg(test)]
 fn delete_edit(page: usize, targets: Vec<ObjectTarget>) -> Option<Edit> {
-    let mut edits = delete_edits(page, targets);
+    batch_delete(delete_edits(page, targets))
+}
+
+fn batch_delete(mut edits: Vec<Edit>) -> Option<Edit> {
     if edits.len() > 1 {
         // "Delete content" is an edit label already, so the history reads the same in every language.
         Some(Edit::Batch { label: "Delete content".into(), edits })
@@ -821,7 +899,8 @@ pub(crate) fn merge_edit(view: &DocView, doc: &Document) -> Option<(Edit, usize,
     let width = f64::from(info.pages.get(page)?.width);
     let deleted_added = objects.iter().filter(|o| o.target.kind == ObjectKind::Added).count();
     let index = added.len().checked_sub(deleted_added)?;
-    let mut edits = delete_edits(page, objects.iter().map(|o| o.target).collect());
+    // The page's own paragraphs go by their lines (Thai edition; see [`delete_edits_in`]).
+    let mut edits = delete_edits_in(doc, page, objects.iter().map(|o| o.target).collect());
     edits.push(Edit::AddText { page, text: pdfcraft_engine::fitted_text(&merged, width) });
     Some((Edit::Batch { label: "Merge text boxes".into(), edits }, page, index))
 }
@@ -834,7 +913,16 @@ fn merged_text(mut pieces: Vec<pdfcraft_engine::AddedText>) -> Option<pdfcraft_e
     pieces.sort_by(|a, b| mid(b).total_cmp(&mid(a)).then(a.rect[0].total_cmp(&b.rect[0])));
     let mut lines: Vec<Vec<pdfcraft_engine::AddedText>> = Vec::new();
     for p in pieces {
-        let level = |l: &Vec<pdfcraft_engine::AddedText>| l.first().is_some_and(|f| (mid(f) - mid(&p)).abs() <= f.size.min(p.size).max(1.0) * 0.5);
+        // On one row: middles level, or the boxes overlapping by half the lower one's height
+        // (Thai edition: boxes of one row set a little higher or lower kept their own rows, and
+        // the merged text came out of order).
+        let level = |l: &Vec<pdfcraft_engine::AddedText>| {
+            l.iter().any(|f| {
+                let overlap = f.rect[3].min(p.rect[3]) - f.rect[1].max(p.rect[1]);
+                let lower = (f.rect[3] - f.rect[1]).min(p.rect[3] - p.rect[1]);
+                (mid(f) - mid(&p)).abs() <= f.size.min(p.size).max(1.0) * 0.5 || (lower > 0.0 && overlap >= lower * 0.5)
+            })
+        };
         match lines.last_mut() {
             Some(line) if level(line) => line.push(p),
             _ => lines.push(vec![p]),
@@ -980,7 +1068,7 @@ pub(crate) fn selection_menu(ui: &mut egui::Ui, view: &mut DocView, doc: &Docume
     if ui.add_enabled(allowed, delete).clicked()
         && let Some(page) = view.objects.page
     {
-        view.pending_edit = delete_edit(page, view.objects.selected.iter().map(|o| o.target).collect());
+        view.pending_edit = delete_edit_in(doc, page, view.objects.selected.iter().map(|o| o.target).collect());
         ui.close();
     }
     ui.separator();
@@ -1038,6 +1126,111 @@ pub(crate) fn move_error(error: &pdfcraft_engine::EditError) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    /// A one-page PDF of `body` (Helvetica as /F1), 600 × 800 points.
+    fn page_of(body: &str) -> Vec<u8> {
+        let objects = [
+            "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
+            "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 600 800] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>".to_string(),
+            format!(
+                "<< /Length {} >>
+stream
+{body}
+endstream",
+                body.len()
+            ),
+            "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_string(),
+        ];
+        let mut out = b"%PDF-1.7
+"
+        .to_vec();
+        let mut offsets = Vec::new();
+        for (i, o) in objects.iter().enumerate() {
+            offsets.push(out.len());
+            out.extend_from_slice(
+                format!(
+                    "{} 0 obj
+{o}
+endobj
+",
+                    i + 1
+                )
+                .as_bytes(),
+            );
+        }
+        let xref = out.len();
+        out.extend_from_slice(
+            format!(
+                "xref
+0 {}
+0000000000 65535 f 
+",
+                objects.len() + 1
+            )
+            .as_bytes(),
+        );
+        for o in offsets {
+            out.extend_from_slice(
+                format!(
+                    "{o:010} 00000 n 
+"
+                )
+                .as_bytes(),
+            );
+        }
+        out.extend_from_slice(
+            format!(
+                "trailer
+<< /Size {} /Root 1 0 R >>
+startxref
+{xref}
+%%EOF
+",
+                objects.len() + 1
+            )
+            .as_bytes(),
+        );
+        out
+    }
+
+    /// Thai edition: deleting several paragraphs of a row takes their own lines only. One at a
+    /// time, the page regrouped in between and the row below, aligned with the first, went with
+    /// it (a Word form's "แขวง/ตำบล" row vanished on Merge and on Delete).
+    #[test]
+    fn deleting_paragraphs_of_a_row_keeps_the_row_below() {
+        let body = "BT /F1 12 Tf 85 600 Td (Nationality......) Tj ET BT /F1 12 Tf 290 600 Td (......House no......) Tj ET                     BT /F1 12 Tf 500 600 Td (........) Tj ET BT /F1 12 Tf 85 582 Td (District......) Tj ET BT /F1 12 Tf 324 582 Td (......Province) Tj ET";
+        let mut session = pdfcraft_engine::Session::new();
+        let id = session.open("row.pdf", None, std::sync::Arc::new(page_of(body)), None).unwrap();
+        let blocks = session.get(id).unwrap().text_blocks(0);
+        let row: Vec<ObjectTarget> =
+            blocks.iter().enumerate().filter(|(_, b)| (b.rect[1] - blocks[0].rect[1]).abs() < 1.0).map(|(i, _)| t(ObjectKind::Text, i)).collect();
+        assert!(row.len() >= 2, "{blocks:?}");
+        let edits = delete_edits_in(session.get(id).unwrap(), 0, row);
+        session.apply(id, Edit::Batch { label: "Delete content".into(), edits }).unwrap();
+        let left: Vec<String> = session.get(id).unwrap().text_blocks(0).iter().map(|b| b.text.clone()).collect();
+        assert!(left.iter().any(|t| t.contains("District")), "the row below stays: {left:?}");
+        assert!(!left.iter().any(|t| t.contains("Nationality") || t.contains("House")), "the row is gone: {left:?}");
+    }
+
+    /// Thai edition: boxes of one row merge left to right even when one sits a little higher (a
+    /// taller box beside shorter ones), rows top to bottom.
+    #[test]
+    fn merged_boxes_read_left_to_right_on_a_row() {
+        let b = |text: &str, rect: [f64; 4]| pdfcraft_engine::AddedText { text: text.into(), rect, size: 12.0, ..Default::default() };
+        let pieces = vec![
+            b("three", [300.0, 500.0, 360.0, 516.0]),
+            b("one", [40.0, 496.0, 100.0, 534.0]),
+            b("two", [150.0, 502.0, 220.0, 514.0]),
+            b("below", [40.0, 470.0, 100.0, 486.0]),
+        ];
+        let merged = merged_text(pieces).expect("merged");
+        assert_eq!(
+            merged.text,
+            "one two three
+below"
+        );
+    }
     use super::*;
 
     fn t(kind: ObjectKind, index: usize) -> ObjectTarget {
@@ -1070,5 +1263,61 @@ mod tests {
     fn one_object_deletes_with_its_own_edit_and_none_with_nothing() {
         assert!(matches!(delete_edit(2, vec![t(ObjectKind::Image, 4)]), Some(Edit::EditPageImage { page: 2, index: 4, .. })));
         assert!(delete_edit(0, Vec::new()).is_none());
+    }
+
+    /// Selecting content objects on a page and pressing Delete must queue one edit that removes
+    /// them: `page_input` selects and moves content objects but never consumes Delete or
+    /// Backspace, so pressing Delete currently does nothing (issue #3780).
+    #[test]
+    fn delete_key_removes_selected_object() {
+        use crate::canvas::page_pointer::PagePointer;
+        use crate::{PdfCraftApp, canvas::ViewDefaults};
+        use pdfcraft_engine::{DocId, ImageEdit};
+        use pdfcraft_render::PageInfo;
+
+        let mut app = PdfCraftApp::new();
+        let bytes = app.session.create_blank(300.0, 400.0, 1).unwrap();
+        app.open_bytes("blank.pdf", None, bytes.as_ref().clone()).unwrap();
+        let doc = app.session.get(app.views[0].id).unwrap();
+
+        let info = pdfcraft_render::DocInfo {
+            pages: vec![PageInfo { width: 300.0, height: 400.0, label: String::new(), crop: [0.0, 0.0, 300.0, 400.0], rotation: 0 }],
+            ..Default::default()
+        };
+        let mut view = DocView::new(DocId(1), &info, ViewDefaults::default());
+        view.objects.page = Some(0);
+        view.objects.selected.push(EditableObject {
+            target: ObjectTarget { kind: ObjectKind::Image, index: 0 },
+            rect: [50.0, 60.0, 100.0, 110.0],
+            content_type: "image",
+            text: None,
+        });
+
+        let ctx = egui::Context::default();
+        let xf = PageXform { rect: Rect::from_min_size(Pos2::ZERO, egui::vec2(800.0, 600.0)), rot: 0, pw: 800.0, ph: 600.0 };
+        let ptr = PagePointer { pos: None, ..Default::default() };
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, egui::vec2(800.0, 600.0))),
+                events: vec![egui::Event::Key {
+                    key: egui::Key::Delete,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::NONE,
+                }],
+                ..Default::default()
+            },
+            |ui| {
+                let resp = ui.interact(ui.available_rect_before_wrap(), egui::Id::unique("page"), egui::Sense::click());
+                page_input(PageToolContext { ui, resp: &resp, xf: &xf, ptr: &ptr, page: 0, doc, info: &info }, &mut view);
+            },
+        );
+        output.textures_delta.clear();
+
+        assert!(
+            matches!(&view.pending_edit, Some(Edit::EditPageImage { page: 0, index: 0, change: ImageEdit::Delete })),
+            "pressing Delete with one object selected must queue that object's deletion as one edit"
+        );
     }
 }

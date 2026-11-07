@@ -324,11 +324,16 @@ pub fn arrange_content(doc: &mut Document, page: usize, index: usize, how: Arran
         .position(|l| l.len() == 1 && l.first().and_then(Object::as_ref) == Some(a.obj))
         .ok_or_else(|| EditError::Invalid("the item is not one of the page's layers".into()))?;
     let last = layers.len().saturating_sub(1);
+    // Thai edition: when the page's own content is a picture covering the page (a scan or a
+    // photo of a document), that layer is the paper: an item sent to the back stops just above
+    // it, behind the text but still in sight (under the scan it was hidden and couldn't be
+    // dragged again).
+    let floor = usize::from(at > 0 && paper_at_bottom(doc, page, &layers, a.obj));
     let to = match how {
         Arrange::Front => last,
         Arrange::Forward => (at + 1).min(last),
-        Arrange::Backward => at.saturating_sub(1),
-        Arrange::Back => 0,
+        Arrange::Backward => at.saturating_sub(1).max(floor),
+        Arrange::Back => floor,
     };
     if to == at {
         return Err(EditError::Invalid(
@@ -364,6 +369,31 @@ pub fn arrange_content(doc: &mut Document, page: usize, index: usize, how: Arran
 /// A page's content entries as layers: how many marks drawn behind the page lead (they stay at the
 /// bottom), then the page's own content (one layer, with its q/Q wrapper), each added item, and
 /// each mark drawn on top, in drawing order.
+/// Whether the bottom layer of `page` is its own content painting a picture over most of the
+/// page (at least 80% of the crop box): the paper of a scan. Not when that layer is the item
+/// `item` itself or another added item.
+fn paper_at_bottom(doc: &Document, page: usize, layers: &[Vec<Object>], item: ObjRef) -> bool {
+    let Some(bottom) = layers.first() else { return false };
+    if bottom.iter().any(|o| o.as_ref() == Some(item))
+        || list_added(doc).iter().any(|x| x.page == page && bottom.iter().any(|o| o.as_ref() == Some(x.obj)))
+    {
+        return false;
+    }
+    let Some(p) = page_list(doc).into_iter().nth(page) else { return false };
+    let crop = p.crop(doc);
+    let area = ((crop[2] - crop[0]) * (crop[3] - crop[1])).abs();
+    if !(area.is_finite() && area > 0.0) {
+        return false;
+    }
+    crate::images::page_images(doc, page).is_ok_and(|images| {
+        images.iter().filter(|im| !im.is_form).any(|im| {
+            let r = im.visible_rect.unwrap_or(im.rect);
+            let (w, h) = ((r[2].min(crop[2]) - r[0].max(crop[0])).max(0.0), (r[3].min(crop[3]) - r[1].max(crop[1])).max(0.0));
+            w * h >= 0.8 * area
+        })
+    })
+}
+
 fn layers_of(doc: &Document, list: &[Object]) -> (usize, Vec<Vec<Object>>) {
     let is_mark = |o: &Object| matches!(crate::place::stream_tag(doc, o).as_deref(), Some("HeaderFooter" | "Watermark" | "Background"));
     let lead = list.iter().take_while(|o| is_mark(o)).count();
