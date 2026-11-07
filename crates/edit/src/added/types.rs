@@ -16,6 +16,10 @@ pub enum Family {
     /// TH Sarabun PSK from the craft-fonts build input: drawn from its own outlines (Thai and
     /// Latin alike), in its real bold and italic faces.
     Sarabun,
+    /// Sarabun (Google Fonts) from the craft-fonts build input, drawn like [`Family::Sarabun`]:
+    /// TH Sarabun New under the OFL, scaled so that at one size its letters are about half as
+    /// large again as TH Sarabun PSK's. Chrome and TCPDF embed it as `Sarabun-Regular`.
+    GoogleSarabun,
     /// A font installed on this machine (an index into `pdfcraft_fonts::installed_families`),
     /// drawn from its own outlines like [`Family::Sarabun`].
     Installed(u16),
@@ -25,9 +29,7 @@ impl Family {
     /// The standard families, then the craft-fonts document families this build includes.
     pub fn bundled() -> Vec<Family> {
         let mut all = vec![Family::Helvetica, Family::Times, Family::Courier];
-        if Family::Sarabun.craft(false, false).is_some() {
-            all.push(Family::Sarabun);
-        }
+        all.extend([Family::Sarabun, Family::GoogleSarabun].into_iter().filter(|f| f.craft(false, false).is_some()));
         all
     }
 
@@ -50,7 +52,7 @@ impl Family {
     pub fn has_thai(self) -> bool {
         match self {
             Family::Helvetica | Family::Times | Family::Courier => false,
-            Family::Sarabun => true,
+            Family::Sarabun | Family::GoogleSarabun => true,
             Family::Installed(_) => self.installed_family().is_some_and(|f| f.thai),
         }
     }
@@ -58,11 +60,14 @@ impl Family {
     /// The document family a PDF font name (`ABCDEF+AngsanaNew-Bold`) names, when this build or
     /// this machine has it: text edited in that font can then keep its look.
     pub fn like_font(base_font: &str) -> Option<Family> {
-        let plain = pdfcraft_fonts::plain_family(base_font);
-        if matches!(plain.as_str(), "thsarabunpsk" | "thsarabunnew" | "thsarabun" | "sarabun") && Family::Sarabun.craft(false, false).is_some() {
-            return Some(Family::Sarabun);
-        }
-        pdfcraft_fonts::installed_family_like(base_font).map(Family::Installed)
+        // Sarabun is not TH Sarabun: at one size its letters are half as large again, so text
+        // edited in the one's place would come out a third smaller (or larger) than the rest.
+        let bundled = match pdfcraft_fonts::plain_family(base_font).as_str() {
+            "thsarabunpsk" | "thsarabunnew" | "thsarabun" => Some(Family::Sarabun),
+            "sarabun" => Some(Family::GoogleSarabun),
+            _ => None,
+        };
+        bundled.filter(|f| f.craft(false, false).is_some()).or_else(|| pdfcraft_fonts::installed_family_like(base_font).map(Family::Installed))
     }
 
     fn installed_family(self) -> Option<&'static pdfcraft_fonts::InstalledFamily> {
@@ -78,6 +83,7 @@ impl Family {
             Family::Times => "Times",
             Family::Courier => "Courier",
             Family::Sarabun => "TH Sarabun PSK",
+            Family::GoogleSarabun => "Sarabun",
             Family::Installed(_) => self.installed_family().map_or("Helvetica", |f| f.name),
         }
     }
@@ -87,6 +93,7 @@ impl Family {
     pub fn craft(self, bold: bool, italic: bool) -> Option<ShapedScript> {
         match self {
             Family::Sarabun => pdfcraft_fonts::document_family_font("TH Sarabun PSK", bold, italic),
+            Family::GoogleSarabun => pdfcraft_fonts::document_family_font("Sarabun", bold, italic),
             Family::Installed(index) => pdfcraft_fonts::installed_face(index, bold, italic),
             Family::Helvetica | Family::Times | Family::Courier => None,
         }
@@ -96,7 +103,7 @@ impl Family {
     /// family).
     pub(crate) fn standard(self) -> Family {
         match self {
-            Family::Sarabun | Family::Installed(_) => Family::Helvetica,
+            Family::Sarabun | Family::GoogleSarabun | Family::Installed(_) => Family::Helvetica,
             other => other,
         }
     }
@@ -113,6 +120,10 @@ impl Family {
             (Family::Sarabun, true, false) => "THSarabunPSK-Bold",
             (Family::Sarabun, false, true) => "THSarabunPSK-Italic",
             (Family::Sarabun, true, true) => "THSarabunPSK-BoldItalic",
+            (Family::GoogleSarabun, false, false) => "Sarabun",
+            (Family::GoogleSarabun, true, false) => "Sarabun-Bold",
+            (Family::GoogleSarabun, false, true) => "Sarabun-Italic",
+            (Family::GoogleSarabun, true, true) => "Sarabun-BoldItalic",
             (Family::Helvetica, false, false) => "Helvetica",
             (Family::Helvetica, true, false) => "Helvetica-Bold",
             (Family::Helvetica, false, true) => "Helvetica-Oblique",
@@ -132,6 +143,8 @@ impl Family {
         let s = String::from_utf8_lossy(base);
         let family = if s.starts_with("THSarabunPSK") {
             Family::Sarabun
+        } else if s == "Sarabun" || s.starts_with("Sarabun-") {
+            Family::GoogleSarabun
         } else if s.starts_with("Times") {
             Family::Times
         } else if s.starts_with("Courier") {
@@ -149,7 +162,7 @@ impl Family {
     pub fn width(self, s: &str, size: f64, bold: bool, italic: bool) -> f64 {
         match self {
             // The face's own advances; the standard family's metrics for what it can't shape.
-            Family::Sarabun | Family::Installed(_) => self
+            Family::Sarabun | Family::GoogleSarabun | Family::Installed(_) => self
                 .craft(bold, false)
                 .and_then(|face| pdfcraft_fonts::shape_face(s, face, s.chars().any(is_thai)).ok())
                 .map_or_else(|| self.std14(bold, italic).text_width(s, size), |clusters| clusters.iter().map(|c| c.advance).sum::<f64>() * size),
@@ -161,7 +174,7 @@ impl Family {
     /// a craft-fonts or installed family).
     pub fn std14(self, bold: bool, italic: bool) -> Std14 {
         match (self.standard(), bold, italic) {
-            (Family::Sarabun | Family::Installed(_), ..) => Std14::Helvetica,
+            (Family::Sarabun | Family::GoogleSarabun | Family::Installed(_), ..) => Std14::Helvetica,
             (Family::Courier, false, false) => Std14::Courier,
             (Family::Courier, true, false) => Std14::CourierBold,
             (Family::Courier, false, true) => Std14::CourierOblique,
