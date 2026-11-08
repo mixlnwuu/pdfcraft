@@ -17,6 +17,15 @@ pub use labels::{BATCH_LABELS, EDIT_LABELS};
 pub(crate) use run::{EditCtx, check_permission, run_edit};
 
 /// Edits that can be applied to a document. Page indices are 0-based.
+/// Thai edition: a part of a paragraph (characters `chars`, counted in its text) and its colour
+/// (RGB 0–1) and size (points), for [`Edit::AddStyledText`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct TextRun {
+    pub chars: std::ops::Range<usize>,
+    pub color: [f64; 3],
+    pub size: f64,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Edit {
     RotatePages {
@@ -534,6 +543,14 @@ pub enum Edit {
         page: usize,
         rect: [f64; 4],
         bytes: Arc<Vec<u8>>,
+    },
+    /// Thai edition: Paste of a paragraph whose parts differ in colour or size: `text` added, made
+    /// text of the page, and each of `runs` given its own colour and size, so the copy looks like
+    /// the paragraph it came from.
+    AddStyledText {
+        page: usize,
+        text: AddedText,
+        runs: Vec<TextRun>,
     },
     /// Thai edition: added text box `index` of `page` becomes text of the page, drawn as it is, so
     /// Edit text can style a part of it.

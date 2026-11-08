@@ -322,7 +322,7 @@ impl PdfCraftApp {
             return None;
         }
         let added = |page: usize, index: usize| match &doc.added().iter().filter(|a| a.page == page).nth(index)?.content {
-            pdfcraft_engine::AddedContent::Text(t) => Some(TextClip { text: t.clone(), page, pastes: 0 }),
+            pdfcraft_engine::AddedContent::Text(t) => Some(TextClip { text: t.clone(), page, runs: Vec::new(), pastes: 0 }),
             pdfcraft_engine::AddedContent::Image(_) => None,
         };
         if let Some((page, index)) = view.content.selected {
@@ -338,7 +338,8 @@ impl PdfCraftApp {
                 let block = doc.text_blocks(page).get(target.index)?.clone();
                 let xf = view.page_xform(page)?;
                 let text = edit_text_ui::paragraph_as_added(&xf, &doc.info, page, &block)?;
-                Some(TextClip { text, page, pastes: 0 })
+                let runs = edit_text_ui::paragraph_runs(&block, &doc.text_lines(page));
+                Some(TextClip { text, page, runs, pastes: 0 })
             }
             _ => None,
         }
@@ -568,6 +569,12 @@ impl PdfCraftApp {
         let text = pdfcraft_engine::fitted_text(&text, page_width);
         let before = doc.added().iter().filter(|a| a.page == page).count();
         clip.pastes = clip.pastes.saturating_add(1);
+        // Thai edition: a paragraph of several colours or sizes is pasted as one, as text of the page.
+        if !clip.runs.is_empty() {
+            let runs = clip.runs.clone();
+            self.apply_edit(pdfcraft_engine::Edit::AddStyledText { page, text, runs });
+            return;
+        }
         if self.apply_edit(pdfcraft_engine::Edit::AddText { page, text }) {
             self.views[i].content.select_added = Some((page, before));
         }

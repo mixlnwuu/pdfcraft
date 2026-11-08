@@ -310,7 +310,7 @@ impl Edit {
             Edit::RemoveMarks { kind: MarkKind::HeaderFooter } => Label::of("Remove header & footer"),
             Edit::RemoveMarks { kind: MarkKind::Watermark } => Label::of("Remove watermark"),
             Edit::RemoveMarks { kind: MarkKind::Background } => Label::of("Remove background"),
-            Edit::AddText { .. } => Label::of("Add text"),
+            Edit::AddText { .. } | Edit::AddStyledText { .. } => Label::of("Add text"),
             Edit::AddImage { .. } | Edit::AddCover { .. } => Label::of("Add image"),
             Edit::ReleaseContent { .. } => Label::of("Convert to page text"),
             Edit::UpdateContent { .. } => Label::of("Edit content"),

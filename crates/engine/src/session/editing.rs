@@ -407,6 +407,7 @@ impl Session {
                     | Edit::AddImage { .. }
                     | Edit::AddCover { .. }
                     | Edit::ReleaseContent { .. }
+                    | Edit::AddStyledText { .. }
                     | Edit::UpdateContent { .. }
                     | Edit::DeleteContent { .. }
                     | Edit::MoveContentToPage { .. }

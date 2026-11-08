@@ -259,6 +259,9 @@ pub struct TextClip {
     /// The box, in display space of the page it was copied from.
     pub text: pdfcraft_engine::AddedText,
     pub page: usize,
+    /// Thai edition: the paragraph's parts that differ in colour or size, for the paste to keep
+    /// (empty when it has one look).
+    pub runs: Vec<pdfcraft_engine::TextRun>,
     /// How many times it was pasted: each paste lands a step further down and right.
     pub pastes: u32,
 }

@@ -283,6 +283,39 @@ pub(crate) fn missing_font_message(missing: &[(String, String)]) -> Option<Strin
 pub(crate) struct Painter {
     pub look: AddedText,
     pub keep: bool,
+    /// Thai edition: the copied paragraph's parts by colour and size (empty for one look),
+    /// given to a paragraph it paints, part by part, from its start.
+    pub runs: Vec<pdfcraft_engine::TextRun>,
+}
+
+/// Thai edition: `edit` (the painter's look over one paragraph) with `runs` laid over it from
+/// the paragraph's start, each its colour and size; parts past the paragraph's end are dropped.
+pub(crate) fn with_runs(mut edit: Edit, runs: &[pdfcraft_engine::TextRun]) -> Edit {
+    if let Edit::EditTextBlock { text, style, .. } = &mut edit {
+        let byte = |n: usize| text.char_indices().nth(n).map_or(text.len(), |(i, _)| i);
+        let base = style.size;
+        for run in runs {
+            let range = byte(run.chars.start)..byte(run.chars.end);
+            if range.start >= range.end {
+                continue;
+            }
+            style.ranges.push(pdfcraft_engine::RangeStyle {
+                range,
+                family: None,
+                resource: None,
+                size: (Some(run.size) != base && run.size.is_finite() && run.size > 0.0).then_some(run.size),
+                color: Some(run.color),
+                underline: None,
+                char_spacing: None,
+                scale: None,
+            });
+        }
+        // The whole paragraph's colour gives way to its parts'.
+        if !style.ranges.is_empty() {
+            style.color = None;
+        }
+    }
+    edit
 }
 
 #[cfg(test)]
@@ -400,6 +433,23 @@ startxref
             let after = centre(&s);
             assert!((after[0] - before[0]).abs() < 0.5 && (after[1] - before[1]).abs() < 0.5, "at {size} pt: {before:?} → {after:?}");
         }
+    }
+
+    /// Thai edition: the painter lays a copied paragraph's parts over the one it paints, from its
+    /// start: "Hard" blue and "ware" black on "Software", the part past its end dropped.
+    #[test]
+    fn the_painter_lays_each_copied_part_on_the_paragraph() {
+        let runs = [
+            pdfcraft_engine::TextRun { chars: 0..4, color: [0.0, 0.0, 1.0], size: 12.0 },
+            pdfcraft_engine::TextRun { chars: 4..8, color: [0.0; 3], size: 12.0 },
+            pdfcraft_engine::TextRun { chars: 20..30, color: [1.0, 0.0, 0.0], size: 12.0 },
+        ];
+        let edit =
+            Edit::EditTextBlock { page: 0, block: 3, text: "Software".into(), style: BlockStyle { color: Some([0.5; 3]), ..Default::default() } };
+        let Edit::EditTextBlock { style, .. } = with_runs(edit, &runs) else { panic!("still a paragraph edit") };
+        let parts: Vec<_> = style.ranges.iter().map(|r| (r.range.clone(), r.color, r.size)).collect();
+        assert_eq!(parts, vec![(0..4, Some([0.0, 0.0, 1.0]), Some(12.0)), (4..8, Some([0.0; 3]), Some(12.0))]);
+        assert_eq!(style.color, None, "the parts' colours, not one for the whole");
     }
 
     #[test]

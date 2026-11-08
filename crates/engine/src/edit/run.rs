@@ -115,6 +115,7 @@ pub(crate) fn check_permission(edit: &Edit, p: &pdfcraft_cos::Permissions) -> Re
         | Edit::AddImage { .. }
         | Edit::AddCover { .. }
         | Edit::ReleaseContent { .. }
+        | Edit::AddStyledText { .. }
         | Edit::UpdateContent { .. }
         | Edit::MoveObjects { .. }
         | Edit::DeleteContent { .. }
@@ -864,6 +865,35 @@ pub(crate) fn run_edit(doc: &mut pdfcraft_cos::Document, edit: &Edit, cx: &mut E
             match pdfcraft_edit::arrange_content(doc, *page, index, pdfcraft_edit::Arrange::Back) {
                 Ok(_) | Err(pdfcraft_edit::EditError::Invalid(_)) => {}
                 Err(e) => return Err(e.into()),
+            }
+        }
+        Edit::AddStyledText { page, text, runs } => {
+            let index = pdfcraft_edit::add_content(doc, *page, &AddedContent::Text(text.clone()))?;
+            pdfcraft_edit::release_content(doc, *page, index)?;
+            // The paragraph it became: the last one of the page with its text.
+            let blocks = pdfcraft_edit::text_blocks(doc, *page)?;
+            let same = |b: &pdfcraft_edit::TextBlock| {
+                b.editor_text.chars().filter(|c| !c.is_whitespace()).eq(text.text.chars().filter(|c| !c.is_whitespace()))
+            };
+            if let Some((block, b)) = blocks.iter().enumerate().rev().find(|(_, b)| same(b)) {
+                let byte = |n: usize| b.editor_text.char_indices().nth(n).map_or(b.editor_text.len(), |(i, _)| i);
+                let ranges = runs
+                    .iter()
+                    .filter(|r| r.chars.start < r.chars.end)
+                    .map(|r| pdfcraft_edit::RangeStyle {
+                        range: byte(r.chars.start)..byte(r.chars.end),
+                        family: None,
+                        resource: None,
+                        size: (r.size.is_finite() && r.size > 0.0 && (r.size - text.size).abs() > 0.01).then_some(r.size),
+                        color: Some(r.color),
+                        underline: None,
+                        char_spacing: None,
+                        scale: None,
+                    })
+                    .filter(|r| r.range.start < r.range.end)
+                    .collect();
+                let style = pdfcraft_edit::BlockStyle { ranges, ..Default::default() };
+                pdfcraft_edit::rewrite_block(doc, *page, block, Some(&b.editor_text), &style)?;
             }
         }
         Edit::ReleaseContent { page, index } => pdfcraft_edit::release_content(doc, *page, *index)?,

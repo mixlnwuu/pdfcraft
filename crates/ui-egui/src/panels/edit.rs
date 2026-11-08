@@ -293,7 +293,7 @@ fn format_section(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens) {
             shown = format!("{shown} ({})", tl!("not on this computer"));
         }
         let source_font = ed.source_font().map(str::to_owned);
-        painter_button(app, ui, i, &ed.look, source_font.as_deref());
+        painter_button(app, ui, i, &ed.look, ed.painter_runs(), source_font.as_deref());
         // A selection aligns the rows it touches; the caret alone, the whole paragraph.
         let paragraphs = crate::format_text_ui::Paragraphs { text: &ed.text, selection: ed.selection.clone(), tidy: false };
         let out = crate::format_text_ui::panel(
@@ -405,7 +405,7 @@ fn format_section(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens) {
     match selected {
         Some((page, index, text, page_width)) => {
             if let Some((i, _)) = app.active_ids() {
-                painter_button(app, ui, i, &text, None);
+                painter_button(app, ui, i, &text, Vec::new(), None);
             }
             let mut style = text.clone();
             added_text_format(ui, t, &mut style, None);
@@ -451,7 +451,14 @@ fn selected_boxes_format(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens) -
     if targets.len() > 1 {
         ui.label(egui::RichText::new(crate::i18n::fmt(tl!("{n} text boxes"), &[("n", &targets.len().to_string())])).color(t.text_muted));
     }
-    painter_button(app, ui, i, &first.text, first.source_font.as_deref());
+    // A paragraph of several colours or sizes alone: the painter copies each part (Thai edition).
+    let runs = match targets.as_slice() {
+        [only] if only.kind == pdfcraft_engine::ObjectKind::Text => {
+            doc.text_blocks(page).get(only.index).map_or(Vec::new(), |b| crate::edit_text_ui::paragraph_runs(b, &doc.text_lines(page)))
+        }
+        _ => Vec::new(),
+    };
+    painter_button(app, ui, i, &first.text, runs, first.source_font.as_deref());
     let mut look = first.text.clone();
     // Its underline shows as it is, so it can be turned off here too (Thai edition).
     let extras0 = crate::edit_text_ui::Extras { underline: first.text.underline, ..Default::default() };
@@ -498,7 +505,14 @@ fn selected_boxes_format(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens) -
 /// The format painter (Thai edition), as in Word: a click takes `look` for the next text box
 /// clicked, a double click for every box clicked until Esc. `source_font` is the paragraph's own
 /// font: one this computer lacks is named, as the boxes it is given to get a stand-in.
-fn painter_button(app: &mut PdfCraftApp, ui: &mut egui::Ui, i: usize, look: &pdfcraft_engine::AddedText, source_font: Option<&str>) {
+fn painter_button(
+    app: &mut PdfCraftApp,
+    ui: &mut egui::Ui,
+    i: usize,
+    look: &pdfcraft_engine::AddedText,
+    runs: Vec<pdfcraft_engine::TextRun>,
+    source_font: Option<&str>,
+) {
     let on = app.views.get(i).is_some_and(|v| v.format_painter.is_some());
     let resp = ui
         .horizontal(|ui| crate::widgets::icon_pill(ui, "brush", tl!("Format painter"), on))
@@ -507,7 +521,7 @@ fn painter_button(app: &mut PdfCraftApp, ui: &mut egui::Ui, i: usize, look: &pdf
     let Some(view) = app.views.get_mut(i) else { return };
     let keep = resp.double_clicked();
     if resp.clicked() || keep {
-        view.format_painter = if on && !keep { None } else { Some(crate::restyle::Painter { look: look.clone(), keep }) };
+        view.format_painter = if on && !keep { None } else { Some(crate::restyle::Painter { look: look.clone(), keep, runs }) };
         if view.format_painter.is_some()
             && let Some(font) = source_font.filter(|f| !crate::restyle::font_available(f))
             && let Some(message) =

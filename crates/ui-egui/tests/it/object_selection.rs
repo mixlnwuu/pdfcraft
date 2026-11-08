@@ -460,6 +460,54 @@ fn a_selected_paragraph_copies_and_pastes_as_a_text_box() {
     assert_eq!(texts(&objects(&h)), texts(&before), "the page's paragraphs are untouched");
 }
 
+/// Thai edition: a paragraph whose first letters are red pastes with them red, the rest as it was.
+#[test]
+fn a_pasted_paragraph_keeps_the_colours_of_its_parts() {
+    let mut h = harness();
+    let p = at(&h, 55.0, 70.0);
+    let source = objects(&h).into_iter().find(|o| o.target.kind == pdfcraft_engine::ObjectKind::Text && screen_contains(&h, o, p)).unwrap();
+    let id = h.state().views[0].id;
+    let block = h.state().session.get(id).unwrap().text_blocks(0)[source.target.index].clone();
+    let end = block.editor_text.char_indices().nth(2).map_or(2, |(i, _)| i);
+    let range = pdfcraft_engine::RangeStyle {
+        range: 0..end,
+        family: None,
+        resource: None,
+        size: None,
+        color: Some([1.0, 0.0, 0.0]),
+        underline: None,
+        char_spacing: None,
+        scale: None,
+    };
+    let style = pdfcraft_engine::BlockStyle { ranges: vec![range], ..Default::default() };
+    assert!(h.state_mut().apply_edit(pdfcraft_engine::Edit::EditTextBlock {
+        page: 0,
+        block: source.target.index,
+        text: block.editor_text.clone(),
+        style
+    }));
+    h.run_steps(3);
+    let reds = |h: &Harness<'static, PdfCraftApp>| {
+        let s = h.state();
+        s.session.get(s.views[0].id).unwrap().text_lines(0).iter().filter(|l| l.color[0] > 0.9 && l.color[1] < 0.1).count()
+    };
+    let before = reds(&h);
+    assert!(before > 0);
+    click(&mut h, p, Modifiers::NONE);
+    let text = objects(&h)
+        .into_iter()
+        .find(|o| o.target.kind == pdfcraft_engine::ObjectKind::Text && screen_contains(&h, o, p))
+        .and_then(|o| o.text)
+        .unwrap();
+    h.event(egui::Event::Copy);
+    h.run_steps(2);
+    h.event(egui::Event::Paste(text));
+    h.run_steps(4);
+    let s = h.state();
+    let lines = s.session.get(s.views[0].id).unwrap().text_lines(0);
+    assert_eq!(reds(&h), before * 2, "the copy's first letters are red too: {lines:?}");
+}
+
 /// Thai edition: Ctrl+drag of a paragraph drops a copy as a new text box where it was released;
 /// Ctrl+click still only toggles it in the selection.
 #[test]

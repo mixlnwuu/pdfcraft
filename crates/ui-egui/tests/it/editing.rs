@@ -5145,6 +5145,19 @@ fn a_colour_for_selected_text_colours_only_that_part() {
     let red = |c: [f64; 3]| c[0] > 0.8 && c[1] < 0.3;
     assert!(lines.iter().any(|l| l.text == "1" && red(l.color)), "{lines:?}");
     assert!(lines.iter().any(|l| l.text.trim_end() == "Page" && !red(l.color)), "{lines:?}");
+    // The format painter copies the format of what is selected: a black part, though red was
+    // picked last, then the red one.
+    h.key_press(Key::ArrowLeft);
+    h.run_steps(1);
+    h.key_press(Key::Home);
+    h.run_steps(1);
+    h.key_press_modifiers(Modifiers::SHIFT, Key::ArrowRight);
+    h.run_steps(2);
+    assert_eq!(h.state().views[0].line_editor.as_ref().map(|e| e.selection.clone()), Some(Some(0..1)));
+    h.get_by_label("Format painter").click();
+    h.run_steps(2);
+    let painted = h.state().views[0].painter_colour().expect("the painter is on");
+    assert!(!red(painted), "the black part's colour: {painted:?}");
 }
 
 /// Drag with the pointer from `from` to `to` in a few steps.

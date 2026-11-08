@@ -10961,3 +10961,20 @@ fn part_of_a_converted_thai_box_in_an_installed_font_takes_a_colour() {
     assert!(lines.iter().any(|l| l.text.starts_with("แบบ") && l.color[1] > 0.5 && l.color[0] < 0.1), "{lines:?}");
     assert!(lines.iter().any(|l| l.text.contains("ตรวจ") && l.color[1] < 0.1), "{lines:?}");
 }
+
+/// Thai edition: a paragraph pasted with parts of their own colour keeps them: it lands as text of
+/// the page, its first word red and the rest black.
+#[test]
+fn a_styled_paste_keeps_the_colours_of_its_parts() {
+    let mut s = Session::new();
+    let pdf = s.create_from_images(&[("scan.png".into(), crate::export::encode_png(2, 2, &[200; 16]).unwrap())]).unwrap();
+    let id = s.open("scan.pdf", None, pdf, None).unwrap();
+    let text = AddedText { text: "Hard ware".into(), rect: [10.0, 10.0, 200.0, 30.0], ..Default::default() };
+    let runs = vec![TextRun { chars: 0..4, color: [1.0, 0.0, 0.0], size: 12.0 }, TextRun { chars: 4..9, color: [0.0; 3], size: 12.0 }];
+    s.apply(id, Edit::AddStyledText { page: 0, text, runs }).unwrap();
+    let lines = s.get(id).unwrap().text_lines(0);
+    assert!(lines.iter().any(|l| l.text.trim() == "Hard" && l.color[0] > 0.9), "{lines:?}");
+    assert!(lines.iter().any(|l| l.text.contains("ware") && l.color[0] < 0.1), "{lines:?}");
+    s.undo(id).unwrap();
+    assert!(s.get(id).unwrap().text_lines(0).is_empty(), "one Undo removes the paste");
+}

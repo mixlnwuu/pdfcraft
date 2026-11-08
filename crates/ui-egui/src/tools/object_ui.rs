@@ -247,9 +247,15 @@ fn painter_input(cx: PageToolContext<'_>, view: &mut DocView) -> bool {
         && let Some(painter) = view.format_painter.clone()
     {
         if view.pending_edit.is_none()
-            && let Some(edit) = crate::restyle::restyle_edit(doc, page, &[target], &crate::restyle::all_of(&painter.look, None), None)
+            && let Some(edit) = crate::restyle::restyle_edit(doc, page, &[target], &crate::restyle::all_of(&painter.look, None), None).or_else(|| {
+                // Thai edition: a look the paragraph has already still lays the parts on it.
+                (!painter.runs.is_empty() && target.kind == ObjectKind::Text).then(|| {
+                    let text = doc.text_blocks(page).get(target.index).map(|b| b.editor_text.clone()).unwrap_or_default();
+                    Edit::EditTextBlock { page, block: target.index, text, style: Default::default() }
+                })
+            })
         {
-            view.pending_edit = Some(edit);
+            view.pending_edit = Some(if target.kind == ObjectKind::Text { crate::restyle::with_runs(edit, &painter.runs) } else { edit });
         }
         if !painter.keep {
             view.format_painter = None;

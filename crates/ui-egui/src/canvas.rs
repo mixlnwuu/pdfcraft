@@ -896,6 +896,11 @@ pub(crate) fn default_page_context_menu(ui: &mut egui::Ui, page: usize, at: [f64
 }
 
 impl DocView {
+    /// The colour the format painter carries, while it is on (Thai edition; for tests and agents).
+    pub fn painter_colour(&self) -> Option<[f64; 3]> {
+        self.format_painter.as_ref().map(|p| p.look.color)
+    }
+
     /// Whether a middle-button scrolling gesture is active (tests and automation).
     pub fn auto_scrolling(&self) -> bool {
         self.auto_scroll.active()
