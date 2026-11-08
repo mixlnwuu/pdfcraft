@@ -150,12 +150,32 @@ pub(crate) fn restyle_edit(
                 let b = blocks.get(t.index)?;
                 let mut style = paragraph_style(&crate::edit_text_ui::look_of(b), change);
                 // A paragraph of several colours or sizes (Thai edition) shows its first part's;
-                // picking that again still gives all of it that colour or size.
-                if (change.color.is_some() && style.color.is_none() || change.size.is_some() && style.size.is_none())
-                    && !crate::edit_text_ui::paragraph_runs(b, &doc.text_lines(page)).is_empty()
-                {
+                // picking that again still gives all of it that colour or size, and a change of
+                // anything else (bold, italic, font) keeps each part's own.
+                let runs = crate::edit_text_ui::paragraph_runs(b, &doc.text_lines(page));
+                if !runs.is_empty() {
                     style.color = style.color.or(change.color);
                     style.size = style.size.or(change.size);
+                    if style != BlockStyle::default() {
+                        let text = &b.editor_text;
+                        let byte = |n: usize| text.char_indices().nth(n).map_or(text.len(), |(i, _)| i);
+                        for run in &runs {
+                            let range = byte(run.chars.start)..byte(run.chars.end);
+                            let (color, size) = (change.color.is_none().then_some(run.color), change.size.is_none().then_some(run.size));
+                            if range.start < range.end && (color.is_some() || size.is_some()) {
+                                style.ranges.push(pdfcraft_engine::RangeStyle {
+                                    range,
+                                    family: None,
+                                    resource: None,
+                                    size,
+                                    color,
+                                    underline: None,
+                                    char_spacing: None,
+                                    scale: None,
+                                });
+                            }
+                        }
+                    }
                 }
                 // Aligned inside its own box (Thai edition): a single line would otherwise grow
                 // to the page's margin and be aligned there.
@@ -241,8 +261,15 @@ pub(crate) fn paint_preview(ui: &egui::Ui, painter: &egui::Painter, xf: &crate::
             },
             ObjectKind::Image => None,
         };
+        // A paragraph of several colours or sizes keeps them in the preview (Thai edition).
+        let runs = match target.kind {
+            ObjectKind::Text => {
+                blocks.get(target.index).map_or(Vec::new(), |b| crate::edit_text_ui::paragraph_runs(b, &doc.text_lines(selected_page)))
+            }
+            _ => Vec::new(),
+        };
         if let Some(t) = shown {
-            crate::content_ui::paint_look_preview(ui, painter, xf, page, info, &t);
+            crate::content_ui::paint_look_preview(ui, painter, xf, page, info, &t, &runs);
         }
     }
 }
@@ -537,6 +564,16 @@ startxref
         s.apply(id, edit).unwrap();
         let lines = s.get(id).unwrap().text_lines(0);
         assert!(lines.iter().all(|l| l.color[0] < 0.1), "all black: {lines:?}");
+        s.undo(id).unwrap();
+        // Bold, or a new size, keeps each part's colour.
+        for change in [LookPreview { bold: Some(true), ..Default::default() }, LookPreview { size: Some(20.0), ..Default::default() }] {
+            let edit = restyle_edit(s.get(id).unwrap(), 0, &target, &change, None).unwrap();
+            s.apply(id, edit).unwrap();
+            let lines = s.get(id).unwrap().text_lines(0);
+            assert!(lines.iter().any(|l| l.text.contains("ware") && l.color[0] > 0.9), "{change:?}: red stays: {lines:?}");
+            assert!(lines.iter().any(|l| l.text.contains("Hard") && l.color[0] < 0.1), "{change:?}: black stays: {lines:?}");
+            s.undo(id).unwrap();
+        }
     }
 
     #[test]

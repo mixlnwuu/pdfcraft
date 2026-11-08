@@ -1124,7 +1124,7 @@ pub(crate) fn paint_page(
             && cv.grab.is_none()
             && cv.draft.is_none()
             && let AddedContent::Text(t) = &a.content
-            && let Some(previewed) = paint_look_preview(ui, painter, xf, page, info, t)
+            && let Some(previewed) = paint_look_preview(ui, painter, xf, page, info, t, &[])
         {
             r = previewed;
         }
@@ -1946,7 +1946,17 @@ pub(crate) fn previewed_look(ctx: &egui::Context) -> Option<LookPreview> {
 /// The selected text as it would look with what the pointer rests on in Format text, drawn over
 /// the page until the pointer moves on. Nothing is changed in the document.
 /// Returns the box the previewed text takes, for the selection frame to follow.
-pub(crate) fn paint_look_preview(ui: &egui::Ui, painter: &egui::Painter, xf: &PageXform, page: usize, info: &DocInfo, t: &AddedText) -> Option<Rect> {
+/// `runs` (Thai edition): the parts of a paragraph of several colours or sizes, which keep their
+/// own where the preview doesn't change them.
+pub(crate) fn paint_look_preview(
+    ui: &egui::Ui,
+    painter: &egui::Painter,
+    xf: &PageXform,
+    page: usize,
+    info: &DocInfo,
+    t: &AddedText,
+    runs: &[pdfcraft_engine::TextRun],
+) -> Option<Rect> {
     let preview = previewed_look(ui.ctx())?;
     let mut look = t.clone();
     preview.apply(&mut look);
@@ -1960,7 +1970,37 @@ pub(crate) fn paint_look_preview(ui: &egui::Ui, painter: &egui::Painter, xf: &Pa
     let font = crate::theme::document_font(ui.ctx(), look.family, look.bold, look.italic, (look.size as f32 * zoom).max(4.0));
     let [cr, cg, cb] = look.color.map(|v| (v.clamp(0.0, 1.0) * 255.0) as u8);
     let color = Color32::from_rgb(cr, cg, cb);
-    let galley = painter.layout(t.text.clone(), font, color, new.width().max(8.0));
+    let galley = if runs.is_empty() {
+        painter.layout(t.text.clone(), font, color, new.width().max(8.0))
+    } else {
+        let mut job = egui::text::LayoutJob::default();
+        job.wrap.max_width = new.width().max(8.0);
+        let byte = |n: usize| t.text.char_indices().nth(n).map_or(t.text.len(), |(i, _)| i);
+        let mut at = 0;
+        for run in runs {
+            let (a, b) = (byte(run.chars.start).max(at), byte(run.chars.end));
+            if a >= b {
+                continue;
+            }
+            if a > at {
+                job.append(t.text.get(at..a).unwrap_or_default(), 0.0, egui::TextFormat { font_id: font.clone(), color, ..Default::default() });
+            }
+            let c = if preview.color.is_some() { look.color } else { run.color };
+            let size = if preview.size.is_some() { look.size } else { run.size };
+            let run_font = crate::theme::document_font(ui.ctx(), look.family, look.bold, look.italic, (size as f32 * zoom).max(4.0));
+            let [r, g, b2] = c.map(|v| (v.clamp(0.0, 1.0) * 255.0) as u8);
+            job.append(
+                t.text.get(a..b).unwrap_or_default(),
+                0.0,
+                egui::TextFormat { font_id: run_font, color: Color32::from_rgb(r, g, b2), ..Default::default() },
+            );
+            at = b;
+        }
+        if at < t.text.len() {
+            job.append(t.text.get(at..).unwrap_or_default(), 0.0, egui::TextFormat { font_id: font.clone(), color, ..Default::default() });
+        }
+        painter.layout_job(job)
+    };
     let x = match t.align {
         TextAlign::Left | TextAlign::Justify => new.left(),
         TextAlign::Center => new.center().x - galley.size().x / 2.0,
