@@ -567,6 +567,23 @@ impl PdfCraftApp {
         let blocked = view.content.blocked().is_some();
         let Some(d) = view.content.draft.as_mut() else { return };
         let committed = d.style.clone();
+        // Thai edition: a colour or size for a selected part of the box makes it text of the page,
+        // that part in its own colour and size, as one undo step (an added box has one look).
+        if !blocked
+            && (style.color != committed.color || style.size != committed.size)
+            && let Some(edit) = crate::content_ui::part_styled_draft(
+                d,
+                &style,
+                self.session.get(view.id).and_then(|doc| doc.info.pages.get(d.page)).map(|p| f64::from(p.width)),
+            )
+        {
+            if self.apply_edit(edit)
+                && let Some(v) = self.views.get_mut(index)
+            {
+                v.content.draft = None;
+            }
+            return;
+        }
         // Aligning stops the box following its text (Thai edition, the owner's choice): the text
         // is aligned inside the box as it stands.
         if style.align != committed.align || style.aligns != committed.aligns {

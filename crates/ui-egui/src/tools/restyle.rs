@@ -288,6 +288,20 @@ pub(crate) struct Painter {
     pub runs: Vec<pdfcraft_engine::TextRun>,
 }
 
+/// Thai edition: `painter`'s look and parts on added text box `index` of `page`: the box in the
+/// painter's look, made text of the page with each part in its colour and size. `None` for a
+/// picture.
+pub(crate) fn paint_runs_on_added(doc: &Document, page: usize, index: usize, painter: &Painter) -> Option<Edit> {
+    let added = doc.added().iter().filter(|a| a.page == page).nth(index)?;
+    let AddedContent::Text(old) = &added.content else { return None };
+    let mut text = old.clone();
+    all_of(&painter.look, None).apply(&mut text);
+    let page_width = doc.info.pages.get(page).map(|p| f64::from(p.width));
+    let text = crate::content_ui::restyled(old, text, page_width);
+    let add = Edit::AddStyledText { page, text, runs: painter.runs.clone() };
+    Some(Edit::Batch { label: "Edit text".into(), edits: vec![Edit::DeleteContent { page, index }, add] })
+}
+
 /// Thai edition: `edit` (the painter's look over one paragraph) with `runs` laid over it from
 /// the paragraph's start, each its colour and size; parts past the paragraph's end are dropped.
 pub(crate) fn with_runs(mut edit: Edit, runs: &[pdfcraft_engine::TextRun]) -> Edit {
@@ -450,6 +464,51 @@ startxref
         let parts: Vec<_> = style.ranges.iter().map(|r| (r.range.clone(), r.color, r.size)).collect();
         assert_eq!(parts, vec![(0..4, Some([0.0, 0.0, 1.0]), Some(12.0)), (4..8, Some([0.0; 3]), Some(12.0))]);
         assert_eq!(style.color, None, "the parts' colours, not one for the whole");
+    }
+
+    /// Thai edition: a format of several colours painted on an added box, or a colour given to a
+    /// selected part of a box being typed, makes it text of the page with those parts coloured,
+    /// and one Undo brings the box back.
+    #[test]
+    fn parts_painted_or_coloured_on_an_added_box_take_their_colours() {
+        let mut s = pdfcraft_engine::Session::new();
+        let pdf = s.create_from_images(&[("scan.png".into(), pdfcraft_engine::export::encode_png(2, 2, &[200; 16]).unwrap())]).unwrap();
+        let id = s.open("scan.pdf", None, pdf, None).unwrap();
+        let text = AddedText { text: "Hardware".into(), rect: [10.0, 10.0, 200.0, 30.0], ..Default::default() };
+        s.apply(id, Edit::AddText { page: 0, text: text.clone() }).unwrap();
+        let red = |c: [f64; 3]| c[0] > 0.9 && c[1] < 0.1;
+        let runs = vec![
+            pdfcraft_engine::TextRun { chars: 0..4, color: [1.0, 0.0, 0.0], size: 12.0 },
+            pdfcraft_engine::TextRun { chars: 4..8, color: [0.0; 3], size: 12.0 },
+        ];
+        let painter = Painter { look: text.clone(), keep: false, runs };
+        let edit = paint_runs_on_added(s.get(id).unwrap(), 0, 0, &painter).unwrap();
+        s.apply(id, edit).unwrap();
+        let lines = s.get(id).unwrap().text_lines(0);
+        assert!(s.get(id).unwrap().added().is_empty(), "text of the page now");
+        assert!(lines.iter().any(|l| l.text.trim() == "Hard" && red(l.color)), "{lines:?}");
+        assert!(lines.iter().any(|l| l.text.trim() == "ware" && !red(l.color)), "{lines:?}");
+        s.undo(id).unwrap();
+        assert_eq!(s.get(id).unwrap().added().len(), 1, "one Undo brings the box back");
+        // A part of a box being typed, coloured red.
+        let d = crate::content_ui::TextDraft {
+            page: 0,
+            index: Some(0),
+            rect: text.rect,
+            text: "Hardware".into(),
+            style: AddedText { text: "Hardware".into(), ..text.clone() },
+            focus: true,
+            auto: false,
+            selection: Some(4..8),
+            typing_from: None,
+        };
+        let edit = crate::content_ui::part_styled_draft(&d, &AddedText { color: [1.0, 0.0, 0.0], ..text.clone() }, Some(600.0)).unwrap();
+        s.apply(id, edit).unwrap();
+        let lines = s.get(id).unwrap().text_lines(0);
+        assert!(lines.iter().any(|l| l.text.trim() == "ware" && red(l.color)), "{lines:?}");
+        assert!(lines.iter().any(|l| l.text.trim() == "Hard" && !red(l.color)), "{lines:?}");
+        let whole = crate::content_ui::TextDraft { selection: Some(0..8), ..d };
+        assert!(crate::content_ui::part_styled_draft(&whole, &text, None).is_none(), "all of it: the box's own colour");
     }
 
     #[test]

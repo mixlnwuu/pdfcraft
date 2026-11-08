@@ -246,7 +246,15 @@ fn painter_input(cx: PageToolContext<'_>, view: &mut DocView) -> bool {
     if ptr.pressed().is_some()
         && let Some(painter) = view.format_painter.clone()
     {
+        // Thai edition: a format of several colours or sizes painted on an added box makes it text
+        // of the page in those parts, as one undo step.
         if view.pending_edit.is_none()
+            && !painter.runs.is_empty()
+            && target.kind == ObjectKind::Added
+            && let Some(edit) = crate::restyle::paint_runs_on_added(doc, page, target.index, &painter)
+        {
+            view.pending_edit = Some(edit);
+        } else if view.pending_edit.is_none()
             && let Some(edit) = crate::restyle::restyle_edit(doc, page, &[target], &crate::restyle::all_of(&painter.look, None), None).or_else(|| {
                 // Thai edition: a look the paragraph has already still lays the parts on it.
                 (!painter.runs.is_empty() && target.kind == ObjectKind::Text).then(|| {

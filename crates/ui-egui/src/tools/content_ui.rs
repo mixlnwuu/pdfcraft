@@ -1553,6 +1553,29 @@ fn finish(cv: &mut ContentView, d: TextDraft, added: &[Added], info: &DocInfo) -
     }
 }
 
+/// Thai edition: draft `d` with a selected part (not all of it) given `style`'s colour and size:
+/// the box as it was, made text of the page with that part in its own colour and size (replacing
+/// the box being retyped, in one step). `None` without such a part.
+pub(crate) fn part_styled_draft(d: &TextDraft, style: &AddedText, page_width: Option<f64>) -> Option<Edit> {
+    let text = d.text.trim_end().to_string();
+    let sel = d.selection.clone().filter(|r| r.start < r.end && r.end <= text.len() && !(r.start == 0 && r.end >= text.len()))?;
+    let chars = |at: usize| text.get(..at).map(|s| s.chars().count());
+    let (s, e, n) = (chars(sel.start)?, chars(sel.end)?, text.chars().count());
+    let base = &d.style;
+    let box_text = AddedText { text: text.clone(), rect: d.rect, ..base.clone() };
+    let box_text = match page_width {
+        Some(w) if d.auto => pdfcraft_engine::fitted_text(&box_text, w),
+        _ => box_text,
+    };
+    let run = |chars: std::ops::Range<usize>, t: &AddedText| pdfcraft_engine::TextRun { chars, color: t.color, size: t.size };
+    let runs = vec![run(0..s, base), run(s..e, style), run(e..n, base)].into_iter().filter(|r| r.chars.start < r.chars.end).collect();
+    let add = Edit::AddStyledText { page: d.page, text: box_text, runs };
+    Some(match d.index {
+        Some(index) => Edit::Batch { label: "Edit text".into(), edits: vec![Edit::DeleteContent { page: d.page, index }, add] },
+        None => add,
+    })
+}
+
 /// A restyled item: one whose box hugged its text is refitted to the new font or size. A new
 /// size (Thai edition) grows or shrinks the box about its centre, so the text stays where it was.
 pub(crate) fn restyled(old: &AddedText, new: AddedText, page_width: Option<f64>) -> AddedText {
