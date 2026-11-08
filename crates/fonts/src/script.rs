@@ -102,6 +102,26 @@ impl Flatten {
 
 const STEPS: usize = 8;
 
+/// A pen that only counts what is drawn (Thai edition: [`crate::embedding::draws`]).
+#[derive(Default)]
+pub(crate) struct CountingPen {
+    pub segments: usize,
+}
+
+impl OutlinePen for CountingPen {
+    fn move_to(&mut self, _: f32, _: f32) {}
+    fn line_to(&mut self, _: f32, _: f32) {
+        self.segments += 1;
+    }
+    fn quad_to(&mut self, _: f32, _: f32, _: f32, _: f32) {
+        self.segments += 1;
+    }
+    fn curve_to(&mut self, _: f32, _: f32, _: f32, _: f32, _: f32, _: f32) {
+        self.segments += 1;
+    }
+    fn close(&mut self) {}
+}
+
 impl OutlinePen for Flatten {
     fn move_to(&mut self, x: f32, y: f32) {
         self.close();
