@@ -10858,3 +10858,28 @@ fn a_cover_box_lands_behind_text_but_above_the_scan() {
     s.undo(id).unwrap();
     assert_eq!(s.get(id).unwrap().added().iter().filter(|a| a.page == 0).count(), 1, "each box is one undo step");
 }
+
+/// Thai edition: a cover box reports its colour, and a one-pixel picture of another colour
+/// recolours it in place; a real picture reports none.
+#[test]
+fn a_cover_box_tells_its_colour_and_takes_another() {
+    let mut s = Session::new();
+    let pdf = s.create_from_images(&[("scan.png".into(), crate::export::encode_png(2, 2, &[200; 16]).unwrap())]).unwrap();
+    let id = s.open("scan.pdf", None, pdf, None).unwrap();
+    let red = crate::export::encode_png(1, 1, &[255, 0, 0, 255]).unwrap();
+    s.apply(id, Edit::AddCover { page: 0, rect: [10.0, 10.0, 60.0, 40.0], bytes: Arc::new(red) }).unwrap();
+    let doc = s.get(id).unwrap();
+    assert_eq!(doc.added_solid_colour(0, 0), Some([1.0, 0.0, 0.0]));
+    let rect = |s: &Session| match &s.get(id).unwrap().added()[0].content {
+        pdfcraft_edit::Content::Image(i) => i.rect,
+        _ => panic!("an image"),
+    };
+    let before = rect(&s);
+    let blue = crate::export::encode_png(1, 1, &[0, 0, 255, 255]).unwrap();
+    s.apply(id, Edit::ReplaceImage { page: 0, index: 0, name: "cover.png".into(), bytes: Arc::new(blue) }).unwrap();
+    assert_eq!(s.get(id).unwrap().added_solid_colour(0, 0), Some([0.0, 0.0, 1.0]));
+    assert_eq!(rect(&s), before, "the box stays where it was");
+    let photo = crate::export::encode_png(2, 1, &[0, 0, 0, 255, 9, 9, 9, 255]).unwrap();
+    s.apply(id, Edit::AddImage { page: 0, rect: Some([100.0, 100.0, 140.0, 120.0]), name: "p.png".into(), bytes: Arc::new(photo) }).unwrap();
+    assert_eq!(s.get(id).unwrap().added_solid_colour(0, 1), None);
+}

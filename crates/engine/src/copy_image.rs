@@ -72,6 +72,26 @@ impl Document {
         };
         picture_file(&editor.cos, img.image)
     }
+
+    /// Thai edition: the colour (RGB 0–1) of an added picture of one pixel, as Comment ▸ Cover box
+    /// draws (`index` among `page`'s added items); `None` for any other item. The size is read
+    /// first, so a real picture is never decoded to find out.
+    pub fn added_solid_colour(&self, page: usize, index: usize) -> Option<[f64; 3]> {
+        let editor = self.editor.as_ref()?;
+        let item = self.added().iter().filter(|a| a.page == page).nth(index)?;
+        let pdfcraft_edit::Content::Image(img) = &item.content else { return None };
+        let one = match &*editor.cos.get(img.image) {
+            Object::Stream(s) => s.dict.int(b"Width") == Some(1) && s.dict.int(b"Height") == Some(1),
+            _ => false,
+        };
+        if !one {
+            return None;
+        }
+        let (_, file) = pdfcraft_create::image_file(&editor.cos, img.image).ok()?;
+        let px = image::load_from_memory(&file).ok()?.to_rgb8();
+        let p = px.get_pixel_checked(0, 0)?;
+        Some(p.0.map(|c| f64::from(c) / 255.0))
+    }
 }
 
 /// An added image's picture as a file: [`pdfcraft_create::image_file`], except that a JPEG 2000

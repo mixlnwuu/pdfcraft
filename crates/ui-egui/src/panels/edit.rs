@@ -364,11 +364,24 @@ fn format_section(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens) {
         let (page, index) = app.views[i].content.selected?;
         let doc = app.session.get(id)?;
         match &doc.added().iter().filter(|a| a.page == page).nth(index)?.content {
-            pdfcraft_engine::AddedContent::Image(img) => Some((page, index, img.clone())),
+            pdfcraft_engine::AddedContent::Image(img) => Some((page, index, img.clone(), doc.added_solid_colour(page, index))),
             _ => None,
         }
     });
-    if let Some((page, index, img)) = image {
+    if let Some((page, index, img, solid)) = image {
+        // Thai edition: a cover box (a picture of one colour) takes another colour after it is drawn.
+        if let Some(current) = solid {
+            let mut picked = None;
+            ui.menu_button(tl!("Colour"), |ui| {
+                picked = crate::comments::swatch_grid(ui, Some(current));
+                if picked.is_some() {
+                    ui.close();
+                }
+            });
+            if let Some(edit) = picked.and_then(|c| recolour_cover(page, index, c)) {
+                app.apply_edit(edit);
+            }
+        }
         match crate::content_ui::image_panel(ui, t, &img) {
             Some(crate::content_ui::ImageAction::Update(content)) => {
                 app.apply_edit(pdfcraft_engine::Edit::UpdateContent { page, index, content });
@@ -413,6 +426,14 @@ fn format_section(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens) {
         }
         None => {}
     }
+}
+
+/// Thai edition: the edit giving cover box `index` of `page` colour `c` (RGB 0–1): its one-pixel
+/// picture replaced by one of the new colour, its box kept, as one undo step.
+pub(crate) fn recolour_cover(page: usize, index: usize, c: [f64; 3]) -> Option<pdfcraft_engine::Edit> {
+    let [r, g, b] = c.map(|v| (v.clamp(0.0, 1.0) * 255.0).round() as u8);
+    let png = pdfcraft_engine::export::encode_png(1, 1, &[r, g, b, 255]).ok()?;
+    Some(pdfcraft_engine::Edit::ReplaceImage { page, index, name: "cover.png".into(), bytes: std::sync::Arc::new(png) })
 }
 
 /// Format text for the text boxes selected on the page (Thai edition): one click, Shift+click or
