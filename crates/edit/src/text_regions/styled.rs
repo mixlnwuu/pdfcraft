@@ -179,6 +179,11 @@ impl CharacterPreparation<'_> {
                     name
                 } else if let Some(name) = resolver.encodable_font(source, &text, requested)? {
                     name
+                } else if requested.is_none() && is_thai(ch) {
+                    // Thai the source font can't encode one letter at a time (a subset written
+                    // by glyph): shaped as a run in the source, or a complete Thai face like it,
+                    // rather than letter by letter in a fallback face that has no Thai (Thai edition).
+                    source.font.clone()
                 } else if needs_type3(&text) {
                     fallback.prepare(source, ch, &text, chars.len())?
                 } else {

@@ -10917,3 +10917,47 @@ fn a_text_box_converted_to_page_text_takes_colour_in_part() {
     s.undo(id).unwrap();
     assert_eq!(s.get(id).unwrap().added().len(), 1, "Undo brings the box back");
 }
+
+/// Thai edition: a Thai text box set in a font installed on this machine, converted to page text,
+/// takes a colour on part of it (its subset can't encode a letter alone: the part is shaped as a
+/// run, not drawn letter by letter in a fallback face without Thai). Skipped on a machine without
+/// such a font.
+#[test]
+fn part_of_a_converted_thai_box_in_an_installed_font_takes_a_colour() {
+    let fams = pdfcraft_fonts::installed_families();
+    let Some(i) = ["Tahoma", "Leelawadee UI", "Microsoft Sans Serif"].iter().find_map(|n| fams.iter().position(|f| f.name == *n)) else {
+        eprintln!("skipped: no installed Thai font");
+        return;
+    };
+    let mut s = Session::new();
+    let pdf = s.create_from_images(&[("scan.png".into(), crate::export::encode_png(2, 2, &[200; 16]).unwrap())]).unwrap();
+    let id = s.open("scan.pdf", None, pdf, None).unwrap();
+    let family = pdfcraft_edit::Family::Installed(u16::try_from(i).unwrap());
+    let text = AddedText {
+        text: "แบบฟอร์มตรวจเครื่อง".into(), rect: [10.0, 10.0, 400.0, 60.0], size: 36.0, family, ..Default::default()
+    };
+    s.apply(id, Edit::AddText { page: 0, text }).unwrap();
+    s.apply(id, Edit::ReleaseContent { page: 0, index: 0 }).unwrap();
+    let b = s.get(id).unwrap().text_blocks(0)[0].clone();
+    let end = "แบบ".len();
+    let range = RangeStyle {
+        range: 0..end,
+        family: None,
+        resource: None,
+        size: None,
+        color: Some([0.0, 0.6, 0.2]),
+        underline: None,
+        char_spacing: None,
+        scale: None,
+    };
+    s.apply(
+        id,
+        Edit::EditTextBlock { page: 0, block: 0, text: b.editor_text.clone(), style: BlockStyle { ranges: vec![range], ..Default::default() } },
+    )
+    .unwrap();
+    let lines = s.get(id).unwrap().text_lines(0);
+    let all: String = lines.iter().map(|l| l.text.as_str()).collect();
+    assert_eq!(all.replace(' ', ""), "แบบฟอร์มตรวจเครื่อง", "{lines:?}");
+    assert!(lines.iter().any(|l| l.text.starts_with("แบบ") && l.color[1] > 0.5 && l.color[0] < 0.1), "{lines:?}");
+    assert!(lines.iter().any(|l| l.text.contains("ตรวจ") && l.color[1] < 0.1), "{lines:?}");
+}
