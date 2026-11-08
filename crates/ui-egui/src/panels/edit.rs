@@ -458,6 +458,7 @@ fn selected_boxes_format(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens) -
         }
         _ => Vec::new(),
     };
+    let runs_shown = runs.clone();
     painter_button(app, ui, i, &first.text, runs, first.source_font.as_deref());
     let mut look = first.text.clone();
     // Its underline shows as it is, so it can be turned off here too (Thai edition).
@@ -483,7 +484,12 @@ fn selected_boxes_format(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens) -
         look.family = family;
     }
     let underline = (extras.underline != extras0.underline).then_some(extras.underline);
-    let change = crate::restyle::change_between(&first.text, &look, underline);
+    let mut change = crate::restyle::change_between(&first.text, &look, underline);
+    // Thai edition: the colour shown for a paragraph of several colours is its first part's, so
+    // a swatch of that colour clicked still colours all of it.
+    if change.is_empty() && out.colour_picked && !runs_shown.is_empty() {
+        change.color = Some(look.color);
+    }
     if change.is_empty() {
         return true;
     }

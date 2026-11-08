@@ -149,6 +149,14 @@ pub(crate) fn restyle_edit(
             ObjectKind::Text => {
                 let b = blocks.get(t.index)?;
                 let mut style = paragraph_style(&crate::edit_text_ui::look_of(b), change);
+                // A paragraph of several colours or sizes (Thai edition) shows its first part's;
+                // picking that again still gives all of it that colour or size.
+                if (change.color.is_some() && style.color.is_none() || change.size.is_some() && style.size.is_none())
+                    && !crate::edit_text_ui::paragraph_runs(b, &doc.text_lines(page)).is_empty()
+                {
+                    style.color = style.color.or(change.color);
+                    style.size = style.size.or(change.size);
+                }
                 // Aligned inside its own box (Thai edition): a single line would otherwise grow
                 // to the page's margin and be aligned there.
                 if style.align.is_some() && b.rotation == 0.0 {
@@ -509,6 +517,26 @@ startxref
         assert!(lines.iter().any(|l| l.text.trim() == "Hard" && !red(l.color)), "{lines:?}");
         let whole = crate::content_ui::TextDraft { selection: Some(0..8), ..d };
         assert!(crate::content_ui::part_styled_draft(&whole, &text, None).is_none(), "all of it: the box's own colour");
+    }
+
+    /// Thai edition: a paragraph whose first part is black and the rest red takes black all over
+    /// when black, the colour it shows, is picked for it.
+    #[test]
+    fn picking_the_shown_colour_of_a_mixed_paragraph_colours_all_of_it() {
+        let mut s = pdfcraft_engine::Session::new();
+        let pdf = s.create_from_images(&[("scan.png".into(), pdfcraft_engine::export::encode_png(2, 2, &[200; 16]).unwrap())]).unwrap();
+        let id = s.open("scan.pdf", None, pdf, None).unwrap();
+        let text = AddedText { text: "Hardware".into(), rect: [10.0, 10.0, 200.0, 30.0], ..Default::default() };
+        let runs = vec![
+            pdfcraft_engine::TextRun { chars: 0..4, color: [0.0; 3], size: 12.0 },
+            pdfcraft_engine::TextRun { chars: 4..8, color: [1.0, 0.0, 0.0], size: 12.0 },
+        ];
+        s.apply(id, Edit::AddStyledText { page: 0, text, runs }).unwrap();
+        let target = [ObjectTarget { kind: ObjectKind::Text, index: 0 }];
+        let edit = restyle_edit(s.get(id).unwrap(), 0, &target, &LookPreview { color: Some([0.0; 3]), ..Default::default() }, None).unwrap();
+        s.apply(id, edit).unwrap();
+        let lines = s.get(id).unwrap().text_lines(0);
+        assert!(lines.iter().all(|l| l.color[0] < 0.1), "all black: {lines:?}");
     }
 
     #[test]

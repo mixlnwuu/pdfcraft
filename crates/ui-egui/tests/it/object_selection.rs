@@ -506,6 +506,11 @@ fn a_pasted_paragraph_keeps_the_colours_of_its_parts() {
     let s = h.state();
     let lines = s.session.get(s.views[0].id).unwrap().text_lines(0);
     assert_eq!(reds(&h), before * 2, "the copy's first letters are red too: {lines:?}");
+    // A Ctrl+drag copy keeps them too.
+    drag_with(&mut h, p, p + egui::vec2(0.0, 160.0), Modifiers::COMMAND);
+    let s = h.state();
+    let lines = s.session.get(s.views[0].id).unwrap().text_lines(0);
+    assert_eq!(reds(&h), before * 3, "the dragged copy's first letters are red: {lines:?}");
 }
 
 /// Thai edition: Ctrl+drag of a paragraph drops a copy as a new text box where it was released;

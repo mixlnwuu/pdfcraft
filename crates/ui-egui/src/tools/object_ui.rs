@@ -315,7 +315,18 @@ fn dropped_copy(
             return Some(Edit::MovePageImageToPage { page, index: target.index, to_page: page, rect, copy: true });
         }
     };
-    Some(Edit::AddText { page, text: pdfcraft_engine::AddedText { rect: shift(text.rect), ..text } })
+    let text = pdfcraft_engine::AddedText { rect: shift(text.rect), ..text };
+    // Thai edition: a paragraph of several colours or sizes is copied as one, as text of the page.
+    let runs = match target.kind {
+        ObjectKind::Text => {
+            doc.text_blocks(page).get(target.index).map_or(Vec::new(), |b| crate::edit_text_ui::paragraph_runs(b, &doc.text_lines(page)))
+        }
+        _ => Vec::new(),
+    };
+    if !runs.is_empty() {
+        return Some(Edit::AddStyledText { page, text, runs });
+    }
+    Some(Edit::AddText { page, text })
 }
 
 fn screen(xf: &PageXform, info: &DocInfo, page: usize, object: &EditableObject) -> Rect {
