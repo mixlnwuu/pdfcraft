@@ -113,6 +113,7 @@ pub(crate) fn check_permission(edit: &Edit, p: &pdfcraft_cos::Permissions) -> Re
         | Edit::ApplyRedactions { .. }
         | Edit::AddText { .. }
         | Edit::AddImage { .. }
+        | Edit::AddCover { .. }
         | Edit::UpdateContent { .. }
         | Edit::MoveObjects { .. }
         | Edit::DeleteContent { .. }
@@ -853,6 +854,16 @@ pub(crate) fn run_edit(doc: &mut pdfcraft_cos::Document, edit: &Edit, cx: &mut E
                 }
             };
             pdfcraft_edit::add_content(doc, *page, &AddedContent::Image(pdfcraft_edit::AddedImage::new(rect, image)))?;
+        }
+        Edit::AddCover { page, rect, bytes } => {
+            let (image, _) = embed_image(doc, "cover.png", bytes)?;
+            let index = pdfcraft_edit::add_content(doc, *page, &AddedContent::Image(pdfcraft_edit::AddedImage::new(*rect, image)))?;
+            // Already as far back as it may go (nothing under it but the scan) is not an error:
+            // the box simply stays where it is.
+            match pdfcraft_edit::arrange_content(doc, *page, index, pdfcraft_edit::Arrange::Back) {
+                Ok(_) | Err(pdfcraft_edit::EditError::Invalid(_)) => {}
+                Err(e) => return Err(e.into()),
+            }
         }
         Edit::UpdateContent { page, index, content } => pdfcraft_edit::update_content(doc, *page, *index, content)?,
         Edit::DeleteContent { page, index } => pdfcraft_edit::delete_content(doc, *page, *index)?,

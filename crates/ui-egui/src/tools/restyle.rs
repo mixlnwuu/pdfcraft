@@ -156,6 +156,9 @@ pub(crate) fn restyle_edit(
                     // A point to spare, so measuring the text again never wraps its last word.
                     style.width = (own.is_finite() && own > 0.0).then_some(own + 1.0);
                 }
+                if let Some(size) = style.size.filter(|_| style.offset.is_none() && style.width.is_none()) {
+                    style.offset = centred_resize(b, size);
+                }
                 (style != BlockStyle::default()).then(|| Edit::EditTextBlock { page, block: t.index, text: b.editor_text.clone(), style })
             }
             ObjectKind::Added => {
@@ -176,6 +179,21 @@ pub(crate) fn restyle_edit(
         // "Edit text" is an edit label already, so the history reads the same in every language.
         _ => Some(Edit::Batch { label: "Edit text".into(), edits }),
     }
+}
+
+/// Thai edition: how far (user space) a one-line paragraph `b` moves when rewritten at `size`, so
+/// it grows or shrinks about its centre instead of its left end and baseline, where a rewrite
+/// anchors it (the box is 0.25 em below the baseline and 0.9 em above it). `None` for a turned or
+/// wrapped paragraph, whose new lines can't be told from here, or when nothing would move.
+fn centred_resize(b: &pdfcraft_engine::TextBlock, size: f64) -> Option<[f64; 2]> {
+    let k = size / b.size;
+    if b.rotation != 0.0 || b.rows.len() > 1 || !k.is_finite() || k <= 0.0 {
+        return None;
+    }
+    let [x0, y0, x1, y1] = b.rect;
+    let baseline = y0 + (y1 - y0) * (0.25 / 1.15);
+    let (dx, dy) = (-(x1 - x0) / 2.0 * (k - 1.0), -((y0 + y1) / 2.0 - baseline) * (k - 1.0));
+    (dx.is_finite() && dy.is_finite() && (dx != 0.0 || dy != 0.0)).then_some([dx, dy])
 }
 
 /// The style a paragraph shown as `look0` is rewritten with for `change`, as its open editor
@@ -299,6 +317,89 @@ mod tests {
         // Lines aligned on their own, set back to the box's alignment, is a change too.
         let mixed = AddedText { aligns: vec![None, Some(TextAlign::Right)], ..look0.clone() };
         assert_eq!(change_between(&mixed, &look0, None).align, Some(TextAlign::Left));
+    }
+
+    /// Thai edition: a new size grows or shrinks a one-line paragraph about its centre, so a word
+    /// centred in a table cell stays there instead of growing out to the right and up.
+    #[test]
+    fn a_resized_paragraph_keeps_its_centre() {
+        let content = "BT /F1 16 Tf 200 500 Td (Hardware) Tj ET";
+        let objs = [
+            "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
+            "<< /Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [0 0 600 800] >>".to_string(),
+            "<< /Type /Page /Parent 2 0 R /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>".to_string(),
+            format!(
+                "<< /Length {} >>
+stream
+{content}
+endstream",
+                content.len() + 1
+            ),
+            "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_string(),
+        ];
+        let mut pdf = b"%PDF-1.7
+"
+        .to_vec();
+        let mut offsets = Vec::new();
+        for (i, o) in objs.iter().enumerate() {
+            offsets.push(pdf.len());
+            pdf.extend_from_slice(
+                format!(
+                    "{} 0 obj
+{o}
+endobj
+",
+                    i + 1
+                )
+                .as_bytes(),
+            );
+        }
+        let xref = pdf.len();
+        pdf.extend_from_slice(
+            format!(
+                "xref
+0 {}
+0000000000 65535 f 
+",
+                objs.len() + 1
+            )
+            .as_bytes(),
+        );
+        for o in offsets {
+            pdf.extend_from_slice(
+                format!(
+                    "{o:010} 00000 n 
+"
+                )
+                .as_bytes(),
+            );
+        }
+        pdf.extend_from_slice(
+            format!(
+                "trailer
+<< /Size {} /Root 1 0 R >>
+startxref
+{xref}
+%%EOF
+",
+                objs.len() + 1
+            )
+            .as_bytes(),
+        );
+        let mut s = pdfcraft_engine::Session::new();
+        let id = s.open("cell.pdf", None, std::sync::Arc::new(pdf), None).unwrap();
+        let centre = |s: &pdfcraft_engine::Session| {
+            let r = s.get(id).unwrap().text_blocks(0)[0].rect;
+            [(r[0] + r[2]) / 2.0, (r[1] + r[3]) / 2.0]
+        };
+        let before = centre(&s);
+        let target = [ObjectTarget { kind: ObjectKind::Text, index: 0 }];
+        for size in [48.0, 8.0] {
+            let edit = restyle_edit(s.get(id).unwrap(), 0, &target, &LookPreview { size: Some(size), ..Default::default() }, None).unwrap();
+            s.apply(id, edit).unwrap();
+            let after = centre(&s);
+            assert!((after[0] - before[0]).abs() < 0.5 && (after[1] - before[1]).abs() < 0.5, "at {size} pt: {before:?} → {after:?}");
+        }
     }
 
     #[test]

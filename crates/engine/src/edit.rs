@@ -527,6 +527,14 @@ pub enum Edit {
         name: String,
         bytes: Arc<Vec<u8>>,
     },
+    /// Thai edition: Comment ▸ Cover box. A picture (`bytes`, one pixel in the box's colour)
+    /// stretched over `rect` (display space) and sent to the back in the same step: behind the
+    /// page's text, but never under a picture covering the page (the paper of a scan).
+    AddCover {
+        page: usize,
+        rect: [f64; 4],
+        bytes: Arc<Vec<u8>>,
+    },
     /// Move, resize, retype or reformat an added item (`index` among the page's added items).
     UpdateContent {
         page: usize,

@@ -89,6 +89,7 @@ pub(crate) fn scope_of(edit: &Edit) -> Scope {
         | Edit::EnhanceScan { .. }
         | Edit::AddText { .. }
         | Edit::AddImage { .. }
+        | Edit::AddCover { .. }
         | Edit::UpdateContent { .. }
         | Edit::DeleteContent { .. }
         | Edit::MoveContentToPage { .. }

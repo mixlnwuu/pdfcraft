@@ -10822,3 +10822,39 @@ fn sent_to_the_back_an_added_box_stays_above_the_scan() {
     assert!(px[0] > 200 && px[1] < 60 && px[2] < 60, "the red box shows over the scan: {px:?}");
     assert!(s.apply(id, Edit::ArrangeContent { page: 0, index, how: Arrange::Backward }).is_err(), "no further back than the scan");
 }
+
+/// Thai edition: a cover box goes behind the page's text in the same step it is drawn, but on a
+/// scan it stays above the page-sized picture, in sight, and one Undo removes it.
+#[test]
+fn a_cover_box_lands_behind_text_but_above_the_scan() {
+    let mut px = image::RgbaImage::from_pixel(60, 80, image::Rgba([200, 200, 200, 255]));
+    px.put_pixel(0, 0, image::Rgba([10, 10, 10, 255]));
+    let mut png = std::io::Cursor::new(Vec::new());
+    image::DynamicImage::ImageRgba8(px).write_to(&mut png, image::ImageFormat::Png).unwrap();
+    let mut s = Session::new();
+    let pdf = s.create_from_images(&[("scan.png".into(), png.into_inner())]).unwrap();
+    let id = s.open("scan.pdf", None, pdf, None).unwrap();
+    let (w, h) = {
+        let p = &s.get(id).unwrap().info.pages[0];
+        (f64::from(p.width), f64::from(p.height))
+    };
+    let red = crate::export::encode_png(1, 1, &[255, 0, 0, 255]).unwrap();
+    // With nothing but the scan under it, the box is already as far back as it may go: not an error.
+    s.apply(id, Edit::AddCover { page: 0, rect: [w * 0.3, h * 0.3, w * 0.4, h * 0.4], bytes: Arc::new(red.clone()) }).unwrap();
+    s.undo(id).unwrap();
+    let text = AddedText { text: "Over".into(), rect: [w * 0.1, h * 0.85, w * 0.5, h * 0.9], ..Default::default() };
+    s.apply(id, Edit::AddText { page: 0, text }).unwrap();
+    let rect = [w * 0.25, h * 0.25, w * 0.75, h * 0.75];
+    s.apply(id, Edit::AddCover { page: 0, rect, bytes: Arc::new(red.clone()) }).unwrap();
+    let added: Vec<_> = s.get(id).unwrap().added().iter().filter(|a| a.page == 0).map(|a| a.content.clone()).collect();
+    assert!(matches!(added.first(), Some(pdfcraft_edit::Content::Image(_))), "the box is drawn first, behind the text: {added:?}");
+    assert!(matches!(added.get(1), Some(pdfcraft_edit::Content::Text(_))));
+    let shot = shown(&s, id, 0);
+    let (cx, cy) = (shot.width as usize / 2, shot.height as usize / 2);
+    let at = (cy * shot.width as usize + cx) * 4;
+    let px = &shot.rgba[at..at + 3];
+    assert!(px[0] > 200 && px[1] < 60 && px[2] < 60, "the red box shows over the scan: {px:?}");
+    drop(red);
+    s.undo(id).unwrap();
+    assert_eq!(s.get(id).unwrap().added().iter().filter(|a| a.page == 0).count(), 1, "each box is one undo step");
+}

@@ -1546,8 +1546,25 @@ fn finish(cv: &mut ContentView, d: TextDraft, added: &[Added], info: &DocInfo) -
     }
 }
 
-/// A restyled item: one whose box hugged its text is refitted to the new font or size.
+/// A restyled item: one whose box hugged its text is refitted to the new font or size. A new
+/// size (Thai edition) grows or shrinks the box about its centre, so the text stays where it was.
 pub(crate) fn restyled(old: &AddedText, new: AddedText, page_width: Option<f64>) -> AddedText {
+    let resized = new.size != old.size && new.direction == old.direction;
+    let out = restyled_at(old, new, page_width);
+    if !resized {
+        return out;
+    }
+    let (a, b) = (pdfcraft_engine::added_text_rect(old), pdfcraft_engine::added_text_rect(&out));
+    let dx = (a[0] + a[2] - b[0] - b[2]) / 2.0;
+    let dy = (a[1] + a[3] - b[1] - b[3]) / 2.0;
+    if !(dx.is_finite() && dy.is_finite()) {
+        return out;
+    }
+    let r = out.rect;
+    AddedText { rect: [r[0] + dx, r[1] + dy, r[2] + dx, r[3] + dy], ..out }
+}
+
+fn restyled_at(old: &AddedText, new: AddedText, page_width: Option<f64>) -> AddedText {
     match page_width {
         // A box turned another way (Thai edition) hugs its text again, from its top left corner.
         Some(w) if new.direction != old.direction => {
@@ -2722,10 +2739,20 @@ mod snap_tests {
             assert_eq!(centred.rect, old.rect, "aligning keeps the box");
             assert_eq!(centred.align, TextAlign::Center);
         }
+        let centre = |t: &AddedText| {
+            let r = pdfcraft_engine::added_text_rect(t);
+            [(r[0] + r[2]) / 2.0, (r[1] + r[3]) / 2.0]
+        };
+        let near = |a: [f64; 2], b: [f64; 2]| (a[0] - b[0]).abs() < 0.01 && (a[1] - b[1]).abs() < 0.01;
         let bigger = restyled(&wide, AddedText { size: 18.0, ..wide.clone() }, Some(600.0));
-        assert_eq!(bigger.rect, wide.rect, "a wide box keeps its width");
-        let bigger = restyled(&hug, AddedText { size: 18.0, ..hug.clone() }, Some(600.0));
+        assert_eq!(bigger.rect[2] - bigger.rect[0], wide.rect[2] - wide.rect[0], "a wide box keeps its width");
+        assert!(near(centre(&bigger), centre(&wide)), "and its centre: {:?} {:?}", centre(&bigger), centre(&wide));
+        // Thai edition: a hugging box grows with its text about its centre, and shrinks back there.
+        let bigger = restyled(&hug, AddedText { size: 48.0, ..hug.clone() }, Some(600.0));
         assert!(bigger.rect[2] - bigger.rect[0] > hug.rect[2] - hug.rect[0], "a hugging box grows with its text");
+        assert!(near(centre(&bigger), centre(&hug)), "the text stays put: {:?} {:?}", centre(&bigger), centre(&hug));
+        let smaller = restyled(&bigger, AddedText { size: 8.0, ..bigger.clone() }, Some(600.0));
+        assert!(near(centre(&smaller), centre(&hug)), "shrinking too: {:?} {:?}", centre(&smaller), centre(&hug));
     }
 
     /// No ruler guides.

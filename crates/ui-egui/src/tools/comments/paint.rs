@@ -410,5 +410,5 @@ pub(super) fn cover_edit(cx: &PageCx<'_>, rect: [f64; 4]) -> Option<Edit> {
     }
     let [r, g, b] = cx.prefs.style(CommentTool::Cover).color.map(|c| (c.clamp(0.0, 1.0) * 255.0).round() as u8);
     let png = pdfcraft_engine::export::encode_png(1, 1, &[r, g, b, 255]).ok()?;
-    Some(Edit::AddImage { page: cx.page, rect: Some(display), name: "cover.png".into(), bytes: std::sync::Arc::new(png) })
+    Some(Edit::AddCover { page: cx.page, rect: display, bytes: std::sync::Arc::new(png) })
 }
