@@ -906,6 +906,9 @@ pub(crate) fn merge_edit(view: &DocView, doc: &Document) -> Option<(Edit, usize,
     let added: Vec<&pdfcraft_engine::Added> = doc.added().iter().filter(|a| a.page == page).collect();
     let blocks = doc.text_blocks(page);
     let mut pieces: Vec<pdfcraft_engine::AddedText> = Vec::with_capacity(objects.len());
+    // Thai edition: each piece's parts by colour and size, as characters of its own text.
+    let mut piece_runs: Vec<Vec<pdfcraft_engine::TextRun>> = Vec::with_capacity(objects.len());
+    let lines_on_page = doc.text_lines(page);
     for o in objects {
         let text = match o.target.kind {
             ObjectKind::Text => crate::edit_text_ui::paragraph_as_added(&xf, info, page, blocks.get(o.target.index)?)?,
@@ -918,16 +921,55 @@ pub(crate) fn merge_edit(view: &DocView, doc: &Document) -> Option<(Edit, usize,
         if !text.rect.iter().all(|v| v.is_finite()) {
             return None;
         }
+        let own = match o.target.kind {
+            ObjectKind::Text => blocks.get(o.target.index).map_or(Vec::new(), |b| crate::edit_text_ui::paragraph_runs(b, &lines_on_page)),
+            _ => Vec::new(),
+        };
+        let own = if own.is_empty() {
+            vec![pdfcraft_engine::TextRun { chars: 0..text.text.chars().count(), color: text.color, size: text.size }]
+        } else {
+            own
+        };
+        piece_runs.push(own);
         pieces.push(text);
     }
-    let merged = merged_text(pieces)?;
+    let (merged, runs) = merged_text_runs(pieces, piece_runs)?;
     let width = f64::from(info.pages.get(page)?.width);
     let deleted_added = objects.iter().filter(|o| o.target.kind == ObjectKind::Added).count();
     let index = added.len().checked_sub(deleted_added)?;
     // The page's own paragraphs go by their lines (Thai edition; see [`delete_edits_in`]).
     let mut edits = delete_edits_in(doc, page, objects.iter().map(|o| o.target).collect());
-    edits.push(Edit::AddText { page, text: pdfcraft_engine::fitted_text(&merged, width) });
+    let merged = pdfcraft_engine::fitted_text(&merged, width);
+    // Pieces of several colours or sizes stay so (Thai edition): the merged box is text of the page.
+    let mixed = runs.windows(2).any(|w| w[0].color != w[1].color || w[0].size != w[1].size);
+    edits.push(if mixed { Edit::AddStyledText { page, text: merged, runs } } else { Edit::AddText { page, text: merged } });
     Some((Edit::Batch { label: "Merge text boxes".into(), edits }, page, index))
+}
+
+/// [`merged_text`] with each piece's parts (`runs`, characters of its own text) placed in the
+/// merged text (Thai edition).
+fn merged_text_runs(
+    pieces: Vec<pdfcraft_engine::AddedText>,
+    runs: Vec<Vec<pdfcraft_engine::TextRun>>,
+) -> Option<(pdfcraft_engine::AddedText, Vec<pdfcraft_engine::TextRun>)> {
+    let merged = merged_text(pieces.clone())?;
+    // Find each piece in the merged text, in the order it was written there.
+    let mid = |t: &pdfcraft_engine::AddedText| (t.rect[1] + t.rect[3]) / 2.0;
+    let mut order: Vec<(pdfcraft_engine::AddedText, Vec<pdfcraft_engine::TextRun>)> = pieces.into_iter().zip(runs).collect();
+    order.sort_by(|(a, _), (b, _)| mid(b).total_cmp(&mid(a)).then(a.rect[0].total_cmp(&b.rect[0])));
+    let mut out = Vec::new();
+    let mut from = 0usize;
+    for (piece, piece_runs) in &order {
+        let piece = piece.text.trim_end_matches('\n');
+        let Some(at) = merged.text.get(from..).and_then(|rest| rest.find(piece)).map(|k| k + from) else { continue };
+        let start = merged.text.get(..at).map_or(0, |s| s.chars().count());
+        for r in piece_runs {
+            out.push(pdfcraft_engine::TextRun { chars: start + r.chars.start..start + r.chars.end, ..r.clone() });
+        }
+        from = at + piece.len();
+    }
+    out.sort_by_key(|r| r.chars.start);
+    Some((merged, out))
 }
 
 /// Text boxes (display space, y up) as one: lines of the pieces whose middles are level, top to
@@ -1236,6 +1278,26 @@ startxref
         let left: Vec<String> = session.get(id).unwrap().text_blocks(0).iter().map(|b| b.text.clone()).collect();
         assert!(left.iter().any(|t| t.contains("District")), "the row below stays: {left:?}");
         assert!(!left.iter().any(|t| t.contains("Nationality") || t.contains("House")), "the row is gone: {left:?}");
+    }
+
+    /// Thai edition: merged boxes keep their colours: each piece's parts land where the piece is
+    /// in the merged text.
+    #[test]
+    fn merged_boxes_keep_each_pieces_colour() {
+        let b = |text: &str, rect: [f64; 4], color: [f64; 3]| pdfcraft_engine::AddedText {
+            text: text.into(),
+            rect,
+            size: 12.0,
+            color,
+            ..Default::default()
+        };
+        let run = |n: usize, color: [f64; 3]| vec![pdfcraft_engine::TextRun { chars: 0..n, color, size: 12.0 }];
+        let (red, blue) = ([1.0, 0.0, 0.0], [0.0, 0.0, 1.0]);
+        let pieces = vec![b("Soft", [100.0, 500.0, 140.0, 514.0], red), b("ware", [42.0, 500.0, 90.0, 514.0], blue)];
+        let (merged, runs) = merged_text_runs(pieces, vec![run(4, red), run(4, blue)]).unwrap();
+        assert_eq!(merged.text, "ware Soft");
+        let parts: Vec<_> = runs.iter().map(|r| (r.chars.clone(), r.color)).collect();
+        assert_eq!(parts, vec![(0..4, blue), (5..9, red)]);
     }
 
     /// Thai edition: boxes of one row merge left to right even when one sits a little higher (a

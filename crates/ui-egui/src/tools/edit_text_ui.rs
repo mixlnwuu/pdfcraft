@@ -960,6 +960,14 @@ pub(crate) fn overlay(ctx: &egui::Context, view: &mut DocView, info: &DocInfo) -
                 } else {
                     caret_color_on(fill)
                 };
+                // Thai edition: while the page's own text shows through, a selection is a see-through
+                // tint over it, and its letters are not repainted in the selection's colour (they
+                // hid the page's text, or showed blue where the editor's face was drawn).
+                if unchanged {
+                    let v = ui.visuals_mut();
+                    v.selection.bg_fill = Color32::from_rgba_unmultiplied(66, 133, 244, 60);
+                    v.selection.stroke.color = Color32::TRANSPARENT;
+                }
                 let rows = 1;
                 let snapshot = ed.clone();
                 let mut layouter = |ui: &egui::Ui, text: &dyn egui::TextBuffer, wrap_width: f32| {
