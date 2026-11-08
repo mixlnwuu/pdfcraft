@@ -64,8 +64,8 @@ pub use text::{
 pub mod added;
 pub use added::{
     Added, AddedImage, AddedText, Align, Arrange, Content, Family, MarkerScan, TextDirection, add_content, added_layer, arrange_content,
-    arrange_paragraph, delete_content, first_undrawable, fitted_text, hugs_text, isolate_content, list_added, scan_markers, text_is_wrapped,
-    update_content,
+    arrange_paragraph, delete_content, first_undrawable, fitted_text, hugs_text, isolate_content, list_added, release_content, scan_markers,
+    text_is_wrapped, update_content,
 };
 
 mod apply;

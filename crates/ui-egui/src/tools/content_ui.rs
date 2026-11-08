@@ -1006,6 +1006,13 @@ pub(crate) fn page_menu(ui: &mut egui::Ui, view: &mut DocView, doc: &pdfcraft_en
         }
         None => {}
     }
+    // Thai edition: a text box made text of the page, where a part of it can take its own colour
+    // or size (double-click it, select the part, then Format text).
+    if matches!(a.content, AddedContent::Text(_)) && ui.button(tl!("Convert to page text")).clicked() {
+        (view.content.selected, view.content.menu) = (None, None);
+        view.pending_edit = Some(Edit::ReleaseContent { page, index });
+        ui.close();
+    }
     true
 }
 

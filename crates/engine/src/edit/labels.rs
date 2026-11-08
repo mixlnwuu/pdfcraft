@@ -5,6 +5,7 @@ use super::{Arrange, Edit, FillMark, ImageEdit, Label, LineEnding, MarkKind, Mar
 /// [`BATCH_LABELS`]).
 pub const EDIT_LABELS: &[&str] = &[
     "Rotate page",
+    "Convert to page text",
     "Change tag properties",
     "Rotate pages",
     "Delete page",
@@ -311,6 +312,7 @@ impl Edit {
             Edit::RemoveMarks { kind: MarkKind::Background } => Label::of("Remove background"),
             Edit::AddText { .. } => Label::of("Add text"),
             Edit::AddImage { .. } | Edit::AddCover { .. } => Label::of("Add image"),
+            Edit::ReleaseContent { .. } => Label::of("Convert to page text"),
             Edit::UpdateContent { .. } => Label::of("Edit content"),
             Edit::DeleteContent { .. } => Label::of("Delete content"),
             Edit::CommentToContent { then: None, .. } => Label::of("Place on the page"),

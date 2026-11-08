@@ -114,6 +114,7 @@ pub(crate) fn check_permission(edit: &Edit, p: &pdfcraft_cos::Permissions) -> Re
         | Edit::AddText { .. }
         | Edit::AddImage { .. }
         | Edit::AddCover { .. }
+        | Edit::ReleaseContent { .. }
         | Edit::UpdateContent { .. }
         | Edit::MoveObjects { .. }
         | Edit::DeleteContent { .. }
@@ -865,6 +866,7 @@ pub(crate) fn run_edit(doc: &mut pdfcraft_cos::Document, edit: &Edit, cx: &mut E
                 Err(e) => return Err(e.into()),
             }
         }
+        Edit::ReleaseContent { page, index } => pdfcraft_edit::release_content(doc, *page, *index)?,
         Edit::UpdateContent { page, index, content } => pdfcraft_edit::update_content(doc, *page, *index, content)?,
         Edit::DeleteContent { page, index } => pdfcraft_edit::delete_content(doc, *page, *index)?,
         Edit::ArrangeContent { page, index, how } => {

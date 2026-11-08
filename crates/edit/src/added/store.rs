@@ -253,6 +253,23 @@ fn find(doc: &Document, page: usize, index: usize) -> Result<Added, EditError> {
         .ok_or_else(|| EditError::Invalid(format!("page {} has no added item {}", page + 1, index + 1)))
 }
 
+/// Thai edition: make added text item `index` of `page` part of the page's own text, drawn exactly
+/// as it is: its stream loses the marks that made it an added item, so Edit text treats it as a
+/// paragraph of the page (a part of it can then take its own colour or size). Not for pictures.
+pub fn release_content(doc: &mut Document, page: usize, index: usize) -> Result<(), EditError> {
+    let a = find(doc, page, index)?;
+    if !matches!(a.content, Content::Text(_)) {
+        return Err(EditError::Invalid("only a text box can become text of the page".into()));
+    }
+    let Object::Stream(mut s) = (*doc.get(a.obj)).clone() else {
+        return Err(EditError::Invalid("the text box's content could not be read".into()));
+    };
+    s.dict.remove(b"PCMark");
+    s.dict.remove(b"PCAdded");
+    doc.set(a.obj, Object::Stream(s));
+    Ok(())
+}
+
 /// Replace item `index` of `page` (moved, resized, retyped or reformatted).
 pub fn update_content(doc: &mut Document, page: usize, index: usize, c: &Content) -> Result<(), EditError> {
     let a = find(doc, page, index)?;

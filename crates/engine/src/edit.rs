@@ -535,6 +535,12 @@ pub enum Edit {
         rect: [f64; 4],
         bytes: Arc<Vec<u8>>,
     },
+    /// Thai edition: added text box `index` of `page` becomes text of the page, drawn as it is, so
+    /// Edit text can style a part of it.
+    ReleaseContent {
+        page: usize,
+        index: usize,
+    },
     /// Move, resize, retype or reformat an added item (`index` among the page's added items).
     UpdateContent {
         page: usize,

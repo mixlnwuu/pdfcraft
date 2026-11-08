@@ -10883,3 +10883,37 @@ fn a_cover_box_tells_its_colour_and_takes_another() {
     s.apply(id, Edit::AddImage { page: 0, rect: Some([100.0, 100.0, 140.0, 120.0]), name: "p.png".into(), bytes: Arc::new(photo) }).unwrap();
     assert_eq!(s.get(id).unwrap().added_solid_colour(0, 1), None);
 }
+
+/// Thai edition: a text box converted to text of the page is no longer an added item, reads as a
+/// paragraph, and a part of it then takes its own colour; one Undo brings the box back.
+#[test]
+fn a_text_box_converted_to_page_text_takes_colour_in_part() {
+    let mut s = Session::new();
+    let pdf = s.create_from_images(&[("scan.png".into(), crate::export::encode_png(2, 2, &[200; 16]).unwrap())]).unwrap();
+    let id = s.open("scan.pdf", None, pdf, None).unwrap();
+    let text = AddedText { text: "Dell Latitude".into(), rect: [10.0, 10.0, 200.0, 30.0], ..Default::default() };
+    s.apply(id, Edit::AddText { page: 0, text }).unwrap();
+    s.apply(id, Edit::ReleaseContent { page: 0, index: 0 }).unwrap();
+    let doc = s.get(id).unwrap();
+    assert!(doc.added().is_empty(), "no longer an added item");
+    let block = doc.text_blocks(0).first().cloned().expect("a paragraph of the page");
+    assert_eq!(block.text, "Dell Latitude");
+    let range = RangeStyle {
+        range: 0..4,
+        family: None,
+        resource: None,
+        size: None,
+        color: Some([1.0, 0.0, 0.0]),
+        underline: None,
+        char_spacing: None,
+        scale: None,
+    };
+    let style = BlockStyle { ranges: vec![range], ..Default::default() };
+    s.apply(id, Edit::EditTextBlock { page: 0, block: 0, text: block.editor_text.clone(), style }).unwrap();
+    let lines = s.get(id).unwrap().text_lines(0);
+    assert!(lines.iter().any(|l| l.text.trim() == "Dell" && l.color[0] > 0.9 && l.color[1] < 0.1), "{lines:?}");
+    assert!(lines.iter().any(|l| l.text.contains("Latitude") && l.color[0] < 0.1), "{lines:?}");
+    s.undo(id).unwrap();
+    s.undo(id).unwrap();
+    assert_eq!(s.get(id).unwrap().added().len(), 1, "Undo brings the box back");
+}

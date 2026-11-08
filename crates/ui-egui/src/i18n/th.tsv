@@ -2970,6 +2970,7 @@ theme	Appearance	ลักษณะที่ปรากฏ
 	Got it	เข้าใจแล้ว
 	Merge text boxes	ผสานกล่องข้อความ
 	Split into lines	แยกเป็นบรรทัด
+	Convert to page text	แปลงเป็นข้อความของหน้า
 	Paste bookmarks	วางบุ๊กมาร์ก
 # v0.19.0: OCR engines and review, Enhance scanned file, and other new wording
 	Correct recognized text…	แก้ไขข้อความที่รู้จำ…
