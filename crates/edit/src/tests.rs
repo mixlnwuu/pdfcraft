@@ -1490,7 +1490,7 @@ fn odd_arabic_text_never_panics() {
 
 /// One page with Helvetica (WinAnsi) and subsets of Arial: `/F2` and `/F3` are two subsets of the
 /// same font, as Word writes a font split across several resources, and `/F4` repeats Helvetica.
-fn text_page(content: &str) -> Document {
+pub(crate) fn text_page(content: &str) -> Document {
     let objs: Vec<String> = vec![
         "<< /Type /Catalog /Pages 2 0 R >>".into(),
         "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".into(),

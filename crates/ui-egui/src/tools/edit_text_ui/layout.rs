@@ -286,7 +286,8 @@ pub(super) fn editor_job(ui: &egui::Ui, ed: &LineEditor, text: &str, scale: f32,
                     extra_letter_spacing: spacing + ed.extras.char_spacing as f32 * scale,
                     color: color32(look.color),
                     italics: look.italic && !embedded && !own_face,
-                    underline: underline_stroke(underline, size, color32(look.color)),
+                    // A previewed underline shows under the selected part only, as it will be drawn.
+                    underline: underline_stroke(if inside { underline } else { ed.extras.underline }, size, color32(look.color)),
                     ..Default::default()
                 },
             );
