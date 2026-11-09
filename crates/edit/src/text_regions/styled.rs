@@ -361,7 +361,11 @@ fn calibration_factors(
             let changed_face = style.resource.is_some()
                 || style.family.is_some()
                 || overrides.get(&index).is_some_and(|range| range.family.is_some() || range.resource.is_some());
-            let factor = if nominal > 0.0 && !changed_face { ((source.rect[2] - source.rect[0]) / nominal).clamp(0.5, 2.0) } else { 1.0 };
+            // Thai edition: a ratio past the bounds means the measure is wrong, not the line (the
+            // widths of a font PdfCraft embedded may not be read back): such a line keeps its own
+            // widths rather than being stretched to the bound.
+            let ratio = (source.rect[2] - source.rect[0]) / nominal;
+            let factor = if nominal > 0.0 && !changed_face && (0.5..=2.0).contains(&ratio) { ratio } else { 1.0 };
             calibration.insert(index, factor);
         }
     }

@@ -623,6 +623,52 @@ startxref
         assert!((widths[0] - widths[1]).abs() < 0.5, "plain and mixed alike: {widths:?}");
     }
 
+    /// Thai edition: a paragraph of several colours set in an installed font (whose widths aren't
+    /// read back) keeps its width when underlined, and then takes a new size all through, in
+    /// that font. Skipped on a machine without Tahoma.
+    #[test]
+    fn underline_and_size_on_a_mixed_paragraph_in_an_installed_font() {
+        let Some(i) = pdfcraft_fonts::installed_families().iter().position(|f| f.name == "Tahoma") else {
+            eprintln!("skipped: Tahoma isn't installed");
+            return;
+        };
+        let tahoma = pdfcraft_engine::FontFamily::Installed(u16::try_from(i).unwrap());
+        let mut s = pdfcraft_engine::Session::new();
+        let pdf = s.create_from_images(&[("scan.png".into(), pdfcraft_engine::export::encode_png(2, 2, &[200; 16]).unwrap())]).unwrap();
+        let id = s.open("scan.pdf", None, pdf, None).unwrap();
+        let text = AddedText {
+            text: "Dell Latitude 5440".into(),
+            rect: [10.0, 10.0, 300.0, 30.0],
+            family: pdfcraft_engine::FontFamily::Times,
+            size: 14.0,
+            ..Default::default()
+        };
+        let runs = vec![
+            pdfcraft_engine::TextRun { chars: 0..5, color: [0.0; 3], size: 14.0 },
+            pdfcraft_engine::TextRun { chars: 5..9, color: [1.0, 0.4, 0.7], size: 14.0 },
+            pdfcraft_engine::TextRun { chars: 9..18, color: [0.0; 3], size: 14.0 },
+        ];
+        s.apply(id, Edit::AddStyledText { page: 0, text, runs }).unwrap();
+        let target = [ObjectTarget { kind: ObjectKind::Text, index: 0 }];
+        // Tahoma chosen in Format text, as the owner did.
+        let edit = restyle_edit(s.get(id).unwrap(), 0, &target, &LookPreview { family: Some(tahoma), ..Default::default() }, None).unwrap();
+        s.apply(id, edit).unwrap();
+        let width = |s: &pdfcraft_engine::Session| {
+            let blocks = s.get(id).unwrap().text_blocks(0);
+            assert_eq!(blocks.len(), 1, "one paragraph: {:?}", blocks.iter().map(|b| &b.text).collect::<Vec<_>>());
+            blocks[0].rect[2] - blocks[0].rect[0]
+        };
+        let before = width(&s);
+        let edit = restyle_edit(s.get(id).unwrap(), 0, &target, &LookPreview { underline: Some(true), ..Default::default() }, None).unwrap();
+        s.apply(id, edit).unwrap();
+        let after = width(&s);
+        assert!((after - before).abs() < before * 0.05, "underlined, the same width: {before} -> {after}");
+        let edit = restyle_edit(s.get(id).unwrap(), 0, &target, &LookPreview { size: Some(20.0), ..Default::default() }, None).unwrap();
+        s.apply(id, edit).unwrap();
+        let lines = s.get(id).unwrap().text_lines(0);
+        assert!(lines.iter().all(|l| (l.size - 20.0).abs() < 0.1 && l.base_font.contains("Tahoma")), "all 20 pt Tahoma: {lines:?}");
+    }
+
     #[test]
     fn missing_fonts_are_named_once_without_subset_tags() {
         assert_eq!(plain_name("ABCDEF+AngsanaNew-Bold"), "AngsanaNew-Bold");
