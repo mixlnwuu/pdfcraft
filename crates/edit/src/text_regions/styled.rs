@@ -358,8 +358,9 @@ fn calibration_factors(
                 source.origin.state.word_spacing,
             ) * source.origin.state.scale
                 * across(source);
-            let changed_face =
-                style.resource.is_some() || overrides.get(&index).is_some_and(|range| range.family.is_some() || range.resource.is_some());
+            let changed_face = style.resource.is_some()
+                || style.family.is_some()
+                || overrides.get(&index).is_some_and(|range| range.family.is_some() || range.resource.is_some());
             let factor = if nominal > 0.0 && !changed_face { ((source.rect[2] - source.rect[0]) / nominal).clamp(0.5, 2.0) } else { 1.0 };
             calibration.insert(index, factor);
         }

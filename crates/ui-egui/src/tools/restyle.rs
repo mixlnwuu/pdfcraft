@@ -187,6 +187,13 @@ pub(crate) fn restyle_edit(
                 if let Some(size) = style.size.filter(|_| style.offset.is_none() && style.width.is_none()) {
                     style.offset = centred_resize(b, size);
                 }
+                // A paragraph of one line stays one line when a face or size makes it wider
+                // (Thai edition): rewrapped at its old width, its last words fell to a new line.
+                if style.width.is_none() && b.rotation == 0.0 && b.rows.len() <= 1 && (style.family.is_some() || style.size.is_some()) {
+                    let own = b.rect[2] - b.rect[0];
+                    let grow = style.size.map_or(1.0, |s| s / b.size.max(0.1)).max(1.0);
+                    style.width = (own.is_finite() && own > 0.0).then_some(own * grow * 1.5 + 2.0);
+                }
                 (style != BlockStyle::default()).then(|| Edit::EditTextBlock { page, block: t.index, text: b.editor_text.clone(), style })
             }
             ObjectKind::Added => {
@@ -574,6 +581,46 @@ startxref
             assert!(lines.iter().any(|l| l.text.contains("Hard") && l.color[0] < 0.1), "{change:?}: black stays: {lines:?}");
             s.undo(id).unwrap();
         }
+    }
+
+    /// Thai edition: Bold then Italic on a one-line paragraph with a part of another colour gives
+    /// it the width the same text of one colour takes, on one line: the letters are not squeezed
+    /// into the old width, and no word falls to a new line.
+    #[test]
+    fn bold_on_a_mixed_paragraph_widens_it_like_a_plain_one() {
+        let mut widths = Vec::new();
+        for mixed in [false, true] {
+            let mut s = pdfcraft_engine::Session::new();
+            let pdf = s.create_from_images(&[("scan.png".into(), pdfcraft_engine::export::encode_png(2, 2, &[200; 16]).unwrap())]).unwrap();
+            let id = s.open("scan.pdf", None, pdf, None).unwrap();
+            let text = AddedText {
+                text: "Dell Latitude 5440".into(),
+                rect: [10.0, 10.0, 300.0, 30.0],
+                family: pdfcraft_engine::FontFamily::Times,
+                size: 14.0,
+                ..Default::default()
+            };
+            let orange = if mixed { [1.0, 0.5, 0.0] } else { [0.0; 3] };
+            let runs = vec![
+                pdfcraft_engine::TextRun { chars: 0..3, color: [0.0; 3], size: 14.0 },
+                pdfcraft_engine::TextRun { chars: 3..4, color: orange, size: 14.0 },
+                pdfcraft_engine::TextRun { chars: 4..18, color: [0.0; 3], size: 14.0 },
+            ];
+            s.apply(id, Edit::AddStyledText { page: 0, text, runs }).unwrap();
+            let target = [ObjectTarget { kind: ObjectKind::Text, index: 0 }];
+            let before = s.get(id).unwrap().text_blocks(0)[0].rect;
+            for change in [LookPreview { bold: Some(true), ..Default::default() }, LookPreview { italic: Some(true), ..Default::default() }] {
+                let edit = restyle_edit(s.get(id).unwrap(), 0, &target, &change, None).unwrap();
+                s.apply(id, edit).unwrap();
+            }
+            let blocks = s.get(id).unwrap().text_blocks(0);
+            assert_eq!(blocks.len(), 1);
+            let b = &blocks[0];
+            assert_eq!(b.rows.len(), 1, "one line: {:?}", b.editor_text);
+            assert!((b.rect[1] - before[1]).abs() < 1.0, "on its line");
+            widths.push(b.rect[2] - b.rect[0]);
+        }
+        assert!((widths[0] - widths[1]).abs() < 0.5, "plain and mixed alike: {widths:?}");
     }
 
     #[test]
