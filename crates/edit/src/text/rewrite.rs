@@ -867,8 +867,61 @@ pub(crate) fn rewrite_block_from(
     let underlines = super::underline::own_underlines(&ops, &members);
     dropped.extend(super::underline::indexes(&underlines));
     let kept_underline;
+    // Thai edition: only what had an underline keeps it, a part underlined on its own included;
+    // the whole paragraph is underlined again only when all of it was.
+    let parts: std::collections::HashMap<usize, Vec<std::ops::Range<usize>>> =
+        b.lines.iter().filter_map(|&i| lines.get(i).map(|l| (i, super::underline::underlined_parts(&ops, l)))).collect();
+    let whole = b.lines.iter().all(|i| {
+        lines.get(*i).is_some_and(|l| {
+            let p = parts.get(i).map(Vec::as_slice).unwrap_or_default();
+            let mut covered = vec![false; l.text.len()];
+            for r in p {
+                covered.iter_mut().take(r.end).skip(r.start).for_each(|c| *c = true);
+            }
+            l.text.char_indices().all(|(k, c)| c.is_whitespace() || covered.get(k).copied().unwrap_or(false))
+        })
+    });
     let style = if style.underline.is_none() && !underlines.is_empty() {
-        kept_underline = BlockStyle { underline: Some(true), ..style.clone() };
+        let mut kept = style.clone();
+        if whole {
+            kept.underline = Some(true);
+        } else {
+            let draft = text.unwrap_or(&b.editor_text);
+            for (span, line) in b.edited_spans(draft) {
+                let Some(line_parts) = parts.get(&line) else { continue };
+                // The span shows the line's text from its start: a part's place in it is its place in the line.
+                let lead = lines.get(line).map_or(0, |l| l.text.len() - l.text.trim_start().len());
+                for part in line_parts {
+                    let start = (span.start + part.start.saturating_sub(lead)).min(span.end);
+                    let end = (span.start + part.end.saturating_sub(lead)).min(span.end);
+                    let (Some(start), Some(end)) = (floor_boundary(draft, start), floor_boundary(draft, end)) else { continue };
+                    if start >= end {
+                        continue;
+                    }
+                    let range = start..end;
+                    // A part already styled takes the underline with its style; the rest gets one of its own.
+                    let mut covered = false;
+                    for r in kept.ranges.iter_mut().filter(|r| r.range.start < range.end && range.start < r.range.end) {
+                        r.underline = r.underline.or(Some(true));
+                        covered = true;
+                    }
+                    if !covered {
+                        kept.ranges.push(crate::RangeStyle {
+                            range,
+                            family: None,
+                            resource: None,
+                            size: None,
+                            color: None,
+                            underline: Some(true),
+                            char_spacing: None,
+                            scale: None,
+                        });
+                    }
+                }
+            }
+            kept.ranges.sort_by_key(|r| r.range.start);
+        }
+        kept_underline = kept;
         &kept_underline
     } else {
         style
@@ -1287,4 +1340,9 @@ pub(crate) fn translate_blocks(doc: &mut Document, page: usize, indexes: &[usize
     let contents = rewritten_contents(doc, &streams, data);
     doc.update_dict(p.obj, |d| d.set(b"Contents".to_vec(), contents))?;
     Ok(())
+}
+
+/// The char boundary of `text` at or before byte `at` (Thai edition).
+fn floor_boundary(text: &str, at: usize) -> Option<usize> {
+    (0..=at.min(text.len())).rev().find(|&k| text.is_char_boundary(k))
 }

@@ -5,6 +5,7 @@ use super::{Arrange, Edit, FillMark, ImageEdit, Label, LineEnding, MarkKind, Mar
 /// [`BATCH_LABELS`]).
 pub const EDIT_LABELS: &[&str] = &[
     "Rotate page",
+    "Convert to page text",
     "Change tag properties",
     "Rotate pages",
     "Delete page",
@@ -71,6 +72,7 @@ pub const EDIT_LABELS: &[&str] = &[
     "Add stamp",
     "Add 3D model",
     "Delete comment",
+    "Paste comments",
     "Edit comment",
     "Reply",
     "Set status None",
@@ -101,6 +103,7 @@ pub const EDIT_LABELS: &[&str] = &[
     "Set alternate text",
     "Mark figure as decorative",
     "Recognize text",
+    "Enhance scanned file",
     "Run JavaScript",
     "Run form script",
     "Save as {level}",
@@ -222,6 +225,7 @@ impl Edit {
             Edit::MoveAnnotationToPage { copy: true, .. }
             | Edit::MoveContentToPage { copy: true, .. }
             | Edit::MovePageImageToPage { copy: true, .. } => Label::of("Copy to another page"),
+            Edit::PasteComments { .. } => Label::of("Paste comments"),
             Edit::SetAnnotationContents { .. } => Label::of("Edit comment"),
             Edit::ReplyToAnnotation { .. } => Label::of("Reply"),
             // The state's name is part of the wording: a language may need to agree it with the rest.
@@ -243,8 +247,11 @@ impl Edit {
             Edit::ResizeAnnotation { .. } => Label::of("Resize comment"),
             Edit::StyleAnnotation { .. }
             | Edit::FillAnnotation { .. }
+            | Edit::PartOpacity { .. }
             | Edit::FontSizeAnnotation { .. }
             | Edit::FontAnnotation { .. }
+            | Edit::BorderColorAnnotation { .. }
+            | Edit::BorderShapeAnnotation { .. }
             | Edit::SetAnnotationInfo { .. } => Label::of("Change comment properties"),
             Edit::SetFieldValue { name, .. } => Label::with("Fill in {name}", name.as_str()),
             Edit::SetFieldImage { name, .. } => Label::with("Set the image of {name}", name.as_str()),
@@ -266,6 +273,7 @@ impl Edit {
             Edit::MarkDecorative { .. } => Label::of("Mark figure as decorative"),
             Edit::MarkTagArtifact { .. } => Label::of("Mark content as artifact"),
             Edit::AddOcrText { .. } => Label::of("Recognize text"),
+            Edit::EnhanceScan { .. } => Label::of("Enhance scanned file"),
             Edit::ApplyScriptChanges { .. } => Label::of("Run JavaScript"),
             Edit::XfaEvent { .. } => Label::of("Run form script"),
             // The level is the standard's own name ("PDF/A-2b"), so it goes in as it stands.
@@ -302,8 +310,9 @@ impl Edit {
             Edit::RemoveMarks { kind: MarkKind::HeaderFooter } => Label::of("Remove header & footer"),
             Edit::RemoveMarks { kind: MarkKind::Watermark } => Label::of("Remove watermark"),
             Edit::RemoveMarks { kind: MarkKind::Background } => Label::of("Remove background"),
-            Edit::AddText { .. } => Label::of("Add text"),
-            Edit::AddImage { .. } => Label::of("Add image"),
+            Edit::AddText { .. } | Edit::AddStyledText { .. } => Label::of("Add text"),
+            Edit::AddImage { .. } | Edit::AddCover { .. } => Label::of("Add image"),
+            Edit::ReleaseContent { .. } => Label::of("Convert to page text"),
             Edit::UpdateContent { .. } => Label::of("Edit content"),
             Edit::DeleteContent { .. } => Label::of("Delete content"),
             Edit::CommentToContent { then: None, .. } => Label::of("Place on the page"),

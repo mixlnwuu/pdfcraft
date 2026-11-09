@@ -44,6 +44,7 @@ mod pictures;
 pub mod print_raster;
 pub mod printcheck;
 mod protection;
+pub mod scan_clean;
 mod scan_colours;
 mod scan_fields;
 mod session;
@@ -116,9 +117,9 @@ pub use pdfcraft_fonts::{MAX_SIGNATURE_CHARS, ScriptOutline, script_missing, scr
 pub use pdfcraft_annot::appearance as annot_text;
 pub use pdfcraft_annot::links::{Highlight as LinkHighlight, LinkAction, LinkItem, LinkStyle};
 pub use pdfcraft_annot::{
-    Activation3d, AppearanceCache, AttachIcon, FillMark, LineEnding, Markup, NOTE_SIZE, NewAnnotation, NoteIcon, OverlayFont, OverlayLook,
-    Props as CommentProps, ReviewState, Rgb, Shape, StampGroup, StampKind, Style, TextFont, arranged_comment, arranged_position, copyable_comment,
-    rect_quad,
+    Activation3d, AppearanceCache, AttachIcon, BorderShape, FillMark, LineEnding, Markup, NOTE_SIZE, NewAnnotation, NoteIcon, OverlayFont,
+    OverlayLook, Props as CommentProps, ReviewState, Rgb, Shape, StampGroup, StampKind, Style, TextFont, arranged_comment, arranged_position,
+    copyable_comment, rect_quad,
 };
 pub use pdfcraft_annot::{MAX_MODEL_BYTES as MAX_3D_MODEL_BYTES, ModelFormat as Model3dFormat};
 pub use pdfcraft_forms::detect;
@@ -133,6 +134,7 @@ pub use pdfcraft_redact::sanitize::{HIDDEN, Hidden};
 pub use pdfcraft_sign as sign;
 pub use pdfcraft_sign::{SignOptions, SignatureInfo, Status as SignatureStatus, TrustStore};
 pub use pdfcraft_xfdf::Format as DataFormat;
+pub use pdfcraft_xfdf::{Outline as CommentOutline, comment_count, comment_outlines, comments_bounds, is_xfdf_comments};
 
 use bookmarks::outline_rows;
 pub use bookmarks::{BookmarkPage, BookmarkRow};
@@ -142,7 +144,7 @@ pub use comments::{SummarySort, comment_kind, comment_summary, comment_type_name
 use document::page_runs;
 pub use document::{Document, EditNotice, FontFallback, TextNotice, display_bytes_for, render_password_for};
 use document::{display_bytes, info_fields, recovered_render_password, same_pages, shown_under_redactions, undrawn_notices};
-pub use edit::{BATCH_LABELS, EDIT_LABELS, Edit};
+pub use edit::{BATCH_LABELS, EDIT_LABELS, Edit, TextRun};
 pub use error::{EditError, SourceProblem};
 pub use fill_sign::{displayed_offset, text_box_at, typed_signature_graphic, typed_signature_shape};
 pub use history::Label;

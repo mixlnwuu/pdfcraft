@@ -24,7 +24,9 @@ pub fn text_editor_fonts(doc: &Document, page: usize) -> Result<Vec<TextEditorFo
     for (name, font) in fonts.iter().take(128) {
         let Some(font) = doc.dict(font) else { continue };
         let Some(bytes) = pdfcraft_fonts::pdf::embedded_sfnt_within(doc, &font, &mut decode) else { continue };
-        if bytes.len() > budget {
+        // Thai edition: a subset whose character map sends Thai to emptied glyphs would show the
+        // paragraph's Thai as blanks once it is edited; the editor draws it with another face.
+        if bytes.len() > budget || !pdfcraft_fonts::embedding::draws_its_thai(&bytes) {
             continue;
         }
         budget -= bytes.len();

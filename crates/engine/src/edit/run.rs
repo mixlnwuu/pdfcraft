@@ -49,6 +49,7 @@ pub(crate) fn check_permission(edit: &Edit, p: &pdfcraft_cos::Permissions) -> Re
         }
         Edit::AddMeasurement(_)
         | Edit::AddAnnotation(_)
+        | Edit::PasteComments { .. }
         | Edit::AddCustomStamp { .. }
         | Edit::AddModel3d { .. }
         | Edit::DeleteAnnotation { .. }
@@ -67,8 +68,11 @@ pub(crate) fn check_permission(edit: &Edit, p: &pdfcraft_cos::Permissions) -> Re
         | Edit::ResizeAnnotation { .. }
         | Edit::StyleAnnotation { .. }
         | Edit::FillAnnotation { .. }
+        | Edit::PartOpacity { .. }
         | Edit::FontSizeAnnotation { .. }
         | Edit::FontAnnotation { .. }
+        | Edit::BorderColorAnnotation { .. }
+        | Edit::BorderShapeAnnotation { .. }
         | Edit::SetAnnotationInfo { .. }
         | Edit::SetMeasurementScale { .. } => {
             if p.annotate() {
@@ -109,6 +113,9 @@ pub(crate) fn check_permission(edit: &Edit, p: &pdfcraft_cos::Permissions) -> Re
         | Edit::ApplyRedactions { .. }
         | Edit::AddText { .. }
         | Edit::AddImage { .. }
+        | Edit::AddCover { .. }
+        | Edit::ReleaseContent { .. }
+        | Edit::AddStyledText { .. }
         | Edit::UpdateContent { .. }
         | Edit::MoveObjects { .. }
         | Edit::DeleteContent { .. }
@@ -148,6 +155,7 @@ pub(crate) fn check_permission(edit: &Edit, p: &pdfcraft_cos::Permissions) -> Re
         | Edit::MarkDecorative { .. }
         | Edit::MarkTagArtifact { .. }
         | Edit::AddOcrText { .. }
+        | Edit::EnhanceScan { .. }
         | Edit::SetDocumentScript { .. }
         | Edit::SetFieldScript { .. }
         | Edit::RemoveStandardId { .. }
@@ -539,6 +547,14 @@ pub(crate) fn run_edit(doc: &mut pdfcraft_cos::Document, edit: &Edit, cx: &mut E
         Edit::AddAnnotation(a) => {
             pdfcraft_annot::add_annotation(doc, a, &cx.meta())?;
         }
+        Edit::PasteComments { xfdf, page, offset } => {
+            // Names from the edit's own id generator: unique to this paste within the document.
+            let prefix = cx.meta().id;
+            let report = pdfcraft_xfdf::import_comments(doc, xfdf, Some(*page), Some(&prefix), *offset)?;
+            if report.comments == 0 {
+                return Err(EditError::Invalid("the clipboard holds no comments".into()));
+            }
+        }
         Edit::AddCustomStamp { page, rect, name, file, author } => {
             let src = mark_source(doc, file)?;
             let (sw, sh) = (src.size.0.max(1.0), src.size.1.max(1.0));
@@ -629,8 +645,11 @@ pub(crate) fn run_edit(doc: &mut pdfcraft_cos::Document, edit: &Edit, cx: &mut E
             )?;
         }
         Edit::FillAnnotation { page, index, fill } => pdfcraft_annot::set_fill(doc, *page, *index, *fill, &cx.meta())?,
+        Edit::PartOpacity { page, index, fill, text } => pdfcraft_annot::set_part_opacity(doc, *page, *index, *fill, *text, &cx.meta())?,
         Edit::FontSizeAnnotation { page, index, size } => pdfcraft_annot::set_font_size(doc, *page, *index, *size, &cx.meta())?,
         Edit::FontAnnotation { page, index, font } => pdfcraft_annot::set_text_font(doc, *page, *index, font, &cx.meta())?,
+        Edit::BorderColorAnnotation { page, index, color } => pdfcraft_annot::set_border_color(doc, *page, *index, *color, &cx.meta())?,
+        Edit::BorderShapeAnnotation { page, index, shape } => pdfcraft_annot::set_border_shape(doc, *page, *index, *shape, &cx.meta())?,
         Edit::SetAnnotationInfo { page, index, author, subject, icon } => {
             pdfcraft_annot::set_info(doc, *page, *index, author.as_deref(), subject.as_deref(), *icon, &cx.meta())?;
         }
@@ -758,15 +777,9 @@ pub(crate) fn run_edit(doc: &mut pdfcraft_cos::Document, edit: &Edit, cx: &mut E
         Edit::RemoveStandardId { standard } => pdfcraft_organize::remove_standard_id(doc, *standard)?,
         Edit::SetDocumentScript { name, script } => pdfcraft_forms::set_document_script(doc, name, script.as_deref())?,
         Edit::AddOcrText { page, words } => {
-            // Thai has its own invisible font: Helvetica can't write it (Thai edition).
-            let fonts = if pdfcraft_ocr::needs_invisible_font(words) {
-                let font = pdfcraft_fonts::thai_text::invisible_font(doc);
-                vec![(pdfcraft_ocr::INVISIBLE_FONT.to_vec(), pdfcraft_cos::Object::Ref(font))]
-            } else {
-                Vec::new()
-            };
-            pdfcraft_edit::stamp_with_fonts(doc, *page, "OCR", pdfcraft_ocr::text_layer(words), fonts)?;
+            crate::ocr::layer::add_text(doc, *page, words)?;
         }
+        Edit::EnhanceScan { images, covers } => crate::scan_clean::write_back(doc, images, covers)?,
         Edit::EditPageImage { page, index, change } => run_edit_page_image(doc, *page, *index, change)?,
         Edit::MoveObjects { page, objects, offset } => pdfcraft_edit::move_objects(doc, *page, objects, *offset)?,
         Edit::EditTextBlock { page, block, text, style } => {
@@ -844,6 +857,46 @@ pub(crate) fn run_edit(doc: &mut pdfcraft_cos::Document, edit: &Edit, cx: &mut E
             };
             pdfcraft_edit::add_content(doc, *page, &AddedContent::Image(pdfcraft_edit::AddedImage::new(rect, image)))?;
         }
+        Edit::AddCover { page, rect, bytes } => {
+            let (image, _) = embed_image(doc, "cover.png", bytes)?;
+            let index = pdfcraft_edit::add_content(doc, *page, &AddedContent::Image(pdfcraft_edit::AddedImage::new(*rect, image)))?;
+            // Already as far back as it may go (nothing under it but the scan) is not an error:
+            // the box simply stays where it is.
+            match pdfcraft_edit::arrange_content(doc, *page, index, pdfcraft_edit::Arrange::Back) {
+                Ok(_) | Err(pdfcraft_edit::EditError::Invalid(_)) => {}
+                Err(e) => return Err(e.into()),
+            }
+        }
+        Edit::AddStyledText { page, text, runs } => {
+            let index = pdfcraft_edit::add_content(doc, *page, &AddedContent::Text(text.clone()))?;
+            pdfcraft_edit::release_content(doc, *page, index)?;
+            // The paragraph it became: the last one of the page with its text.
+            let blocks = pdfcraft_edit::text_blocks(doc, *page)?;
+            let same = |b: &pdfcraft_edit::TextBlock| {
+                b.editor_text.chars().filter(|c| !c.is_whitespace()).eq(text.text.chars().filter(|c| !c.is_whitespace()))
+            };
+            if let Some((block, b)) = blocks.iter().enumerate().rev().find(|(_, b)| same(b)) {
+                let byte = |n: usize| b.editor_text.char_indices().nth(n).map_or(b.editor_text.len(), |(i, _)| i);
+                let ranges = runs
+                    .iter()
+                    .filter(|r| r.chars.start < r.chars.end)
+                    .map(|r| pdfcraft_edit::RangeStyle {
+                        range: byte(r.chars.start)..byte(r.chars.end),
+                        family: None,
+                        resource: None,
+                        size: (r.size.is_finite() && r.size > 0.0 && (r.size - text.size).abs() > 0.01).then_some(r.size),
+                        color: Some(r.color),
+                        underline: None,
+                        char_spacing: None,
+                        scale: None,
+                    })
+                    .filter(|r| r.range.start < r.range.end)
+                    .collect();
+                let style = pdfcraft_edit::BlockStyle { ranges, ..Default::default() };
+                pdfcraft_edit::rewrite_block(doc, *page, block, Some(&b.editor_text), &style)?;
+            }
+        }
+        Edit::ReleaseContent { page, index } => pdfcraft_edit::release_content(doc, *page, *index)?,
         Edit::UpdateContent { page, index, content } => pdfcraft_edit::update_content(doc, *page, *index, content)?,
         Edit::DeleteContent { page, index } => pdfcraft_edit::delete_content(doc, *page, *index)?,
         Edit::ArrangeContent { page, index, how } => {

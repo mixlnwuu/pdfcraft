@@ -2970,4 +2970,144 @@ theme	Appearance	ลักษณะที่ปรากฏ
 	Got it	เข้าใจแล้ว
 	Merge text boxes	ผสานกล่องข้อความ
 	Split into lines	แยกเป็นบรรทัด
+	Convert to page text	แปลงเป็นข้อความของหน้า
 	Paste bookmarks	วางบุ๊กมาร์ก
+# v0.19.0: OCR engines and review, Enhance scanned file, and other new wording
+	Correct recognized text…	แก้ไขข้อความที่รู้จำ…
+	Enhance scanned file…	ปรับปรุงไฟล์สแกน…
+	Add 3D model	เพิ่มโมเดล 3 มิติ
+	Automatically tag text	ติดแท็กข้อความอัตโนมัติ
+	Convert to a static form	แปลงเป็นฟอร์มแบบคงที่
+	Import bookmarks	นำเข้าบุ๊กมาร์ก
+	Remove {standard} identification	เอาการระบุมาตรฐาน {standard} ออก
+	Couldn't open {name}: the background worker stopped	เปิด {name} ไม่ได้: งานเบื้องหลังหยุดทำงาน
+	Couldn't open {name}: {reason}	เปิด {name} ไม่ได้: {reason}
+	PdfCraft's checks found no problems for {level}. This is not a validator result.	การตรวจของ PdfCraft ไม่พบปัญหาสำหรับ {level} (นี่ไม่ใช่ผลจากโปรแกรมตรวจรับรองมาตรฐาน)
+	PdfCraft's checks now find no problems for {level}. This is not a validator result. Save to keep the changes.	ตอนนี้การตรวจของ PdfCraft ไม่พบปัญหาสำหรับ {level} แล้ว (นี่ไม่ใช่ผลจากโปรแกรมตรวจรับรองมาตรฐาน) บันทึกเพื่อเก็บการเปลี่ยนแปลงไว้
+	Bookmarks nested too deep to list could not be copied, so nothing was cut.	บุ๊กมาร์กที่ซ้อนลึกเกินกว่าจะแสดงรายการได้ คัดลอกไม่ได้ จึงไม่ได้ตัดสิ่งใดออก
+	Bookmarks nested too deep to list were left out of the copy.	บุ๊กมาร์กที่ซ้อนลึกเกินกว่าจะแสดงรายการได้ ไม่ได้ถูกคัดลอกไปด้วย
+	Another file dialog is still open. This one will open when it closes.	หน้าต่างเลือกไฟล์อีกหน้าต่างหนึ่งยังเปิดอยู่ หน้าต่างนี้จะเปิดเมื่อหน้าต่างนั้นปิดลง
+	The image is marked for redaction. Apply it with Redact a PDF	รูปนี้มีเครื่องหมายปิดทับอยู่แล้ว ใช้คำสั่งปิดทับได้ที่ ปิดทับข้อมูลใน PDF
+	; cancelled — {n} files were not run	; ยกเลิกแล้ว — ยังไม่ได้ทำ {n} ไฟล์
+	; {n} files already had text	; มี {n} ไฟล์ที่มีข้อความอยู่แล้ว
+	A folder is asked for when a multiple-file run starts	จะถามหาโฟลเดอร์เมื่อเริ่มทำกับหลายไฟล์
+	Automatic	อัตโนมัติ
+	Black and white (binarize)	ขาวดำ (แปลงเป็นสองระดับ)
+	Built-in	ในตัว
+	Combine engines	รวมผลหลายเอนจิน
+	Confidence weighted	ถ่วงน้ำหนักตามความมั่นใจ
+	Editable text	ข้อความที่แก้ไขได้
+	Engine	เอนจิน
+	Force OCR (override skip options)	บังคับ OCR (ไม่สนตัวเลือกข้าม)
+	In multiple files: a file with any text is its own skipped bucket, and nothing is written for it	เมื่อทำหลายไฟล์: ไฟล์ที่มีข้อความอยู่แล้วจะถูกนับแยกเป็นไฟล์ที่ข้าม และไม่มีการเขียนผลใดสำหรับไฟล์นั้น
+	Pages with renderable text are left alone and reported as skipped	หน้าที่มีข้อความแสดงได้อยู่แล้วจะไม่ถูกแตะต้อง และรายงานว่าข้าม
+	Primary only	เฉพาะเอนจินหลัก
+	ROVER vote	โหวตแบบ ROVER
+	Reads pages and files even where the skip options would leave them alone	อ่านหน้าและไฟล์ แม้ในกรณีที่ตัวเลือกข้ามจะไม่ให้อ่าน
+	Remove scan speckle	ลบจุดรบกวนจากการสแกน
+	Review the recognition, then Accept to write the editable document	ตรวจผลการรู้จำ แล้วกด ยอมรับ เพื่อเขียนเอกสารที่แก้ไขได้
+	Several files have the same name, so their results would overwrite each other; nothing was written: {list}	มีหลายไฟล์ที่ชื่อเดียวกัน ผลลัพธ์จะเขียนทับกัน จึงยังไม่ได้เขียนอะไร: {list}
+	Skip files that already have text	ข้ามไฟล์ที่มีข้อความอยู่แล้ว
+	Skip pages that already have text	ข้ามหน้าที่มีข้อความอยู่แล้ว
+	Straighten pages scanned sideways or upside down	หมุนหน้าที่สแกนตะแคงหรือกลับหัวให้ตั้งตรง
+	Straighten skewed text lines	ปรับบรรทัดข้อความที่เอียงให้ตรง
+	Tesseract	Tesseract
+	The output folder already holds files of these names; nothing was written: {list}	โฟลเดอร์ผลลัพธ์มีไฟล์ชื่อเหล่านี้อยู่แล้ว จึงยังไม่ได้เขียนอะไร: {list}
+	The searchable copies are written here under the source names	สำเนาที่ค้นหาข้อความได้จะถูกเขียนไว้ที่นี่ โดยใช้ชื่อเดียวกับไฟล์ต้นฉบับ
+	Writes a new document of visible text; the scan is not changed	เขียนเอกสารใหม่เป็นข้อความที่มองเห็นได้ ภาพสแกนเดิมไม่เปลี่ยน
+	{name}: {n} low-confidence word(s) on pages {pages}	{name}: มีคำที่ความมั่นใจต่ำ {n} คำ ในหน้า {pages}
+	+ Dictionary	+ พจนานุกรม
+	A 3×3 median filter against scan speckle	ตัวกรองค่ามัธยฐาน 3×3 สำหรับลบจุดรบกวนจากการสแกน
+	AVG CONFIDENCE	ความมั่นใจเฉลี่ย
+	Accept	ยอมรับ
+	Accept entire page	ยอมรับทั้งหน้า
+	Add a second engine's reading when the first is unsure	เพิ่มผลอ่านจากเอนจินที่สองเมื่อเอนจินแรกไม่แน่ใจ
+	Always read with both engines and merge the words	อ่านด้วยทั้งสองเอนจินเสมอแล้วรวมคำเข้าด้วยกัน
+	Auto-rotate	หมุนอัตโนมัติ
+	Binarize	แปลงเป็นขาวดำ
+	Both engines, combined as the Strategy says	ทั้งสองเอนจิน รวมผลตามวิธีที่เลือก
+	CONFIDENCE	ความมั่นใจ
+	Cancel re-read	ยกเลิกการอ่านซ้ำ
+	Cancelled — {n} words were read on {m} of {t} pages; the rest were not read	ยกเลิกแล้ว — อ่านได้ {n} คำ จาก {m} หน้าในทั้งหมด {t} หน้า ที่เหลือยังไม่ได้อ่าน
+	Click a word to inspect it; drag a rectangle to re-read part of the page	คลิกคำเพื่อตรวจดู ลากกรอบสี่เหลี่ยมเพื่ออ่านส่วนนั้นของหน้าซ้ำ
+	Corrected text (Enter commits)	ข้อความที่แก้แล้ว (กด Enter เพื่อยืนยัน)
+	Denoise	ลดจุดรบกวน
+	Deskew	แก้ความเอียง
+	ENGINE · STRATEGY	เอนจิน · วิธีรวมผล
+	F8: next word to review; Shift+F8 goes back	F8: คำถัดไปที่ต้องตรวจ, Shift+F8: ย้อนกลับ
+	HIGH (>= 90%)	สูง (>= 90%)
+	LOW (< 70%)	ต่ำ (< 70%)
+	LOW-CONFIDENCE WORDS	คำที่ความมั่นใจต่ำ
+	MEDIUM (70-89%)	ปานกลาง (70-89%)
+	Mark this page as reviewed (Ctrl+T)	ทำเครื่องหมายว่าตรวจหน้านี้แล้ว (Ctrl+T)
+	Next uncertain	คำไม่แน่ใจถัดไป
+	OCR complete — no text recognized on this page.	OCR เสร็จแล้ว — ไม่พบข้อความในหน้านี้
+	OCR results rejected.	ปฏิเสธผล OCR แล้ว
+	PAGE	หน้า
+	Page verified	ตรวจหน้าแล้ว
+	Previous uncertain	คำไม่แน่ใจก่อนหน้า
+	Re-OCR entire page	OCR ทั้งหน้าใหม่
+	Re-OCR this region	OCR บริเวณนี้ใหม่
+	Re-reading the page…	กำลังอ่านหน้าซ้ำ…
+	Re-reading the region…	กำลังอ่านบริเวณนี้ซ้ำ…
+	Read {n} words on {m} of {t} pages	อ่านได้ {n} คำ จาก {m} หน้าในทั้งหมด {t} หน้า
+	Recognized text	ข้อความที่รู้จำ
+	Recognized text applied ({n} words, one undoable step)	ใช้ข้อความที่รู้จำแล้ว ({n} คำ เลิกทำได้ในขั้นเดียว)
+	Reject	ปฏิเสธ
+	Reject entire page	ปฏิเสธทั้งหน้า
+	Run OCR	เรียกใช้ OCR
+	Sauvola binarization: ink to black, paper to white	แปลงขาวดำแบบ Sauvola: หมึกเป็นสีดำ กระดาษเป็นสีขาว
+	Select a word on the page to inspect it	เลือกคำบนหน้าเพื่อตรวจดู
+	Shift+F8: the previous word to review	Shift+F8: คำก่อนหน้าที่ต้องตรวจ
+	Source page	หน้าต้นฉบับ
+	Straightens skewed text lines before reading	ปรับบรรทัดข้อความที่เอียงให้ตรงก่อนอ่าน
+	Suggestions	คำแนะนำ
+	That is the source file; choose another destination	นั่นคือไฟล์ต้นฉบับ โปรดเลือกที่เก็บอื่น
+	The built-in engine (pure Rust)	เอนจินในตัว (เขียนด้วย Rust ล้วน)
+	The page was read again; its words were replaced (undo in the panel)	อ่านหน้าซ้ำแล้ว คำในหน้าถูกแทนที่ (เลิกทำได้ในแผง)
+	The page's words were applied as one undoable step ({n} words)	ใช้คำของหน้านี้แล้ว เลิกทำได้ในขั้นเดียว ({n} คำ)
+	The page's words were cleared (undo in the panel)	ล้างคำของหน้านี้แล้ว (เลิกทำได้ในแผง)
+	The re-read was cancelled; the words are unchanged	ยกเลิกการอ่านซ้ำแล้ว คำต่าง ๆ ไม่เปลี่ยน
+	The region was read again; its words were replaced (undo in the panel)	อ่านบริเวณนี้ซ้ำแล้ว คำในบริเวณถูกแทนที่ (เลิกทำได้ในแผง)
+	The selected word is gone; choose another	คำที่เลือกไม่มีแล้ว โปรดเลือกคำอื่น
+	The tesseract program, run as an external process	โปรแกรม tesseract ที่เรียกใช้เป็นโปรเซสภายนอก
+	Turns pages scanned sideways or upside down upright before reading	หมุนหน้าที่สแกนตะแคงหรือกลับหัวให้ตั้งตรงก่อนอ่าน
+	Undo the last review change (Ctrl+Z)	เลิกทำการเปลี่ยนแปลงล่าสุดในการตรวจ (Ctrl+Z)
+	Use the chosen engine's reading alone	ใช้ผลอ่านจากเอนจินที่เลือกเท่านั้น
+	VERIFIED %	% ที่ตรวจแล้ว
+	Verified	ตรวจแล้ว
+	Word	คำ
+	Wrote {name}	เขียน {name} แล้ว
+	{n} word(s) to review	มี {n} คำที่ต้องตรวจ
+	Scanned pages are already being enhanced	กำลังปรับปรุงหน้าที่สแกนอยู่แล้ว
+	Background removal	ลบพื้นหลัง
+	Cleans up the scanned pictures in place: recognized text, comments and links on the pages stay as they are.	ทำความสะอาดภาพสแกนในที่เดิม ข้อความที่รู้จำ ความคิดเห็น และลิงก์บนหน้ายังอยู่เหมือนเดิม
+	Couldn't enhance the scanned pages	ปรับปรุงหน้าที่สแกนไม่ได้
+	Despeckle	ลบจุดรบกวน
+	Edge shadow removal	ลบเงาตามขอบ
+	Enhance	ปรับปรุง
+	Enhance Scanned File	ปรับปรุงไฟล์สแกน
+	Enhancing scans… image {d} of {t}	กำลังปรับปรุงภาพสแกน… ภาพที่ {d} จาก {t}
+	Enhancing the scanned pages was cancelled	ยกเลิกการปรับปรุงหน้าที่สแกนแล้ว
+	Evens out the paper so a grey or yellowed background turns white, and darkens faint strokes. 0 is off.	ปรับสีกระดาษให้สม่ำเสมอ พื้นหลังสีเทาหรือเหลืองจะกลายเป็นสีขาว และเส้นที่จางจะเข้มขึ้น ค่า 0 คือปิด
+	Lightens shadows along the edges of the scan, such as a book's gutter or a copier's dark border	ทำให้เงาตามขอบภาพสแกนจางลง เช่น ร่องกลางหนังสือหรือขอบดำจากเครื่องถ่ายเอกสาร
+	No scanned pages were cleaned up.	ไม่มีหน้าที่สแกนถูกทำความสะอาด
+	Removes isolated dark specks such as dust and scanner noise. The only filter black and white scans take.	ลบจุดดำเล็ก ๆ ที่กระจายอยู่ เช่น ฝุ่นและสัญญาณรบกวนจากเครื่องสแกน เป็นตัวกรองเดียวที่ใช้กับภาพสแกนขาวดำได้
+	Skip	ข้าม
+	Filters	ตัวกรอง
+	The dictionary language differs from the captured recognition	ภาษาของพจนานุกรมไม่ตรงกับผลการรู้จำที่บันทึกไว้
+@plural	{n} pasted bookmark points past the last page of this document and has no destination.|{n} pasted bookmarks point past the last page of this document and have no destination.	บุ๊กมาร์กที่วาง {n} รายการชี้เลยหน้าสุดท้ายของเอกสารนี้ จึงไม่มีปลายทาง
+@plural	{n} match|{n} matches	ตรงกัน {n} รายการ
+@plural	{fields} is missing|{fields} are missing	ไม่มี {fields}
+@plural	{n} formula reads a field the form doesn't have|{n} formulas read fields the form doesn't have	มีสูตร {n} สูตรที่อ่านช่องที่ฟอร์มไม่มี
+@plural	{field} reads {fields}, which the form doesn't have.|{field} reads {fields}, which the form doesn't have.	{field} อ่าน {fields} ซึ่งฟอร์มไม่มี
+@plural	{n} more formula reads a missing field.|{n} more formulas read missing fields.	มีอีก {n} สูตรที่อ่านช่องที่ไม่มีอยู่
+@plural	{fields} builds some field names as it runs, so those reads aren't checked.|{fields} build some field names as they run, so those reads aren't checked.	{fields} สร้างชื่อช่องบางชื่อขณะทำงาน จึงไม่ได้ตรวจการอ่านเหล่านั้น
+@plural	then {n} more action|then {n} more actions	แล้วอีก {n} การกระทำ
+@plural	{n} more message from the form's scripts was left out.|{n} more messages from the form's scripts were left out.	ละข้อความจากสคริปต์ของฟอร์มไว้อีก {n} ข้อความ
+@plural	Cleaned up the scan on {n} page.|Cleaned up the scans on {n} pages.	ทำความสะอาดภาพสแกนแล้ว {n} หน้า
+@plural	{n} page is not a scan.|{n} pages are not scans.	มี {n} หน้าที่ไม่ใช่ภาพสแกน
+@plural	{n} image was left as it was (page {p}: {why}).|{n} images were left as they were (page {p}: {why}, …).	มี {n} ภาพที่คงไว้ตามเดิม (หน้า {p}: {why})
+	Cover box	สี่เหลี่ยมปิดพื้นหลัง
+	Cover the background	สี่เหลี่ยมปิดพื้นหลัง
+	Pick the colour from the page	ดูดสีจากหน้า

@@ -154,6 +154,58 @@ pub(super) fn shown_look(ctx: &egui::Context, ed: &LineEditor) -> pdfcraft_engin
     look
 }
 
+/// The part of `text` a Format text preview applies to when it is not all of it: the selection,
+/// while something is previewed (Thai edition).
+pub(super) fn previewed_part(ctx: &egui::Context, ed: &LineEditor, text: &str) -> Option<std::ops::Range<usize>> {
+    crate::content_ui::previewed_look(ctx)?;
+    preview_range(ed.selection.as_ref(), text)
+}
+
+/// A selection that is a part of `text`: neither empty nor the whole of it, within its bounds.
+pub(super) fn preview_range(selection: Option<&std::ops::Range<usize>>, text: &str) -> Option<std::ops::Range<usize>> {
+    selection.filter(|r| r.start < r.end && r.end <= text.len() && !(r.start == 0 && r.end >= text.len())).cloned()
+}
+
+/// `spans` cut where `selection` starts and ends, each part with whether a preview shows on it:
+/// all of them without a selection.
+pub(super) fn preview_parts(
+    spans: Vec<(std::ops::Range<usize>, usize)>,
+    selection: Option<&std::ops::Range<usize>>,
+) -> Vec<(std::ops::Range<usize>, usize, bool)> {
+    let mut out = Vec::new();
+    for (range, index) in spans {
+        let mut bounds = vec![range.start];
+        if let Some(sel) = selection {
+            bounds.extend([sel.start, sel.end].into_iter().filter(|c| *c > range.start && *c < range.end));
+        }
+        bounds.push(range.end);
+        bounds.dedup();
+        for w in bounds.windows(2) {
+            let (a, b) = (w[0], w[1]);
+            out.push((a..b, index, selection.is_none_or(|sel| a >= sel.start && a < sel.end)));
+        }
+    }
+    out
+}
+
+/// Thai edition: the parts of paragraph `block` (its lines `lines`) by colour and size, as
+/// characters of its text, for a paste to keep; empty when it has one colour and one size.
+pub(crate) fn paragraph_runs(block: &pdfcraft_engine::TextBlock, lines: &[pdfcraft_engine::TextLine]) -> Vec<pdfcraft_engine::TextRun> {
+    let text = &block.editor_text;
+    let chars = |at: usize| text.get(..at).map_or(0, |s| s.chars().count());
+    let mut runs: Vec<pdfcraft_engine::TextRun> = Vec::new();
+    for (range, index) in block.edited_spans(text) {
+        let Some(line) = lines.get(index) else { continue };
+        let span = chars(range.start)..chars(range.end);
+        match runs.last_mut() {
+            Some(last) if last.color == line.color && last.size == line.size && last.chars.end == span.start => last.chars.end = span.end,
+            _ => runs.push(pdfcraft_engine::TextRun { chars: span, color: line.color, size: line.size }),
+        }
+    }
+    let uniform = runs.windows(2).all(|w| w[0].color == w[1].color && w[0].size == w[1].size);
+    if uniform { Vec::new() } else { runs }
+}
+
 /// Whether the editor shows its text underlined: as set, or as the pointer on Underline previews.
 fn shown_underline(ctx: &egui::Context, ed: &LineEditor) -> bool {
     crate::content_ui::previewed_look(ctx).and_then(|p| p.underline).unwrap_or(ed.extras.underline)
@@ -191,8 +243,12 @@ pub(super) fn editor_job(ui: &egui::Ui, ed: &LineEditor, text: &str, scale: f32,
         if centered {
             job.halign = egui::Align::Center;
         }
-        for (range, index) in block.edited_spans(text) {
+        // A preview over a selected part shows on that part only, as the change will (Thai edition):
+        // each run is cut where the selection starts and ends.
+        let previewed = previewed_part(ui.ctx(), ed, text);
+        for (range, index, inside) in preview_parts(block.edited_spans(text), previewed.as_ref()) {
             let Some(line) = lines.get(index) else { continue };
+            let ed_look = if inside { &ed_look } else { &ed.look };
             let mut look = source_look(&line.base_font, line.size, line.color, line.bold, line.italic);
             look.size = line.size;
             if ed_look.family != ed.look0.family || ed.family_chosen {
@@ -230,7 +286,8 @@ pub(super) fn editor_job(ui: &egui::Ui, ed: &LineEditor, text: &str, scale: f32,
                     extra_letter_spacing: spacing + ed.extras.char_spacing as f32 * scale,
                     color: color32(look.color),
                     italics: look.italic && !embedded && !own_face,
-                    underline: underline_stroke(underline, size, color32(look.color)),
+                    // A previewed underline shows under the selected part only, as it will be drawn.
+                    underline: underline_stroke(if inside { underline } else { ed.extras.underline }, size, color32(look.color)),
                     ..Default::default()
                 },
             );

@@ -115,6 +115,9 @@ pub struct ContentView {
     pub follow: Option<(usize, pdfcraft_cos::ObjRef)>,
     /// The item (page, index) the page's right-click menu is for, set by a right-click on it.
     pub menu: Option<(usize, usize)>,
+    /// A right-click on a box open for typing, unchanged (Thai edition): the box closed and the
+    /// page's menu is to open here, with its items (Split into lines, Arrange).
+    pub menu_at: Option<Pos2>,
     grab: Option<(usize, Grab, Pos2)>,
     undrawable: UndrawableMemo,
     layout: Option<(AddedText, f32, f64, [f64; 4])>,
@@ -703,9 +706,17 @@ pub(crate) fn page_boxes(
         .into_iter()
         .map(|(_, a)| screen_rect(xf, info, page, a.content.rect()))
         .chain(blocks.iter().map(|b| xf.user_rect_f64(info, page, b.rect)))
-        .chain(images.iter().map(|im| crate::canvas::image_screen_rect(im, xf, info, page)))
+        .chain(images.iter().map(|im| crate::canvas::image_screen_rect(im, xf, info, page)).filter(|r| !backdrop(xf.rect, *r)))
         .filter(|r| r.is_positive() && r.width().is_finite() && r.height().is_finite())
         .collect()
+}
+
+/// A picture covering most of the page (`page`, screen): a scan or a background, whose centre
+/// lies a hair off the page's. Lined up with, it caught boxes just beside the page's centre
+/// lines, in magenta, before they reached the green ones (Thai edition).
+fn backdrop(page: Rect, r: Rect) -> bool {
+    let covered = r.intersect(page);
+    covered.is_positive() && covered.area() >= 0.8 * page.area()
 }
 
 /// The rect while moving or resizing (images keep their proportions).
@@ -995,6 +1006,13 @@ pub(crate) fn page_menu(ui: &mut egui::Ui, view: &mut DocView, doc: &pdfcraft_en
         }
         None => {}
     }
+    // Thai edition: a text box made text of the page, where a part of it can take its own colour
+    // or size (double-click it, select the part, then Format text).
+    if matches!(a.content, AddedContent::Text(_)) && ui.button(tl!("Convert to page text")).clicked() {
+        (view.content.selected, view.content.menu) = (None, None);
+        view.pending_edit = Some(Edit::ReleaseContent { page, index });
+        ui.close();
+    }
     true
 }
 
@@ -1106,7 +1124,7 @@ pub(crate) fn paint_page(
             && cv.grab.is_none()
             && cv.draft.is_none()
             && let AddedContent::Text(t) = &a.content
-            && let Some(previewed) = paint_look_preview(ui, painter, xf, page, info, t)
+            && let Some(previewed) = paint_look_preview(ui, painter, xf, page, info, t, &[])
         {
             r = previewed;
         }
@@ -1365,6 +1383,8 @@ pub(crate) fn editor(ctx: &egui::Context, view: &mut DocView, info: &DocInfo, ad
     let background_ready = draft.index.is_some_and(|index| view.text_background.ready_added(page, index));
     let tokens = Tokens::get(ctx);
     let (mut commit, mut cancel, mut done) = (false, false, false);
+    // A right-click on the box with nothing typed or restyled in it (Thai edition).
+    let mut menu_at: Option<Pos2> = None;
     let mut undrawable = None;
     let memo = &view.content.undrawable;
     // Clicks outside the document (the Format text panel) keep the text open, as they keep a
@@ -1431,6 +1451,9 @@ pub(crate) fn editor(ctx: &egui::Context, view: &mut DocView, info: &DocInfo, ad
                 }
                 // The editor has no visible label; name it for assistive tech.
                 resp.response.clone().accessible_name(tl!("Added text"));
+                if resp.secondary_clicked() && !t.has_unapplied_typing() {
+                    menu_at = resp.interact_pointer_pos().or_else(|| ui.input(|i| i.pointer.hover_pos()));
+                }
                 if t.focus {
                     resp.request_focus();
                     if let Some(range) = &t.selection {
@@ -1469,6 +1492,20 @@ pub(crate) fn editor(ctx: &egui::Context, view: &mut DocView, info: &DocInfo, ad
         });
     if cancel {
         view.content.draft = None;
+        return (None, false);
+    }
+    // Right-clicked, unchanged: the box closes and the page's menu opens for it as for a box
+    // selected with a click (Thai edition: Split into lines and Arrange only showed after a move).
+    if let Some(pos) = menu_at
+        && let Some(d) = view.content.draft.as_ref()
+        && let Some(i) = d.index
+        && on_page(added, d.page).into_iter().any(|(j, a)| j == i && matches!(&a.content, AddedContent::Text(t) if *t == d.style))
+    {
+        let page = d.page;
+        view.content.draft = None;
+        view.content.selected = Some((page, i));
+        view.content.menu = Some((page, i));
+        view.content.menu_at = Some(pos);
         return (None, false);
     }
     // Text that can't be drawn stays in the editor, with the warning, rather than being lost.
@@ -1516,8 +1553,48 @@ fn finish(cv: &mut ContentView, d: TextDraft, added: &[Added], info: &DocInfo) -
     }
 }
 
-/// A restyled item: one whose box hugged its text is refitted to the new font or size.
+/// Thai edition: draft `d` with a selected part (not all of it) given `style`'s colour and size:
+/// the box as it was, made text of the page with that part in its own colour and size (replacing
+/// the box being retyped, in one step). `None` without such a part.
+pub(crate) fn part_styled_draft(d: &TextDraft, style: &AddedText, page_width: Option<f64>) -> Option<Edit> {
+    let text = d.text.trim_end().to_string();
+    let sel = d.selection.clone().filter(|r| r.start < r.end && r.end <= text.len() && !(r.start == 0 && r.end >= text.len()))?;
+    let chars = |at: usize| text.get(..at).map(|s| s.chars().count());
+    let (s, e, n) = (chars(sel.start)?, chars(sel.end)?, text.chars().count());
+    let base = &d.style;
+    let box_text = AddedText { text: text.clone(), rect: d.rect, ..base.clone() };
+    let box_text = match page_width {
+        Some(w) if d.auto => pdfcraft_engine::fitted_text(&box_text, w),
+        _ => box_text,
+    };
+    let run = |chars: std::ops::Range<usize>, t: &AddedText| pdfcraft_engine::TextRun { chars, color: t.color, size: t.size };
+    let runs = vec![run(0..s, base), run(s..e, style), run(e..n, base)].into_iter().filter(|r| r.chars.start < r.chars.end).collect();
+    let add = Edit::AddStyledText { page: d.page, text: box_text, runs };
+    Some(match d.index {
+        Some(index) => Edit::Batch { label: "Edit text".into(), edits: vec![Edit::DeleteContent { page: d.page, index }, add] },
+        None => add,
+    })
+}
+
+/// A restyled item: one whose box hugged its text is refitted to the new font or size. A new
+/// size (Thai edition) grows or shrinks the box about its centre, so the text stays where it was.
 pub(crate) fn restyled(old: &AddedText, new: AddedText, page_width: Option<f64>) -> AddedText {
+    let resized = new.size != old.size && new.direction == old.direction;
+    let out = restyled_at(old, new, page_width);
+    if !resized {
+        return out;
+    }
+    let (a, b) = (pdfcraft_engine::added_text_rect(old), pdfcraft_engine::added_text_rect(&out));
+    let dx = (a[0] + a[2] - b[0] - b[2]) / 2.0;
+    let dy = (a[1] + a[3] - b[1] - b[3]) / 2.0;
+    if !(dx.is_finite() && dy.is_finite()) {
+        return out;
+    }
+    let r = out.rect;
+    AddedText { rect: [r[0] + dx, r[1] + dy, r[2] + dx, r[3] + dy], ..out }
+}
+
+fn restyled_at(old: &AddedText, new: AddedText, page_width: Option<f64>) -> AddedText {
     match page_width {
         // A box turned another way (Thai edition) hugs its text again, from its top left corner.
         Some(w) if new.direction != old.direction => {
@@ -1869,7 +1946,17 @@ pub(crate) fn previewed_look(ctx: &egui::Context) -> Option<LookPreview> {
 /// The selected text as it would look with what the pointer rests on in Format text, drawn over
 /// the page until the pointer moves on. Nothing is changed in the document.
 /// Returns the box the previewed text takes, for the selection frame to follow.
-pub(crate) fn paint_look_preview(ui: &egui::Ui, painter: &egui::Painter, xf: &PageXform, page: usize, info: &DocInfo, t: &AddedText) -> Option<Rect> {
+/// `runs` (Thai edition): the parts of a paragraph of several colours or sizes, which keep their
+/// own where the preview doesn't change them.
+pub(crate) fn paint_look_preview(
+    ui: &egui::Ui,
+    painter: &egui::Painter,
+    xf: &PageXform,
+    page: usize,
+    info: &DocInfo,
+    t: &AddedText,
+    runs: &[pdfcraft_engine::TextRun],
+) -> Option<Rect> {
     let preview = previewed_look(ui.ctx())?;
     let mut look = t.clone();
     preview.apply(&mut look);
@@ -1883,7 +1970,37 @@ pub(crate) fn paint_look_preview(ui: &egui::Ui, painter: &egui::Painter, xf: &Pa
     let font = crate::theme::document_font(ui.ctx(), look.family, look.bold, look.italic, (look.size as f32 * zoom).max(4.0));
     let [cr, cg, cb] = look.color.map(|v| (v.clamp(0.0, 1.0) * 255.0) as u8);
     let color = Color32::from_rgb(cr, cg, cb);
-    let galley = painter.layout(t.text.clone(), font, color, new.width().max(8.0));
+    let galley = if runs.is_empty() {
+        painter.layout(t.text.clone(), font, color, new.width().max(8.0))
+    } else {
+        let mut job = egui::text::LayoutJob::default();
+        job.wrap.max_width = new.width().max(8.0);
+        let byte = |n: usize| t.text.char_indices().nth(n).map_or(t.text.len(), |(i, _)| i);
+        let mut at = 0;
+        for run in runs {
+            let (a, b) = (byte(run.chars.start).max(at), byte(run.chars.end));
+            if a >= b {
+                continue;
+            }
+            if a > at {
+                job.append(t.text.get(at..a).unwrap_or_default(), 0.0, egui::TextFormat { font_id: font.clone(), color, ..Default::default() });
+            }
+            let c = if preview.color.is_some() { look.color } else { run.color };
+            let size = if preview.size.is_some() { look.size } else { run.size };
+            let run_font = crate::theme::document_font(ui.ctx(), look.family, look.bold, look.italic, (size as f32 * zoom).max(4.0));
+            let [r, g, b2] = c.map(|v| (v.clamp(0.0, 1.0) * 255.0) as u8);
+            job.append(
+                t.text.get(a..b).unwrap_or_default(),
+                0.0,
+                egui::TextFormat { font_id: run_font, color: Color32::from_rgb(r, g, b2), ..Default::default() },
+            );
+            at = b;
+        }
+        if at < t.text.len() {
+            job.append(t.text.get(at..).unwrap_or_default(), 0.0, egui::TextFormat { font_id: font.clone(), color, ..Default::default() });
+        }
+        painter.layout_job(job)
+    };
     let x = match t.align {
         TextAlign::Left | TextAlign::Justify => new.left(),
         TextAlign::Center => new.center().x - galley.size().x / 2.0,
@@ -2607,7 +2724,18 @@ mod wheel_tests {
 mod snap_tests {
     use egui::{Rect, pos2, vec2};
 
-    use super::{SNAP, snap_delta};
+    use super::{SNAP, backdrop, snap_delta};
+
+    /// Thai edition: a scan covering the page is no box to line up with; a picture on part of
+    /// it is.
+    #[test]
+    fn a_page_sized_picture_is_a_backdrop_and_not_a_snap_target() {
+        let page = Rect::from_min_size(pos2(100.0, 50.0), vec2(600.0, 800.0));
+        assert!(backdrop(page, page.expand(2.0).translate(vec2(1.5, 0.0))));
+        assert!(backdrop(page, page.shrink(20.0)));
+        assert!(!backdrop(page, Rect::from_min_size(pos2(120.0, 70.0), vec2(300.0, 200.0))));
+        assert!(!backdrop(page, Rect::from_min_size(pos2(-900.0, 70.0), vec2(300.0, 200.0))));
+    }
 
     /// A box moved to within a few points of the page's centre lines lands on them; farther away
     /// it moves exactly as dragged.
@@ -2681,10 +2809,20 @@ mod snap_tests {
             assert_eq!(centred.rect, old.rect, "aligning keeps the box");
             assert_eq!(centred.align, TextAlign::Center);
         }
+        let centre = |t: &AddedText| {
+            let r = pdfcraft_engine::added_text_rect(t);
+            [(r[0] + r[2]) / 2.0, (r[1] + r[3]) / 2.0]
+        };
+        let near = |a: [f64; 2], b: [f64; 2]| (a[0] - b[0]).abs() < 0.01 && (a[1] - b[1]).abs() < 0.01;
         let bigger = restyled(&wide, AddedText { size: 18.0, ..wide.clone() }, Some(600.0));
-        assert_eq!(bigger.rect, wide.rect, "a wide box keeps its width");
-        let bigger = restyled(&hug, AddedText { size: 18.0, ..hug.clone() }, Some(600.0));
+        assert_eq!(bigger.rect[2] - bigger.rect[0], wide.rect[2] - wide.rect[0], "a wide box keeps its width");
+        assert!(near(centre(&bigger), centre(&wide)), "and its centre: {:?} {:?}", centre(&bigger), centre(&wide));
+        // Thai edition: a hugging box grows with its text about its centre, and shrinks back there.
+        let bigger = restyled(&hug, AddedText { size: 48.0, ..hug.clone() }, Some(600.0));
         assert!(bigger.rect[2] - bigger.rect[0] > hug.rect[2] - hug.rect[0], "a hugging box grows with its text");
+        assert!(near(centre(&bigger), centre(&hug)), "the text stays put: {:?} {:?}", centre(&bigger), centre(&hug));
+        let smaller = restyled(&bigger, AddedText { size: 8.0, ..bigger.clone() }, Some(600.0));
+        assert!(near(centre(&smaller), centre(&hug)), "shrinking too: {:?} {:?}", centre(&smaller), centre(&hug));
     }
 
     /// No ruler guides.

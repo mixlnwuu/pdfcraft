@@ -97,9 +97,12 @@ impl TextFont {
     }
 
     /// `/DA` for this font in colour `col` at `size`.
-    pub(crate) fn da(&self, col: [f64; 3], size: f64) -> String {
+    /// The `/DA` of a text comment in this font: text colour `col`, the border's own stroking
+    /// colour `border` (`None`: the text's) and `size`.
+    pub(crate) fn da(&self, col: [f64; 3], border: Option<[f64; 3]>, size: f64) -> String {
         let n = crate::n;
-        format!("{} {} {} rg /{} {} Tf", n(col[0]), n(col[1]), n(col[2]), self.resolve().resource(), n(size))
+        let stroke = border.map(|c| c.map(|x| x.clamp(0.0, 1.0))).map(|[r, g, b]| format!("{} {} {} RG ", n(r), n(g), n(b))).unwrap_or_default();
+        format!("{} {} {} rg {stroke}/{} {} Tf", n(col[0]), n(col[1]), n(col[2]), self.resolve().resource(), n(size))
     }
 
     pub(crate) fn resolve(&self) -> Resolved {

@@ -243,3 +243,20 @@ fn a_selected_paragraph_turns_vertical_as_an_added_box() {
     let doc = app.session.get(app.views[0].id).unwrap();
     assert!(doc.added().is_empty() && doc.text_blocks(0).iter().any(|b| b.text == "Bravo"), "one undo brings it back");
 }
+
+/// Thai edition: Ctrl+A in Edit text & images selects every paragraph of the page, and Format
+/// text's Bold then makes them all bold in one step.
+#[test]
+fn ctrl_a_selects_every_paragraph_and_bold_formats_them_all() {
+    let mut h = harness();
+    h.key_press_modifiers(Modifiers::COMMAND, Key::A);
+    h.run_steps(3);
+    h.get_by_label("3 objects selected");
+    h.get_by_label("Bold").click();
+    h.run_steps(5);
+    let all = looks(&h);
+    for name in ["Alpha", "Bravo", "Charlie"] {
+        assert_eq!(look(&all, name).0, "Helvetica-Bold", "{all:?}");
+    }
+    assert_eq!(h.state().session.get(h.state().views[0].id).unwrap().can_undo(), Some("Edit text"), "one step");
+}

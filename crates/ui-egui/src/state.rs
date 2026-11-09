@@ -168,6 +168,8 @@ pub enum Dialog {
     AccessibilityOptions,
     /// Scan & OCR ▸ Recognize text.
     RecognizeText,
+    /// Scan & OCR ▸ Enhance scanned file.
+    EnhanceScan,
     /// The JavaScript console (⌘J).
     JsConsole,
     /// Document JavaScripts.
@@ -233,6 +235,14 @@ pub struct PagePropsDraft {
     pub tab_order: Option<pdfcraft_engine::TabOrder>,
 }
 
+/// Copied comments: their XFDF (each with its replies), for `Edit::PasteComments`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CommentClip {
+    pub xfdf: String,
+    /// How many comments (replies not counted) were copied.
+    pub count: usize,
+}
+
 /// Copied pages: their document's name and bytes (as it was when copied) and the pages.
 #[derive(Clone, Debug)]
 pub struct PageClip {
@@ -249,6 +259,9 @@ pub struct TextClip {
     /// The box, in display space of the page it was copied from.
     pub text: pdfcraft_engine::AddedText,
     pub page: usize,
+    /// Thai edition: the paragraph's parts that differ in colour or size, for the paste to keep
+    /// (empty when it has one look).
+    pub runs: Vec<pdfcraft_engine::TextRun>,
     /// How many times it was pasted: each paste lands a step further down and right.
     pub pastes: u32,
 }
@@ -300,18 +313,6 @@ pub struct ImageClip {
     pub content: pdfcraft_engine::AddedContent,
     pub page: usize,
     pub index: usize,
-    pub marker: String,
-    pub pastes: u32,
-}
-
-/// A comment copied with ⌘C (Thai edition): where it is, and the text put on the system clipboard
-/// with it, by which ⌘V knows the clipboard still holds it.
-#[derive(Clone, Debug, PartialEq)]
-pub struct CommentClip {
-    pub page: usize,
-    pub index: usize,
-    /// Its `/NM`, which finds it again after other comments were added or deleted.
-    pub name: Option<String>,
     pub marker: String,
     pub pastes: u32,
 }

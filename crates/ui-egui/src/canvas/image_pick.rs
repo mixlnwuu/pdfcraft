@@ -22,8 +22,9 @@ pub struct PickedImage {
 const BLUE: Color32 = Color32::from_rgb(0x3A, 0x7B, 0xF0);
 
 /// A click on page `page` (Select tool, not taken by anything else) selects the picture under
-/// it, even with text drawn over it (scans with an OCR layer, captions); dragging or a double
-/// click still selects text, and clears the picture.
+/// it, even with text drawn over it (captions); dragging or a double click still selects text,
+/// and clears the picture. A picture covering a page with text on it is the paper, never picked
+/// (Thai edition).
 pub(crate) fn page_input(
     resp: &egui::Response,
     xf: &PageXform,
@@ -46,9 +47,17 @@ pub(crate) fn page_input(
     let u = info_page.view_to_user(vx, vy);
     let at = [f64::from(u[0]), f64::from(u[1])];
     let generation = doc.edit_generation();
+    let paper = !doc.text_blocks(page).is_empty();
     view.picked_image = doc.page_image_at(page, at).and_then(|index| {
         doc.page_images(page).get(index).and_then(|i| {
             let screen_rect = crate::canvas::image_screen_rect(i, xf, info, page);
+            // Thai edition: a picture covering a page that has text on it (a scan or a photo of a
+            // document with its OCR layer) is the paper: a click on it is a click on the empty
+            // page, which selects nothing (it tinted the whole page blue until a double click). A
+            // photo alone on its page is still picked, to copy.
+            if paper && crate::edit_text_ui::fills_page(xf, screen_rect) {
+                return None;
+            }
             if screen_rect.is_positive() && screen_rect.contains(p) {
                 Some(PickedImage { page, index, rect: crate::canvas::image_selectable_bounds(i), generation })
             } else {

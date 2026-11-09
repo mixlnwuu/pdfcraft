@@ -282,6 +282,14 @@ impl Document {
         pdfcraft_create::image_file(&editor.cos, img.object.ok_or("the image has no object")?)
     }
 
+    /// The colour (RGB 0–1) page `page` (0-based) shows around `at`, points from the displayed
+    /// page's top left, in its true colours (Thai edition: the cover box's eyedropper).
+    pub fn colour_at(&self, page: usize, at: [f32; 2]) -> Option<[f64; 3]> {
+        let editor = self.editor.as_ref()?;
+        let info = self.info.pages.get(page)?;
+        crate::guard(|| crate::scan_colours::colour_at(&editor.cos, info, page, at)).ok().flatten()
+    }
+
     /// Edit a PDF ▸ Edit text: the paragraphs on `page` (0-based).
     pub fn text_blocks(&self, page: usize) -> Vec<pdfcraft_edit::TextBlock> {
         self.editor.as_ref().and_then(|e| e.text_blocks(page).ok()).map(|b| b.as_ref().clone()).unwrap_or_default()
@@ -566,7 +574,7 @@ impl Document {
             _ => "Attachments only",
         };
         let pending = editor.cos.encryption_changed();
-        let permissions = if pending { pdfcraft_cos::Permissions { bits: h.permissions().bits, owner: false } } else { h.permissions() };
+        let permissions = if pending { pdfcraft_cos::Permissions { owner: false, ..h.permissions() } } else { h.permissions() };
         Some(SecuritySummary { method: method.into(), owner: h.auth() == pdfcraft_cos::Auth::Owner && !pending, permissions, pending })
     }
 

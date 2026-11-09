@@ -1,8 +1,8 @@
-use super::geometry::{HANDLES, handle_pos, is_markup, reaches_points, reshapable, reshaped, resizable};
+use super::geometry::{HANDLES, handle_pos, held, is_markup, reaches_points, reshapable, reshaped, resizable};
 use super::state::{CommentView, Gesture, PageCx, SETTLE_SECS};
 use super::{
     Annotation, Color32, CommentTool, CornerRadius, DocInfo, DocView, Edit, LineEnding, NewAnnotation, Pos2, QuickTool, Rect, SELECT_BLUE, Shape,
-    Stroke, color32, vec2,
+    Stroke, color32, pos2, vec2,
 };
 use crate::page_router::{CommentPart, Hit, Owner};
 
@@ -36,6 +36,12 @@ pub(crate) fn paint_page(ui: &egui::Ui, painter: &egui::Painter, cx: &PageCx<'_>
     if let Some(a) = hover_outline(cx, cv, hover) {
         for r in cx.screen_rects(a) {
             painter.rect_stroke(r.expand(2.0), CornerRadius::same(2), Stroke::new(1.0, SELECT_BLUE.gamma_multiply(0.7)), egui::StrokeKind::Outside);
+        }
+    }
+    // The comments selected besides the one with the handles: outlined, not resizable.
+    for a in cv.also.iter().filter(|(p, _)| *p == cx.page).filter_map(|(_, i)| cx.get(*i)) {
+        for r in cx.screen_rects(a) {
+            painter.rect_stroke(r.expand(2.0), CornerRadius::ZERO, Stroke::new(1.0, SELECT_BLUE), egui::StrokeKind::Middle);
         }
     }
     if let Some((page, index)) = cv.selected
@@ -93,6 +99,11 @@ pub(super) fn changing_points(
         }),
         (_, Some(Edit::ReshapeAnnotation { page: p, index: i, points: to })) if (*p, *i) == (page, index) => Some(to.clone()),
         (_, Some(Edit::MoveAnnotation { page: p, index: i, dx, dy })) if (*p, *i) == (page, index) => Some(shifted(*dx, *dy)),
+        // Moved with the rest of the selection: its own move in the batch.
+        (_, Some(Edit::Batch { edits, .. })) => edits.iter().find_map(|e| match e {
+            Edit::MoveAnnotation { page: p, index: i, dx, dy } if (*p, *i) == (page, index) => Some(shifted(*dx, *dy)),
+            _ => None,
+        }),
         _ => None,
     }
 }
@@ -128,6 +139,82 @@ fn paint_gesture(painter: &egui::Painter, cx: &PageCx<'_>, view: &DocView) {
     {
         paint_draw(painter, cx, tool, points);
     }
+    // The bundle of copied comments, hanging on the pointer over this page: its box, and each
+    // comment's outline in its colour, so the drop can be aimed to the line.
+    if let Some(Gesture::Place { bounds, count, outlines, .. }) = &view.comments.gesture
+        && let Some(p) = cx.ptr.pos
+        && cx.xf.rect.contains(p)
+    {
+        let [x, y] = cx.to_user(p);
+        let (dx, dy) = (x - (bounds[0] + bounds[2]) / 2.0, y - (bounds[1] + bounds[3]) / 2.0);
+        let r = Rect::from_two_pos(cx.to_screen([bounds[0] + dx, bounds[1] + dy]), cx.to_screen([bounds[2] + dx, bounds[3] + dy]));
+        painter.rect_stroke(r.expand(2.0), CornerRadius::same(2), Stroke::new(1.0, SELECT_BLUE.gamma_multiply(0.6)), egui::StrokeKind::Middle);
+        let at = |q: [f64; 2]| cx.to_screen([q[0] + dx, q[1] + dy]);
+        for outline in outlines {
+            paint_outline(painter, outline, &at);
+        }
+        let label = crate::i18n::fmt(tl!("Comments: {n}"), &[("n", &count.to_string())]);
+        painter.text(r.left_top() + vec2(0.0, -4.0), egui::Align2::LEFT_BOTTOM, label, crate::theme::regular(11.0), SELECT_BLUE);
+    }
+}
+
+/// One copied comment's outline on screen (`at` maps a user-space point, moved to where the
+/// bundle hangs), in the comment's colour.
+fn paint_outline(painter: &egui::Painter, outline: &pdfcraft_engine::CommentOutline, at: &dyn Fn([f64; 2]) -> Pos2) {
+    use pdfcraft_engine::CommentOutline as O;
+    let color = |c: &Option<[f64; 3]>| {
+        c.map(|[r, g, b]| Color32::from_rgb((r.clamp(0.0, 1.0) * 255.0) as u8, (g.clamp(0.0, 1.0) * 255.0) as u8, (b.clamp(0.0, 1.0) * 255.0) as u8))
+            .unwrap_or(SELECT_BLUE)
+    };
+    match outline {
+        O::Rect { rect, round, color: c } => {
+            let stroke = Stroke::new(1.5, color(c));
+            let r = Rect::from_two_pos(at([rect[0], rect[1]]), at([rect[2], rect[3]]));
+            if *round {
+                let (cx, cy, rx, ry) = (r.center().x, r.center().y, r.width() / 2.0, r.height() / 2.0);
+                let points: Vec<Pos2> =
+                    (0..48).map(|i| i as f32 / 48.0 * std::f32::consts::TAU).map(|t| pos2(cx + rx * t.cos(), cy + ry * t.sin())).collect();
+                painter.add(egui::Shape::closed_line(points, stroke));
+            } else {
+                painter.rect_stroke(r, CornerRadius::ZERO, stroke, egui::StrokeKind::Middle);
+            }
+        }
+        O::Line { points, color: c } => {
+            let stroke = Stroke::new(1.5, color(c));
+            painter.add(egui::Shape::line(points.iter().map(|p| at(*p)).collect(), stroke));
+        }
+        O::Poly { points, closed, color: c } => {
+            let stroke = Stroke::new(1.5, color(c));
+            let points: Vec<Pos2> = points.iter().map(|p| at(*p)).collect();
+            painter.add(if *closed { egui::Shape::closed_line(points, stroke) } else { egui::Shape::line(points, stroke) });
+        }
+        O::Ink { strokes, color: c } => {
+            let stroke = Stroke::new(1.5, color(c));
+            for s in strokes {
+                painter.add(egui::Shape::line(s.iter().map(|p| at(*p)).collect(), stroke));
+            }
+        }
+        O::Quads { quads, color: c } => {
+            let fill = color(c).gamma_multiply(0.35);
+            for q in quads {
+                // Upper left, upper right, lower right, lower left: a closed shape in that order.
+                let points = vec![at([q[0], q[1]]), at([q[2], q[3]]), at([q[6], q[7]]), at([q[4], q[5]])];
+                painter.add(egui::Shape::convex_polygon(points, fill, Stroke::NONE));
+            }
+        }
+        O::Text { rect, text, size, color: c } => {
+            // At the page's zoom, wrapped in the box; too small to read at this zoom, left out.
+            let r = Rect::from_two_pos(at([rect[0], rect[1]]), at([rect[2], rect[3]]));
+            let zoom = at([1.0, 0.0]).distance(at([0.0, 0.0]));
+            let px = *size as f32 * zoom;
+            if !(px.is_finite() && px >= 3.0) {
+                return;
+            }
+            let pad = 2.0 * zoom;
+            let galley = painter.layout(text.clone(), egui::FontId::proportional(px.min(400.0)), color(c), (r.width() - 2.0 * pad).max(1.0));
+            painter.with_clip_rect(r.intersect(painter.clip_rect())).galley(r.min + vec2(pad, pad), galley, color(c));
+        }
+    }
 }
 
 /// A drawing tool's shape from its points (a live drag, or a released one still settling).
@@ -160,15 +247,22 @@ fn paint_draw(painter: &egui::Painter, cx: &PageCx<'_>, tool: &CommentTool, poin
             CommentTool::Rectangle if pts.len() == 2 => {
                 painter.rect_stroke(Rect::from_two_pos(pts[0], pts[1]), CornerRadius::ZERO, stroke, egui::StrokeKind::Inside);
             }
+            CommentTool::Cover if pts.len() == 2 => {
+                let r = Rect::from_two_pos(pts[0], pts[1]);
+                painter.rect_filled(r, CornerRadius::ZERO, color32(style.color));
+                painter.rect_stroke(r, CornerRadius::ZERO, Stroke::new(1.0, Color32::from_gray(128)), egui::StrokeKind::Outside);
+            }
             CommentTool::Oval if pts.len() == 2 => {
                 let r = Rect::from_two_pos(pts[0], pts[1]);
                 painter.add(egui::Shape::ellipse_stroke(r.center(), r.size() / 2.0, stroke));
             }
             CommentTool::Polygon | CommentTool::PolyLine | CommentTool::Cloud => {
-                // The vertices so far, and a rubber band to the pointer.
+                // The vertices so far, and a rubber band to where a click would put the next one: the
+                // first, where the click closes the shape, Shift or not.
                 let mut line = pts.clone();
                 if let Some(p) = cx.ptr.pos {
-                    line.push(p);
+                    let shift = painter.ctx().input(|i| i.modifiers.shift);
+                    line.push(if closes_at(cx, *tool, points, p) { pts[0] } else { cx.to_screen(held(points.last(), cx.to_user(p), shift)) });
                 }
                 painter.add(egui::Shape::line(line, stroke));
                 if let Some(first) = pts.first().filter(|_| *tool != CommentTool::PolyLine && pts.len() >= 3) {
@@ -187,6 +281,12 @@ fn paint_draw(painter: &egui::Painter, cx: &PageCx<'_>, tool: &CommentTool, poin
     }
 }
 
+/// Whether a click at `p` (on screen) closes the polygon or cloud drawn so far (`points`, user
+/// space): on its first point again, once it has three.
+pub(super) fn closes_at(cx: &PageCx<'_>, tool: CommentTool, points: &[[f64; 2]], p: Pos2) -> bool {
+    points.len() >= 3 && tool != CommentTool::PolyLine && cx.to_screen(points[0]).distance(p) <= 6.0
+}
+
 /// The shape a finished drawing gesture makes (`None` if it is too small to mean anything).
 /// Shift held while drawing, as in Word (Thai edition): a rectangle or oval from `from` to `to`
 /// becomes a square or circle on its longer side, and a line or arrow (or a side of a polygon,
@@ -195,17 +295,20 @@ fn paint_draw(painter: &egui::Painter, cx: &PageCx<'_>, tool: &CommentTool, poin
 pub(super) fn constrained(tool: CommentTool, from: [f64; 2], to: [f64; 2]) -> [f64; 2] {
     let (dx, dy) = (to[0] - from[0], to[1] - from[1]);
     match tool {
-        CommentTool::Rectangle | CommentTool::Oval => {
+        CommentTool::Rectangle | CommentTool::Oval | CommentTool::Cover => {
             let side = dx.abs().max(dy.abs());
             [from[0] + side.copysign(dx), from[1] + side.copysign(dy)]
         }
         CommentTool::Line | CommentTool::Arrow | CommentTool::Polygon | CommentTool::PolyLine | CommentTool::Cloud => {
             let step = std::f64::consts::FRAC_PI_4;
             let angle = (dy.atan2(dx) / step).round() * step;
-            let length = dx.hypot(dy);
             // cos and sin of a multiple of 45 degrees, with the zeros exact.
             let exact = |v: f64| if v.abs() < 1e-12 { 0.0 } else { v };
-            [from[0] + length * exact(angle.cos()), from[1] + length * exact(angle.sin())]
+            let (cos, sin) = (exact(angle.cos()), exact(angle.sin()));
+            // The pointer projected onto that direction: level or plumb keeps the pointer's own
+            // x or y, as upstream's ortho hold does.
+            let length = dx * cos + dy * sin;
+            [from[0] + length * cos, from[1] + length * sin]
         }
         _ => to,
     }
@@ -225,7 +328,7 @@ pub(super) fn drawn_shape(tool: CommentTool, points: &[[f64; 2]]) -> Option<Shap
             start: LineEnding::None,
             end: if tool == CommentTool::Arrow { LineEnding::OpenArrow } else { LineEnding::None },
         }),
-        CommentTool::Rectangle if big => Some(Shape::Rectangle { rect }),
+        CommentTool::Rectangle | CommentTool::Cover if big => Some(Shape::Rectangle { rect }),
         CommentTool::Oval if big => Some(Shape::Oval { rect }),
         CommentTool::Polygon | CommentTool::Cloud if points.len() >= 3 => {
             Some(Shape::Polygon { vertices: points.to_vec(), cloud: tool == CommentTool::Cloud })
@@ -289,4 +392,23 @@ pub(super) fn edited_in_view(cx: &PageCx<'_>, index: usize, viewport: Rect) -> b
 
 pub(super) fn new_comment(cx: &PageCx<'_>, tool: CommentTool, shape: Shape, contents: String) -> Edit {
     Edit::AddAnnotation(NewAnnotation { page: cx.page, shape, style: cx.prefs.style(tool), contents, author: cx.prefs.author.clone() })
+}
+
+/// Thai edition: the cover box drawn over `rect` (user space) on the page of `cx`: an added picture
+/// of one pixel in the tool's colour, stretched over the box, so it is page content that Arrange
+/// can put behind the text (a comment always stays in front of it). `None` for a box too small.
+pub(super) fn cover_edit(cx: &PageCx<'_>, rect: [f64; 4]) -> Option<Edit> {
+    let info = cx.info.pages.get(cx.page)?;
+    // Display space: points from the displayed page's bottom left.
+    let corners = [[rect[0], rect[1]], [rect[2], rect[3]]].map(|[x, y]| info.user_to_view(x as f32, y as f32));
+    let (x0, x1) = (corners[0][0].min(corners[1][0]), corners[0][0].max(corners[1][0]));
+    let (y0, y1) = (corners[0][1].min(corners[1][1]), corners[0][1].max(corners[1][1]));
+    let h = info.height;
+    let display = [f64::from(x0), f64::from(h - y1), f64::from(x1), f64::from(h - y0)];
+    if !display.iter().all(|v| v.is_finite()) || display[2] - display[0] < 1.0 || display[3] - display[1] < 1.0 {
+        return None;
+    }
+    let [r, g, b] = cx.prefs.style(CommentTool::Cover).color.map(|c| (c.clamp(0.0, 1.0) * 255.0).round() as u8);
+    let png = pdfcraft_engine::export::encode_png(1, 1, &[r, g, b, 255]).ok()?;
+    Some(Edit::AddCover { page: cx.page, rect: display, bytes: std::sync::Arc::new(png) })
 }

@@ -56,6 +56,12 @@ impl PdfCraftApp {
                     if let Some(doc) = self.session.get(self.views[i].id) {
                         prepare::select_all(&mut self.views[i], &doc.form);
                     }
+                } else if self.quick_tool == QuickTool::EditText {
+                    // Thai edition: every paragraph, added item and picture of the page shown.
+                    if let Some(doc) = self.session.get(self.views[i].id) {
+                        let page = self.views[i].current;
+                        object_ui::select_all(&mut self.views[i], doc, page);
+                    }
                 } else {
                     self.views[i].select_all();
                 }
@@ -66,7 +72,7 @@ impl PdfCraftApp {
             {
                 object_ui::nudge_keys(ctx, &mut self.views[i], doc);
                 // Delete removes the selected objects, paragraphs of the page's text included (Thai edition).
-                object_ui::delete_keys(ctx, &mut self.views[i]);
+                object_ui::delete_keys(ctx, &mut self.views[i], doc);
                 object_ui::arrange_keys(ctx, &mut self.views[i]);
             } else if let Some(doc) = self.session.get(self.views[i].id).filter(|d| d.allows_annotation()) {
                 comments::nudge_keys(ctx, &mut self.views[i], &doc.info);

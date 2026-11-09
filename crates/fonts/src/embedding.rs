@@ -27,6 +27,23 @@ pub fn covers(bytes: &[u8], text: &str) -> bool {
     FontRef::new(bytes).is_ok_and(|f| text.chars().all(|c| matches!(c, '\n' | '\r') || f.charmap().map(c).is_some_and(|g| g.to_u32() != 0)))
 }
 
+/// Thai edition: whether a font program draws the Thai its character map claims: no Thai letter
+/// maps to a glyph without an outline. A subset a word processor embeds can map Thai letters to
+/// glyphs it emptied (the PDF reaches its glyphs by number, not by character); an editor drawing
+/// with such a program shows blanks, so it should draw with another face.
+pub fn draws_its_thai(bytes: &[u8]) -> bool {
+    let Ok(f) = FontRef::new(bytes) else { return false };
+    let (charmap, glyphs) = (f.charmap(), f.outline_glyphs());
+    ('\u{0E01}'..='\u{0E5B}').all(|c| match charmap.map(c).filter(|g| g.to_u32() != 0) {
+        None => true,
+        Some(g) => glyphs.get(g).is_some_and(|glyph| {
+            let mut pen = crate::script::CountingPen::default();
+            let _ = glyph.draw(skrifa::outline::DrawSettings::unhinted(Size::unscaled(), LocationRef::default()), &mut pen);
+            pen.segments > 0
+        }),
+    })
+}
+
 /// Names come from the program, never a caller's guessed family.
 pub fn names(bytes: &[u8]) -> Result<(String, String), String> {
     use skrifa::string::StringId;
@@ -341,6 +358,17 @@ fn same_resource(doc: &Document, fonts: &Dict, name: &str, programs: &mut Progra
 mod tests {
     use super::*;
     use crate::pdf::Metrics;
+
+    /// Thai edition: a face with no Thai, or with real Thai outlines, draws its Thai; bytes that
+    /// are no font don't.
+    #[test]
+    fn faces_that_draw_their_thai() {
+        assert!(draws_its_thai(include_bytes!("../../../assets/fonts/Inter-Regular.ttf")), "no Thai claimed");
+        assert!(!draws_its_thai(b"not a font"));
+        for face in crate::CRAFT_FONTS.iter().filter(|f| f.covers("Thai")) {
+            assert!(draws_its_thai(face.bytes), "{} {}", face.family, face.style);
+        }
+    }
 
     #[test]
     fn full_unicode_embedding_keeps_outlines_advances_and_roundtrip_codes() {

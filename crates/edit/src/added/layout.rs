@@ -138,7 +138,7 @@ pub(super) fn is_hebrew(c: char) -> bool {
 pub fn first_undrawable(t: &AddedText) -> Option<char> {
     // A craft-fonts family draws what its face has; the rest is checked as the standard font's.
     if let Some(face) = craft_face(t) {
-        let rest: String = t.text.chars().filter(|c| *c == '\n' || !pdfcraft_fonts::face_has(face, *c)).collect();
+        let rest: String = t.text.chars().filter(|c| *c == '\n' || !pdfcraft_fonts::script_face_has(face, *c)).collect();
         return first_undrawable(&AddedText { text: rest, family: t.family.standard(), ..t.clone() });
     }
     if t.text.chars().any(is_thai) {
@@ -232,13 +232,15 @@ pub(super) fn shaped_layout(t: &AddedText, line: &str, rtl: bool) -> Result<(Vec
         let craft = craft_face(t);
         let mut segments: Vec<((Option<ShapedScript>, bool), String)> = Vec::new();
         for c in text.chars().filter(|c| !is_bidi_control(*c)) {
-            let own = craft.filter(|face| pdfcraft_fonts::face_has(*face, c));
+            let own = craft.filter(|face| pdfcraft_fonts::script_face_has(*face, c));
             let after_hebrew = segments.last().is_some_and(|((kind, _), _)| *kind == Some(ShapedScript::Hebrew));
             let script = if is_thai(c) {
                 // Thai the family has no letters for is drawn in TH Sarabun PSK, in the item's
                 // weight and slant (Thai edition: it was always the upright regular face).
-                let styled =
-                    (t.bold || t.italic).then(|| Family::Sarabun.craft(t.bold, t.italic)).flatten().filter(|face| pdfcraft_fonts::face_has(*face, c));
+                let styled = (t.bold || t.italic)
+                    .then(|| Family::Sarabun.craft(t.bold, t.italic))
+                    .flatten()
+                    .filter(|face| pdfcraft_fonts::script_face_has(*face, c));
                 (Some(own.or(styled).unwrap_or(ShapedScript::Thai)), true)
             } else if is_hebrew(c) || (run_rtl && after_hebrew && !c.is_alphanumeric() && pdfcraft_fonts::hebrew_has(c)) {
                 (Some(ShapedScript::Hebrew), false)

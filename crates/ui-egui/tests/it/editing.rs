@@ -5119,6 +5119,47 @@ fn selected_text_formatting_keeps_the_rest_of_the_paragraph_and_reopens() {
     assert_eq!(reopen.get(rid).unwrap().text_lines(0), lines);
 }
 
+/// Thai edition: a colour picked for a selected part of a paragraph colours that part only.
+#[test]
+fn a_colour_for_selected_text_colours_only_that_part() {
+    let mut h = harness(1, |_| {});
+    assert!(h.state_mut().execute("edit.edit_text"));
+    h.run_steps(2);
+    let r = h.state().views[0].page_screen_rect(0).unwrap();
+    let at = egui::pos2(r.left() + 40.0 / 200.0 * r.width(), r.top() + (300.0 - 158.0) / 300.0 * r.height());
+    h.hover_at(at);
+    h.run_steps(1);
+    double_click(&mut h, at);
+    h.run_steps(4);
+    h.key_press_modifiers(Modifiers::COMMAND, Key::ArrowRight);
+    h.run_steps(1);
+    h.key_press_modifiers(Modifiers::SHIFT, Key::ArrowLeft);
+    h.run_steps(2);
+    assert_eq!(h.state().views[0].line_editor.as_ref().unwrap().selection, Some(5..6));
+    h.get_by_label("Colour").click();
+    h.run_steps(3);
+    h.get_by_label("Red").click();
+    h.run_steps(5);
+    let id = h.state().views[0].id;
+    let lines = h.state().session.get(id).unwrap().text_lines(0);
+    let red = |c: [f64; 3]| c[0] > 0.8 && c[1] < 0.3;
+    assert!(lines.iter().any(|l| l.text == "1" && red(l.color)), "{lines:?}");
+    assert!(lines.iter().any(|l| l.text.trim_end() == "Page" && !red(l.color)), "{lines:?}");
+    // The format painter copies the format of what is selected: a black part, though red was
+    // picked last, then the red one.
+    h.key_press(Key::ArrowLeft);
+    h.run_steps(1);
+    h.key_press(Key::Home);
+    h.run_steps(1);
+    h.key_press_modifiers(Modifiers::SHIFT, Key::ArrowRight);
+    h.run_steps(2);
+    assert_eq!(h.state().views[0].line_editor.as_ref().map(|e| e.selection.clone()), Some(Some(0..1)));
+    h.get_by_label("Format painter").click();
+    h.run_steps(2);
+    let painted = h.state().views[0].painter_colour().expect("the painter is on");
+    assert!(!red(painted), "the black part's colour: {painted:?}");
+}
+
 /// Drag with the pointer from `from` to `to` in a few steps.
 #[test]
 fn one_click_selects_a_paragraph_the_arrows_move_it_and_a_double_click_opens_it() {

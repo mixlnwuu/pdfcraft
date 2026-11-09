@@ -35,7 +35,8 @@ pub use layout::{
     text_width,
 };
 pub use store::{
-    Arrange, add_content, added_layer, arrange_content, arrange_paragraph, delete_content, isolate_content, list_added, scan_markers, update_content,
+    Arrange, add_content, added_layer, arrange_content, arrange_paragraph, delete_content, isolate_content, list_added, release_content,
+    scan_markers, update_content,
 };
 pub use types::{Added, AddedImage, AddedText, Align, CHAR_SPACING_LIMIT, Family, MarkerScan, TextDirection};
 

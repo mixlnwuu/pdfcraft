@@ -102,6 +102,26 @@ impl Flatten {
 
 const STEPS: usize = 8;
 
+/// A pen that only counts what is drawn (Thai edition: [`crate::embedding::draws`]).
+#[derive(Default)]
+pub(crate) struct CountingPen {
+    pub segments: usize,
+}
+
+impl OutlinePen for CountingPen {
+    fn move_to(&mut self, _: f32, _: f32) {}
+    fn line_to(&mut self, _: f32, _: f32) {
+        self.segments += 1;
+    }
+    fn quad_to(&mut self, _: f32, _: f32, _: f32, _: f32) {
+        self.segments += 1;
+    }
+    fn curve_to(&mut self, _: f32, _: f32, _: f32, _: f32, _: f32, _: f32) {
+        self.segments += 1;
+    }
+    fn close(&mut self) {}
+}
+
 impl OutlinePen for Flatten {
     fn move_to(&mut self, x: f32, y: f32) {
         self.close();
@@ -136,6 +156,17 @@ impl OutlinePen for Flatten {
     }
 }
 
+/// Whether the face has a glyph for `ch` (a cheap character-map probe, no outline work).
+pub fn face_has(bytes: &[u8], ch: char) -> bool {
+    FontRef::new(bytes).is_ok_and(|font| font.charmap().map(ch).is_some())
+}
+
+/// Return one glyph of `face` (a craft-fonts face), bounded so hostile replacement text cannot
+/// allocate unbounded outline data.
+pub fn craft_glyph(face: &crate::CraftFont, ch: char) -> Result<GlyphOutline, GlyphError> {
+    glyph_in_face(face.bytes, ch)
+}
+
 /// Return one glyph of the Japanese document face ([`crate::document_japanese_font`], Shippori
 /// Mincho from craft-fonts), bounded so hostile replacement text cannot allocate unbounded
 /// outline data. [`GlyphError::NoFont`] when the build has no Japanese face.
@@ -147,7 +178,11 @@ pub fn japanese_glyph(ch: char) -> Result<GlyphOutline, GlyphError> {
 /// The bounded outline and advance from the explicitly selected craft-fonts face.
 /// Uses the same complexity and missing-glyph checks as [`japanese_glyph`].
 pub fn japanese_glyph_from(face: &crate::CraftFont, ch: char) -> Result<GlyphOutline, GlyphError> {
-    let Ok(font) = FontRef::new(face.bytes) else { return Err(GlyphError::Missing) };
+    glyph_in_face(face.bytes, ch)
+}
+
+fn glyph_in_face(bytes: &[u8], ch: char) -> Result<GlyphOutline, GlyphError> {
+    let Ok(font) = FontRef::new(bytes) else { return Err(GlyphError::Missing) };
     let loc = LocationRef::default();
     let metrics = font.metrics(Size::unscaled(), loc);
     let scale = 1.0 / metrics.units_per_em.max(1) as f64;

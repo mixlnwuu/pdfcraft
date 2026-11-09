@@ -19,8 +19,8 @@ use crate::page_router::{Hit, Owner, ParagraphPart};
 mod background;
 mod image;
 mod layout;
-pub(crate) use layout::paragraph_as_added;
 use layout::shown_look;
+pub(crate) use layout::{paragraph_as_added, paragraph_runs};
 
 pub(crate) use background::TextBackground;
 pub use image::{CropMode, DragTarget, ImageAction, ImageDrag, ImageHandle, ImageSelection, image_menu_id};
@@ -334,6 +334,16 @@ impl LineEditor {
             });
         }
         style
+    }
+
+    /// Thai edition: the parts of the paragraph by colour and size, for the format painter to
+    /// copy, when nothing in it is selected (a selected part is copied as one look).
+    pub(crate) fn painter_runs(&self) -> Vec<pdfcraft_engine::TextRun> {
+        let whole = self.selection.as_ref().is_none_or(|r| r.start == r.end || (r.start == 0 && r.end >= self.text.len()));
+        match &self.source {
+            Some((block, lines)) if whole && self.text == self.original => paragraph_runs(block, lines),
+            _ => Vec::new(),
+        }
     }
 
     /// The paragraph's own font as the PDF names it (Thai edition: the format painter).
@@ -1062,6 +1072,19 @@ pub(crate) fn lost_focus_once(r: &egui::Response, had: &mut bool) -> bool {
 
 #[cfg(test)]
 mod tests {
+    /// Thai edition: a Format text preview over a selected part shows on that part only.
+    #[test]
+    fn a_preview_shows_on_the_selected_part_only() {
+        use super::layout::{preview_parts, preview_range};
+        let spans = vec![(0..6, 0), (6..12, 1)];
+        assert_eq!(preview_parts(spans.clone(), None), vec![(0..6, 0, true), (6..12, 1, true)]);
+        let sel = 3..8;
+        assert_eq!(preview_parts(spans, Some(&sel)), vec![(0..3, 0, false), (3..6, 0, true), (6..8, 1, true), (8..12, 1, false)]);
+        assert_eq!(preview_range(Some(&(0..12)), "abcdefghijkl"), None, "all of it: the paragraph's own preview");
+        assert_eq!(preview_range(Some(&(4..4)), "abcdefghijkl"), None, "a caret alone");
+        assert_eq!(preview_range(Some(&(2..5)), "abcdefghijkl"), Some(2..5));
+    }
+
     use super::*;
 
     /// Formatting applied restarts the rows' alignments by text with the box's history: a Redo
