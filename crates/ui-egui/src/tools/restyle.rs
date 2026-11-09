@@ -148,7 +148,18 @@ pub(crate) fn restyle_edit(
             }
             ObjectKind::Text => {
                 let b = blocks.get(t.index)?;
-                let mut style = paragraph_style(&crate::edit_text_ui::look_of(b), change);
+                let look0 = crate::edit_text_ui::look_of(b);
+                let mut style = paragraph_style(&look0, change);
+                // Thai edition: text in a font installed on this machine is drawn again from that
+                // font whatever changes: its embedded subsets can't be drawn from again, and their
+                // letters came out in another face.
+                if style.family.is_none()
+                    && style.resource.is_none()
+                    && style != BlockStyle::default()
+                    && matches!(look0.family, pdfcraft_engine::FontFamily::Installed(_))
+                {
+                    style.family = Some((look0.family, look0.bold, look0.italic));
+                }
                 // A paragraph of several colours or sizes (Thai edition) shows its first part's;
                 // picking that again still gives all of it that colour or size, and a change of
                 // anything else (bold, italic, font) keeps each part's own.
@@ -156,7 +167,10 @@ pub(crate) fn restyle_edit(
                 if !runs.is_empty() {
                     style.color = style.color.or(change.color);
                     style.size = style.size.or(change.size);
-                    if style != BlockStyle::default() {
+                    // Only a new face loses the parts' colours (a rewrite in another face draws
+                    // every part alike); restating them for anything else redrew each letter
+                    // apart and mixed up the subsets they are drawn from.
+                    if style.family.is_some() || style.resource.is_some() {
                         let text = &b.editor_text;
                         let byte = |n: usize| text.char_indices().nth(n).map_or(text.len(), |(i, _)| i);
                         for run in &runs {
@@ -185,7 +199,8 @@ pub(crate) fn restyle_edit(
                     style.width = (own.is_finite() && own > 0.0).then_some(own + 1.0);
                 }
                 if let Some(size) = style.size.filter(|_| style.offset.is_none() && style.width.is_none()) {
-                    style.offset = centred_resize(b, size);
+                    // Kept on the page: a box near the left or bottom edge grows away from it.
+                    style.offset = centred_resize(b, size).map(|[dx, dy]| [dx.max(-b.rect[0].max(0.0)), dy.max(-b.rect[1].max(0.0))]);
                 }
                 // A paragraph of one line stays one line when a face or size makes it wider
                 // (Thai edition): rewrapped at its old width, its last words fell to a new line.
@@ -667,6 +682,48 @@ startxref
         s.apply(id, edit).unwrap();
         let lines = s.get(id).unwrap().text_lines(0);
         assert!(lines.iter().all(|l| (l.size - 20.0).abs() < 0.1 && l.base_font.contains("Tahoma")), "all 20 pt Tahoma: {lines:?}");
+    }
+
+    /// Thai edition: a paragraph in a font installed on this machine is drawn again from that font
+    /// when it is only underlined or resized (its embedded subsets drew some letters in another
+    /// face), keeping each part's colour; growing near the page's left edge, it stays on the page.
+    /// Skipped on a machine without Tahoma.
+    #[test]
+    fn an_installed_font_paragraph_is_redrawn_from_its_font() {
+        let Some(i) = pdfcraft_fonts::installed_families().iter().position(|f| f.name == "Tahoma") else {
+            eprintln!("skipped: Tahoma isn't installed");
+            return;
+        };
+        let tahoma = pdfcraft_engine::FontFamily::Installed(u16::try_from(i).unwrap());
+        let mut s = pdfcraft_engine::Session::new();
+        let pdf = s
+            .create_from_images(&[("page.png".into(), pdfcraft_engine::export::encode_png(400, 120, &vec![255u8; 400 * 120 * 4]).unwrap())])
+            .unwrap();
+        let id = s.open("page.pdf", None, pdf, None).unwrap();
+        let text = AddedText {
+            text: "Hardware".into(),
+            rect: [4.0, 10.0, 300.0, 30.0],
+            family: pdfcraft_engine::FontFamily::Times,
+            size: 20.0,
+            ..Default::default()
+        };
+        let runs = vec![
+            pdfcraft_engine::TextRun { chars: 0..1, color: [1.0, 0.5, 0.0], size: 20.0 },
+            pdfcraft_engine::TextRun { chars: 1..8, color: [0.0; 3], size: 20.0 },
+        ];
+        s.apply(id, Edit::AddStyledText { page: 0, text, runs }).unwrap();
+        let target = [ObjectTarget { kind: ObjectKind::Text, index: 0 }];
+        let edit = restyle_edit(s.get(id).unwrap(), 0, &target, &LookPreview { family: Some(tahoma), ..Default::default() }, None).unwrap();
+        s.apply(id, edit).unwrap();
+        for change in [LookPreview { underline: Some(true), ..Default::default() }, LookPreview { size: Some(40.0), ..Default::default() }] {
+            let edit = restyle_edit(s.get(id).unwrap(), 0, &target, &change, None).unwrap();
+            let Edit::EditTextBlock { style, .. } = &edit else { panic!("a paragraph edit") };
+            assert_eq!(style.family.map(|f| f.0), Some(tahoma), "{change:?}: drawn again from Tahoma");
+            s.apply(id, edit).unwrap();
+            let lines = s.get(id).unwrap().text_lines(0);
+            assert!(lines.iter().any(|l| l.text.starts_with('H') && l.color[0] > 0.9), "{change:?}: the orange H stays: {lines:?}");
+            assert!(lines.iter().all(|l| l.rect[0] >= -0.5), "{change:?}: on the page: {lines:?}");
+        }
     }
 
     #[test]
