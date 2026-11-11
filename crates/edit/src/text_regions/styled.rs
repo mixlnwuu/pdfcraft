@@ -56,8 +56,9 @@ impl FontResolver<'_> {
         }) {
             return Ok(Some(name.clone()));
         }
-        if let Some(face) =
-            pdfcraft_fonts::embedding::matching_faces(&source.base_font).into_iter().find(|face| pdfcraft_fonts::embedding::covers(face.bytes, text))
+        if let Some(face) = pdfcraft_fonts::embedding::matching_faces_styled(&source.base_font, source.bold, source.italic)
+            .into_iter()
+            .find(|face| pdfcraft_fonts::embedding::covers(face.bytes, text))
         {
             return self.embed_face(face.name(), face.bytes, face.family, "the full source font could not be loaded").map(Some);
         }
@@ -704,17 +705,25 @@ fn shape_own(doc: &Document, fonts: &Dict, name: &str, text: &str) -> Result<Opt
     }
     let source =
         fonts.get(name.as_bytes()).and_then(|f| doc.dict(f)).ok_or_else(|| EditError::Invalid("the shaped text has no font resource".into()))?;
-    let family = Metrics::from_dict(doc, &source).base_font;
-    let mut candidates = vec![source];
-    candidates.extend(
-        fonts
-            .iter()
-            .filter_map(|(_, f)| doc.dict(f))
-            .filter(|f| pdfcraft_fonts::embedding::face_key(&Metrics::from_dict(doc, f).base_font) == pdfcraft_fonts::embedding::face_key(&family)),
-    );
-    for font in candidates {
-        if let Some(bytes) = pdfcraft_fonts::pdf::embedded_sfnt(doc, &font)
-            && pdfcraft_fonts::embedding::covers(&bytes, text)
+    let own = Metrics::from_dict(doc, &source);
+    let family = own.base_font.clone();
+    let key = pdfcraft_fonts::embedding::face_key(&family);
+    let others =
+        fonts.iter().filter_map(|(_, f)| doc.dict(f)).filter(|f| pdfcraft_fonts::embedding::face_key(&Metrics::from_dict(doc, f).base_font) == key);
+    // The source, then the family's other faces on the page of the source's weight and slant
+    // (Thai edition): the program says, as a font embedded without its weight doesn't. A bold
+    // title in the same family, the only full face on the page, wrote a regular row again in
+    // bold; with none of its style here, the text takes a face of its style from elsewhere.
+    let mut programs: Vec<Vec<u8>> = Vec::new();
+    for (i, font) in std::iter::once(source).chain(others).enumerate() {
+        let Some(bytes) = pdfcraft_fonts::pdf::embedded_sfnt(doc, &font) else { continue };
+        if i > 0 && pdfcraft_fonts::embedding::program_style(&bytes).is_some_and(|style| style != (own.bold, own.italic)) {
+            continue;
+        }
+        programs.push(bytes);
+    }
+    for bytes in programs {
+        if pdfcraft_fonts::embedding::covers(&bytes, text)
             && let Ok(shaped) = pdfcraft_fonts::source_shaping::shape(&bytes, text)
         {
             return Ok(Some((bytes, shaped, family)));

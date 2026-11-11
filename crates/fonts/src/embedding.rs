@@ -22,6 +22,24 @@ pub fn matching_faces(name: &str) -> Vec<&'static crate::CraftFont> {
     crate::CRAFT_FONTS.iter().filter(|f| face_key(f.family) == key || face_key(&f.name()) == key).collect()
 }
 
+/// [`matching_faces`], the face of the asked weight and slant first (Thai edition): a family's
+/// faces come Bold first, and text the source's subset can't draw was written again in bold.
+pub fn matching_faces_styled(name: &str, bold: bool, italic: bool) -> Vec<&'static crate::CraftFont> {
+    let mut faces = matching_faces(name);
+    faces.sort_by_key(|f| {
+        let style = f.style.to_ascii_lowercase();
+        let (b, i) = (style.contains("bold"), style.contains("italic") || style.contains("oblique"));
+        u8::from(b != bold) * 2 + u8::from(i != italic)
+    });
+    faces
+}
+
+/// Whether a font program is bold and italic, by its own weight and slant (Thai edition).
+pub fn program_style(bytes: &[u8]) -> Option<(bool, bool)> {
+    let a = FontRef::new(bytes).ok()?.attributes();
+    Some((a.weight.value() >= 600.0, a.style != skrifa::attribute::Style::Normal))
+}
+
 /// Whether a complete font program can show every non-newline character.
 pub fn covers(bytes: &[u8], text: &str) -> bool {
     FontRef::new(bytes).is_ok_and(|f| text.chars().all(|c| matches!(c, '\n' | '\r') || f.charmap().map(c).is_some_and(|g| g.to_u32() != 0)))
@@ -519,5 +537,19 @@ mod tests {
         let programs = doc.scan_objects().filter(|(_, o)| matches!(o.as_ref(), Object::Stream(s) if s.dict.get(b"PCFullFont").is_some())).count();
         assert_eq!(programs, 1, "one program for both pages");
         assert!(doc.scan_objects().count() > objects, "the second page gets its own resource");
+    }
+}
+
+#[cfg(test)]
+mod styled_faces_tests {
+    /// Thai edition: the regular face of a family comes first for regular text, the bold one for
+    /// bold text.
+    #[test]
+    fn the_face_of_the_asked_style_comes_first() {
+        let regular = super::matching_faces_styled("THSarabunPSK", false, false);
+        let Some(first) = regular.first() else { return }; // built without craft-fonts
+        assert_eq!(first.style, "Regular", "{:?}", regular.iter().map(|f| f.style).collect::<Vec<_>>());
+        let bold = super::matching_faces_styled("BCDHEE+THSarabunPSK", true, false);
+        assert_eq!(bold.first().map(|f| f.style), Some("Bold"));
     }
 }

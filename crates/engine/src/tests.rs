@@ -11049,3 +11049,60 @@ fn a_cover_box_shows_the_recognised_text_it_covers() {
     s.undo(id).unwrap();
     assert_eq!(invisible(&s, "Covered"), Some(true), "one Undo");
 }
+
+/// Thai edition: colour on a part of a regular row keeps the row regular when the only complete
+/// face of its family on the page is bold (a bold title coloured in part before): the row was
+/// shaped in that face, the whole row turned bold.
+#[test]
+fn a_part_coloured_in_a_regular_row_stays_regular_beside_a_bold_title() {
+    if crate::FontFamily::Sarabun.craft(true, false).is_none() {
+        return; // built without craft-fonts
+    }
+    let mut s = Session::new();
+    let pdf = s.create_blank(595.0, 842.0, 1).unwrap();
+    let id = s.open("form.pdf", None, pdf, None).unwrap();
+    let boxed = |text: &str, y: f64| AddedText {
+        text: text.into(),
+        rect: [60.0, y, 500.0, y + 20.0],
+        family: crate::FontFamily::Sarabun,
+        size: 16.0,
+        ..Default::default()
+    };
+    for (text, y) in [("หนังสือมอบอำนาจ", 700.0), ("เชื้อชาติ สัญชาติ", 600.0)] {
+        s.apply(id, Edit::AddText { page: 0, text: boxed(text, y) }).unwrap();
+        s.apply(id, Edit::ReleaseContent { page: 0, index: 0 }).unwrap();
+    }
+    let red = |s: &mut Session, starts: &str, part: &str, bold: bool| {
+        let blocks = s.get(id).unwrap().text_blocks(0);
+        let (k, b) = blocks.iter().enumerate().find(|(_, b)| b.editor_text.starts_with(starts)).unwrap();
+        let at = b.editor_text.find(part).unwrap();
+        let range = RangeStyle {
+            range: at..at + part.len(),
+            family: None,
+            resource: None,
+            size: None,
+            color: Some([0.9, 0.1, 0.1]),
+            underline: None,
+            char_spacing: None,
+            scale: None,
+        };
+        let family = bold.then_some((crate::FontFamily::Sarabun, true, false));
+        s.apply(
+            id,
+            Edit::EditTextBlock {
+                page: 0,
+                block: k,
+                text: b.editor_text.clone(),
+                style: BlockStyle { ranges: vec![range], family, ..Default::default() },
+            },
+        )
+        .unwrap();
+    };
+    // The title bold, in part red: its bold face is now on the page, complete.
+    red(&mut s, "หนังสือ", "มอบ", true);
+    red(&mut s, "เชื้อ", "ชา", false);
+    let lines = s.get(id).unwrap().text_lines(0);
+    let row: Vec<_> = lines.iter().filter(|l| l.rect[1] < 650.0 && !l.text.trim().is_empty()).collect();
+    assert!(!row.is_empty() && row.iter().all(|l| !l.bold), "the row stays regular: {row:?}");
+    assert!(lines.iter().filter(|l| l.rect[1] > 650.0 && !l.text.trim().is_empty()).all(|l| l.bold), "the title stays bold: {lines:?}");
+}
