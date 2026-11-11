@@ -409,9 +409,11 @@ mod tests {
     fn required_ocr_models_cannot_be_missing() {
         let source = include_str!("../../crates/ocr/src/ocrs.rs");
         let original = assets::load(&assets::root()).unwrap();
-        assert_eq!(original.fetched.iter().filter(|f| f.kind == "model").count(), 2);
+        // The two models `ocrs.rs` names; the Thai edition's Thai models are fetched beside them.
+        let named = |f: &&assets::Fetched| f.kind == "model" && f.file.rsplit('/').next().is_some_and(|name| source.contains(name));
+        assert_eq!(original.fetched.iter().filter(named).count(), 2);
         assert!(check_required_ocr_metadata(source, &original).unwrap().is_empty());
-        for model in original.fetched.iter().filter(|f| f.kind == "model") {
+        for model in original.fetched.iter().filter(named) {
             let mut m = assets::load(&assets::root()).unwrap();
             m.fetched.retain(|f| f.file != model.file);
             assert!(check_required_ocr_metadata(source, &m).unwrap().iter().any(|p| p.contains(&model.file) && p.contains("missing")));
@@ -422,8 +424,10 @@ mod tests {
     fn required_ocr_models_cannot_be_misclassified() {
         let source = include_str!("../../crates/ocr/src/ocrs.rs");
         let original = assets::load(&assets::root()).unwrap();
-        assert_eq!(original.fetched.iter().filter(|f| f.kind == "model").count(), 2);
-        for model in original.fetched.iter().filter(|f| f.kind == "model") {
+        // The two models `ocrs.rs` names; the Thai edition's Thai models are fetched beside them.
+        let named = |f: &&assets::Fetched| f.kind == "model" && f.file.rsplit('/').next().is_some_and(|name| source.contains(name));
+        assert_eq!(original.fetched.iter().filter(named).count(), 2);
+        for model in original.fetched.iter().filter(named) {
             let mut m = assets::load(&assets::root()).unwrap();
             m.fetched.iter_mut().find(|f| f.file == model.file).unwrap().kind = "font".into();
             assert!(check_required_ocr_metadata(source, &m).unwrap().iter().any(|p| p.contains(&model.file) && p.contains("kind")));

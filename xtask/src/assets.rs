@@ -32,6 +32,7 @@ pub const ALLOWED_LICENCES: &[&str] = &[
     "Font-exception-2.0",
     "Ubuntu-font-1.0",
     "Bitstream-Vera",
+    "Unicode-3.0",
     "CC0-1.0",
     "CC-BY-4.0",
     "CC-BY-SA-4.0",

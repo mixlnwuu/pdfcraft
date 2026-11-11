@@ -50,17 +50,17 @@ impl PdfCraftApp {
                 && (pages_owns_keyboard || !ctx.egui_wants_keyboard_input())
                 && ctx.input_mut(|input| input.consume_shortcut(&egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, Key::A)))
             {
+                let view = &self.views[i];
+                // A paragraph or text box open for typing keeps ⌘A for its own text.
+                let edit_objects = self.quick_tool == QuickTool::EditText && view.line_editor.is_none() && view.content.draft.is_none();
                 if pages_owns_keyboard {
                     self.views[i].select_all_pages();
+                } else if let Some(doc) = self.session.get(view.id).filter(|d| edit_objects && d.allows_modification()) {
+                    let page = self.views[i].current;
+                    object_ui::select_all(&mut self.views[i], doc, page);
                 } else if self.is_preparing() {
                     if let Some(doc) = self.session.get(self.views[i].id) {
                         prepare::select_all(&mut self.views[i], &doc.form);
-                    }
-                } else if self.quick_tool == QuickTool::EditText {
-                    // Thai edition: every paragraph, added item and picture of the page shown.
-                    if let Some(doc) = self.session.get(self.views[i].id) {
-                        let page = self.views[i].current;
-                        object_ui::select_all(&mut self.views[i], doc, page);
                     }
                 } else {
                     self.views[i].select_all();

@@ -1,5 +1,5 @@
-use super::marks::{MarkKind, matrix_number, n};
-use super::{Dict, Document, EditError, ObjRef, Object, Stream, helvetica_width, literal, win_ansi};
+use super::marks::{MarkKind, matrix_number};
+use super::{Dict, Document, EditError, ObjRef, Object, Stream};
 
 pub(crate) fn page_list(doc: &Document) -> Vec<pdfcraft_model::Page> {
     pdfcraft_model::pages(doc)
@@ -44,6 +44,41 @@ pub(crate) fn add_resources(doc: &mut Document, page: &pdfcraft_model::Page, opa
 pub(crate) fn page_fonts(doc: &Document, page: &pdfcraft_model::Page) -> Dict {
     let res = page.dict.get(b"Resources").map(|r| doc.resolve(r)).and_then(|r| r.as_dict().cloned()).unwrap_or_default();
     res.get(b"Font").map(|f| doc.resolve(f)).and_then(|f| f.as_dict().cloned()).unwrap_or_default()
+}
+
+/// A name in `fonts` for the standard face `base` that can't take over a font the page already
+/// draws with: `preferred` when it is free or already names exactly the dictionary
+/// [`add_page_resources`] writes for that face, otherwise the first such `preferred_1`,
+/// `preferred_2`… (one of the first `fonts.len() + 1` always is). A font with anything more
+/// (`/ToUnicode`, `/Widths`…) is someone else's, even in the same face.
+pub(crate) fn free_font_name(doc: &Document, fonts: &Dict, preferred: &str, base: &str) -> String {
+    let usable = |name: &str| match fonts.get(name.as_bytes()) {
+        None => true,
+        Some(font) => doc.resolve(font).as_dict().is_some_and(|d| {
+            d.len() == 4
+                && d.name(b"Type") == Some(b"Font")
+                && d.name(b"Subtype") == Some(b"Type1")
+                && d.name(b"BaseFont") == Some(base.as_bytes())
+                && d.name(b"Encoding") == Some(b"WinAnsiEncoding")
+        }),
+    };
+    if usable(preferred) {
+        return preferred.to_string();
+    }
+    (1..=fonts.len().saturating_add(1)).map(|k| format!("{preferred}_{k}")).find(|name| usable(name)).unwrap_or_else(|| preferred.to_string())
+}
+
+/// Add `fonts` (resource name, font) to the page's own resources.
+pub(crate) fn add_page_font_dict(doc: &mut Document, page: &pdfcraft_model::Page, fonts: &Dict) -> Result<(), EditError> {
+    let mut res = page.dict.get(b"Resources").map(|r| doc.resolve(r)).and_then(|r| r.as_dict().cloned()).unwrap_or_default();
+    let mut all = res.get(b"Font").map(|f| doc.resolve(f)).and_then(|f| f.as_dict().cloned()).unwrap_or_default();
+    for (name, font) in fonts.iter() {
+        all.set(name.clone(), font.clone());
+    }
+    res.set(b"Font".to_vec(), Object::Dict(all));
+    // The page gets its own (possibly copied) resources; shared dictionaries stay untouched.
+    doc.update_dict(page.obj, |d| d.set(b"Resources".to_vec(), Object::Dict(res)))?;
+    Ok(())
 }
 
 /// Add the standard `faces` (resource name, base font) and an opacity state to the page's own
@@ -544,36 +579,6 @@ pub(crate) fn begin(kind: MarkKind, subtype: &str, matrix: [f64; 6]) -> String {
 
 pub(crate) const END: &str = "EMC\nQ\n";
 
-/// The first character of `line` page text can't draw: [`pdfcraft_fonts::first_non_win_ansi`],
-/// except Thai when this build has the Thai face (Thai edition: drawn in TH Sarabun PSK).
-pub(crate) fn first_undrawable_char(line: &str) -> Option<char> {
-    let thai = pdfcraft_fonts::thai_text::available();
-    line.chars().find(|c| !pdfcraft_fonts::win_ansi_encodable(*c) && !(thai && pdfcraft_fonts::thai_text::is_thai(*c)) || matches!(c, '\r'))
-}
-
-/// Lines of page text — each its text and baseline origin — as text-showing operators: with Thai,
-/// shaped in TH Sarabun PSK (Type 3 fonts added to the page's resources), the rest in `/PCHelv`
-/// (Thai edition). Call after [`add_resources`], which writes the page's own resources.
-pub(crate) fn text_lines_on_page(doc: &mut Document, page: usize, lines: &[(String, f64, f64)], size: f64) -> Result<Vec<u8>, EditError> {
-    if !lines.iter().any(|(l, ..)| pdfcraft_fonts::thai_text::has_thai(l)) {
-        return Ok(lines.iter().flat_map(|(l, x, y)| text_op(*x, *y, l)).collect());
-    }
-    let p = page_list(doc).swap_remove(page);
-    let mut res = p.dict.get(b"Resources").map(|r| doc.resolve(r)).and_then(|r| r.as_dict().cloned()).unwrap_or_default();
-    let mut fonts = res.get(b"Font").map(|f| doc.resolve(f)).and_then(|f| f.as_dict().cloned()).unwrap_or_default();
-    // A prefix no font on the page has yet, so marks never replace each other's glyphs.
-    let prefix = (0u32..)
-        .map(|k| format!("PCTh{k}_"))
-        .find(|p| !fonts.iter().any(|(name, _)| name.starts_with(p.as_bytes())))
-        .unwrap_or_else(|| "PCThX_".into());
-    let drawn = pdfcraft_fonts::thai_text::draw(doc, lines, size, false, false, "PCHelv", &helvetica_width, &prefix)
-        .map_err(|_| EditError::Invalid("Thai text needs the Thai font this build doesn't include".into()))?;
-    pdfcraft_fonts::thai_text::add_fonts(&mut fonts, &drawn);
-    res.set(b"Font".to_vec(), Object::Dict(fonts));
-    doc.update_dict(p.obj, |d| d.set(b"Resources".to_vec(), Object::Dict(res)))?;
-    Ok(drawn.ops)
-}
-
 /// Add fonts (name and object, e.g. Thai Type 3 fonts from `pdfcraft_fonts::thai_text::draw`) to
 /// page `page`'s own `/Font` resources, for content [`stamp`] put there (Thai edition).
 pub fn add_page_fonts(doc: &mut Document, page: usize, fonts: &[(String, ObjRef)]) -> Result<(), EditError> {
@@ -607,11 +612,6 @@ pub(crate) fn add_page_font_objects(doc: &mut Document, page: usize, fonts: Vec<
     Ok(())
 }
 
-/// The width of a line of page text in `/PCHelv`, its Thai shaped (Thai edition).
-pub(crate) fn page_text_width(line: &str, size: f64) -> f64 {
-    pdfcraft_fonts::thai_text::line_width(line, size, false, false, &helvetica_width)
-}
-
 /// The refusal for page text with `c`, which nothing here can draw.
 pub(crate) fn undrawable(c: char) -> EditError {
     EditError::Invalid(undrawable_message(c))
@@ -620,11 +620,4 @@ pub(crate) fn undrawable(c: char) -> EditError {
 /// The wording of the refusal for text with `c`, which the standard fonts can't draw.
 pub fn undrawable_message(c: char) -> String {
     format!("the standard fonts can't draw \"{c}\" (U+{:04X}); only Western European characters can be added as text for now", u32::from(c))
-}
-
-pub(crate) fn text_op(x: f64, y: f64, text: &str) -> Vec<u8> {
-    let mut v = format!("1 0 0 1 {} {} Tm ", n(x), n(y)).into_bytes();
-    v.extend(literal(&win_ansi(text)));
-    v.extend_from_slice(b" Tj\n");
-    v
 }

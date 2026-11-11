@@ -201,6 +201,7 @@ fn grid_table(hr: &[&Rule], vr: &[&Rule], blocks: &[Block], skip: &[bool], consu
         rows: cells.into_iter().map(|row| row.into_iter().map(|(_, _, c)| c).collect()).collect(),
         borders: Some(TableBorder { color, width }),
         row_heights,
+        ruled: Some([true; 4]),
     })
 }
 

@@ -8,12 +8,8 @@
 //! after `/UserUnit` and `/Rotate`), so items stay upright on rotated pages; an item records the
 //! `/UserUnit` it was written for.
 
-use std::collections::{HashMap, HashSet};
-
 use pdfcraft_cos::{Dict, Document, ObjRef, Object, PdfString, Stream};
-use pdfcraft_fonts::{
-    GlyphError, GlyphOutline, ShapedCluster, ShapedScript, Std14, literal, shape_arabic, shape_hebrew, shape_thai, shaped_glyph, win_ansi,
-};
+use pdfcraft_fonts::{GlyphError, GlyphOutline, ShapedScript, Std14, literal, shape_arabic, shape_hebrew, shape_thai, shaped_glyph, win_ansi};
 use unicode_bidi::{Level, ParagraphBidiInfo};
 
 use crate::{EditError, MarkKind, check, contents, matrix_number, n, page_list, place_tagged};
@@ -24,21 +20,27 @@ mod store;
 mod types;
 
 #[cfg(test)]
+pub(crate) use draw::thai_glyph_resources;
+#[cfg(test)]
 use draw::{GLYPHS_PER_FONT, LaidLine, draw_laid_shaped};
 pub(crate) use draw::{line_width, text_ops};
 #[cfg(test)]
 use layout::Piece;
 #[cfg(test)]
 pub(crate) use layout::WRAP_CALLS;
+#[cfg(test)]
+pub(crate) use layout::shaped_width;
 pub use layout::{
     PASTE_STEP, first_undrawable, fitted_text, hugs_text, letters, lines, paste_place, paste_rect, rotated_twin, text_is_wrapped, text_rect,
     text_width,
 };
+#[cfg(test)]
+use pdfcraft_fonts::ShapedCluster;
 pub use store::{
     Arrange, add_content, added_layer, arrange_content, arrange_paragraph, delete_content, isolate_content, list_added, release_content,
     scan_markers, update_content,
 };
-pub use types::{Added, AddedImage, AddedText, Align, CHAR_SPACING_LIMIT, Family, MarkerScan, TextDirection};
+pub use types::{Added, AddedImage, AddedText, Align, CHAR_SPACING_LIMIT, Family, Ink, MarkerScan, TextDirection};
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Content {
@@ -124,3 +126,5 @@ mod thai_style_tests {
         assert!(!scripts.is_empty() && scripts.iter().all(|s| *s == bold_italic), "bold italic Thai is drawn in TH Sarabun PSK Bold Italic");
     }
 }
+#[cfg(test)]
+mod thai_tests;

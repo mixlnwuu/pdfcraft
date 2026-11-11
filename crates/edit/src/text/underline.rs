@@ -100,7 +100,7 @@ mod tests {
     fn underlined(doc: &pdfcraft_cos::Document) -> Vec<String> {
         let page = lines::page_dict(doc, 0).unwrap();
         let streams = lines::content_streams(doc, &page.dict).unwrap();
-        let ops = super::super::Pieces::join(&streams.iter().map(|(_, d)| d.as_slice()).collect::<Vec<_>>()).parse().ops;
+        let ops = super::super::joined(&streams).parse().ops;
         text_lines(doc, 0)
             .unwrap()
             .iter()
