@@ -867,6 +867,7 @@ pub(crate) fn run_edit(doc: &mut pdfcraft_cos::Document, edit: &Edit, cx: &mut E
                 Ok(_) | Err(pdfcraft_edit::EditError::Invalid(_)) => {}
                 Err(e) => return Err(e.into()),
             }
+            reveal_covered_text(doc, *page, *rect)?;
         }
         Edit::AddTextPart { page, text, part } => {
             let (block, b) = released_text(doc, *page, text)?;
@@ -1090,6 +1091,27 @@ pub(crate) fn run_edit(doc: &mut pdfcraft_cos::Document, edit: &Edit, cx: &mut E
 
 /// A font name as shown to people (Thai edition): without the `ABCDEF+` subset tag a PDF adds, or
 /// the `Type3` suffix a generated fallback font carries.
+/// Thai edition: recognised text (drawn invisibly over a scan) that a cover box hides the scan's
+/// letters under is drawn visibly instead, so the box shows the words it covers: each invisible
+/// paragraph lying mostly inside `rect` is written again as it reads, which draws it.
+fn reveal_covered_text(doc: &mut pdfcraft_cos::Document, page: usize, rect: [f64; 4]) -> Result<(), EditError> {
+    let [x0, y0, x1, y1] = [rect[0].min(rect[2]), rect[1].min(rect[3]), rect[0].max(rect[2]), rect[1].max(rect[3])];
+    let mostly_inside = |b: &pdfcraft_edit::TextBlock| {
+        let r = b.rect;
+        let area = (r[2] - r[0]).max(0.0) * (r[3] - r[1]).max(0.0);
+        let w = (r[2].min(x1) - r[0].max(x0)).max(0.0);
+        let h = (r[3].min(y1) - r[1].max(y0)).max(0.0);
+        area > 0.0 && w * h >= area * 0.5
+    };
+    // Each pass draws one paragraph, which then reads as visible; bounded for a page of many.
+    for _ in 0..500 {
+        let blocks = pdfcraft_edit::text_blocks(doc, page)?;
+        let Some((i, b)) = blocks.iter().enumerate().find(|(_, b)| b.invisible && mostly_inside(b)) else { return Ok(()) };
+        pdfcraft_edit::rewrite_block(doc, page, i, Some(&b.editor_text), &pdfcraft_edit::BlockStyle::default())?;
+    }
+    Ok(())
+}
+
 /// Thai edition: `text` added to `page` and made text of the page; the paragraph it became (the
 /// last of the page with its text, else the one over its box).
 fn released_text(

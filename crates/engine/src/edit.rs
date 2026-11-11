@@ -539,7 +539,8 @@ pub enum Edit {
     },
     /// Thai edition: Comment ▸ Cover box. A picture (`bytes`, one pixel in the box's colour)
     /// stretched over `rect` (display space) and sent to the back in the same step: behind the
-    /// page's text, but never under a picture covering the page (the paper of a scan).
+    /// page's text, but never under a picture covering the page (the paper of a scan). Recognised
+    /// text it covers, invisible over the scan, is drawn visibly in the same step.
     AddCover {
         page: usize,
         rect: [f64; 4],

@@ -11031,3 +11031,21 @@ fn a_part_of_a_thai_box_takes_each_format_alone() {
         assert!(s.get(id).unwrap().text_lines(0).is_empty(), "{name}: one Undo takes it back");
     }
 }
+
+/// Thai edition: a cover box over recognised text (drawn invisibly, as an OCR layer is) draws
+/// that text visibly, so the box shows the words it hides the scan's letters under; text outside
+/// the box stays invisible, and one Undo takes both back.
+#[test]
+fn a_cover_box_shows_the_recognised_text_it_covers() {
+    let pdf = helvetica_pdf("BT /F1 24 Tf 3 Tr 60 400 Td (Covered) Tj ET BT /F1 24 Tf 3 Tr 60 100 Td (Elsewhere) Tj ET");
+    let mut s = Session::new();
+    let id = s.open("ocr.pdf", None, pdf, None).unwrap();
+    let invisible = |s: &Session, word: &str| s.get(id).unwrap().text_blocks(0).iter().find(|b| b.editor_text.contains(word)).map(|b| b.invisible);
+    assert_eq!((invisible(&s, "Covered"), invisible(&s, "Elsewhere")), (Some(true), Some(true)));
+    let red = crate::export::encode_png(1, 1, &[255, 0, 0, 255]).unwrap();
+    s.apply(id, Edit::AddCover { page: 0, rect: [40.0, 380.0, 300.0, 440.0], bytes: Arc::new(red) }).unwrap();
+    assert_eq!(invisible(&s, "Covered"), Some(false), "drawn over the box");
+    assert_eq!(invisible(&s, "Elsewhere"), Some(true), "outside the box: still invisible");
+    s.undo(id).unwrap();
+    assert_eq!(invisible(&s, "Covered"), Some(true), "one Undo");
+}
