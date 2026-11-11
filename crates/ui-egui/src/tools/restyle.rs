@@ -164,6 +164,18 @@ pub(crate) fn restyle_edit(
                 // picking that again still gives all of it that colour or size, and a change of
                 // anything else (bold, italic, font) keeps each part's own.
                 let runs = crate::edit_text_ui::paragraph_runs(b, &doc.text_lines(page));
+                // A weight, slant or underline asked for all of a paragraph whose parts differ in
+                // them reaches every part (Thai edition): judged by its first part alone, the
+                // format painter's regular left a bold part of the paragraph bold.
+                let differs =
+                    |asked: Option<bool>, part: fn(&pdfcraft_engine::TextRun) -> bool| asked.is_some_and(|a| runs.iter().any(|r| part(r) != a));
+                if style.family.is_none() && style.resource.is_none() && (differs(change.bold, |r| r.bold) || differs(change.italic, |r| r.italic)) {
+                    style.family =
+                        Some((change.family.unwrap_or(look0.family), change.bold.unwrap_or(look0.bold), change.italic.unwrap_or(look0.italic)));
+                }
+                if style.underline.is_none() && differs(change.underline, |r| r.underline) {
+                    style.underline = change.underline;
+                }
                 if !runs.is_empty() {
                     style.color = style.color.or(change.color);
                     style.size = style.size.or(change.size);
@@ -529,6 +541,54 @@ startxref
         let parts: Vec<_> = style.ranges.iter().map(|r| (r.range.clone(), r.color, r.size)).collect();
         assert_eq!(parts, vec![(0..4, Some([0.0, 0.0, 1.0]), Some(12.0)), (4..8, Some([0.0; 3]), Some(12.0))]);
         assert_eq!(style.color, None, "the parts' colours, not one for the whole");
+    }
+
+    /// Thai edition: the format painter's regular, painted on a paragraph whose first part is
+    /// regular and a later one bold, makes all of it regular: judged by the first part alone, the
+    /// bold part was left bold.
+    #[test]
+    fn painting_regular_on_a_partly_bold_paragraph_makes_all_of_it_regular() {
+        if pdfcraft_engine::FontFamily::Sarabun.craft(true, false).is_none() {
+            return; // built without craft-fonts
+        }
+        let mut s = pdfcraft_engine::Session::new();
+        let pdf = s.create_blank(595.0, 842.0, 1).unwrap();
+        let id = s.open("blank.pdf", None, pdf, None).unwrap();
+        let text = AddedText {
+            text: "โดยหนังสือฉบับนี้".into(),
+            rect: [60.0, 600.0, 400.0, 620.0],
+            family: pdfcraft_engine::FontFamily::Sarabun,
+            size: 16.0,
+            ..Default::default()
+        };
+        s.apply(id, Edit::AddText { page: 0, text: text.clone() }).unwrap();
+        s.apply(id, Edit::ReleaseContent { page: 0, index: 0 }).unwrap();
+        let b = s.get(id).unwrap().text_blocks(0).remove(0);
+        let at = b.editor_text.find("หนังสือ").unwrap();
+        let bold = pdfcraft_engine::RangeStyle {
+            range: at..at + "หนังสือ".len(),
+            family: Some((pdfcraft_engine::FontFamily::Sarabun, true, false)),
+            resource: None,
+            size: None,
+            color: None,
+            underline: None,
+            char_spacing: None,
+            scale: None,
+        };
+        s.apply(
+            id,
+            Edit::EditTextBlock { page: 0, block: 0, text: b.editor_text.clone(), style: BlockStyle { ranges: vec![bold], ..Default::default() } },
+        )
+        .unwrap();
+        assert!(s.get(id).unwrap().text_lines(0).iter().any(|l| l.bold), "a bold part to begin with");
+        let regular = AddedText { text: String::new(), ..text };
+        let target = [ObjectTarget { kind: ObjectKind::Text, index: 0 }];
+        let edit = restyle_edit(s.get(id).unwrap(), 0, &target, &all_of(&regular, None), None).expect("a change");
+        let Edit::EditTextBlock { style, .. } = &edit else { panic!("a paragraph edit") };
+        assert_eq!(style.family, Some((pdfcraft_engine::FontFamily::Sarabun, false, false)), "the regular face for all of it");
+        s.apply(id, edit).unwrap();
+        let lines = s.get(id).unwrap().text_lines(0);
+        assert!(lines.iter().all(|l| !l.bold), "all of it regular: {lines:?}");
     }
 
     /// Thai edition: the painter copies each part's weight, slant and underline too, not only its
