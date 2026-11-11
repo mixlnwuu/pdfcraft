@@ -83,6 +83,7 @@ mod signing;
 mod smart_guides;
 mod stamps;
 mod text_select;
+mod thai_parts;
 mod theme;
 mod theme_button;
 mod trust_signer;

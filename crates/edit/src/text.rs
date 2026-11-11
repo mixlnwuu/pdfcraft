@@ -197,6 +197,7 @@ mod tests {
             spans: Vec::new(),
             invisible: false,
             underlined: false,
+            underlined_parts: Vec::new(),
         }
     }
 

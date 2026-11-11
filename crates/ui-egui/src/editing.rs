@@ -262,6 +262,7 @@ impl PdfCraftApp {
                     {
                         ed.focus = true;
                         view.line_editor = Some(ed);
+                        view.pending_text_selection = None;
                         view.pending_text_open = None;
                     }
                 }

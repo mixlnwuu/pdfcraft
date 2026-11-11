@@ -363,8 +363,9 @@ impl LineEditor {
         self.size_chosen = true;
     }
 
-    /// After applying formatting: the paragraph now has it. Its old byte selection is cleared;
-    /// the rewritten paragraph may have different text or geometry.
+    /// After applying formatting: the paragraph now has it. Its selection stays (Thai edition),
+    /// so the next choice reaches the same part; [`LineEditor::refresh_source`] drops it when the
+    /// rewritten paragraph's text differs.
     pub fn applied(&mut self) {
         self.size_chosen = false;
         self.font_resource = None;
@@ -372,7 +373,6 @@ impl LineEditor {
         self.look0 = self.look.clone();
         self.extras0 = self.extras;
         self.original = self.text.clone();
-        self.selection = None;
         // The page now has this text: the box's history restarts, even when the format left the
         // text as it was, so a Redo from before can't put undone typing back on top of it.
         self.typing_from = None;
@@ -513,6 +513,19 @@ impl LineEditor {
         }
     }
 
+    /// Thai edition: Underline shows whether the selection (or, without one, the paragraph) is
+    /// underlined on the page, so a click turns that part's underline the other way.
+    pub(crate) fn sync_selection_underline(&mut self) {
+        let Some((block, _)) = &self.source else { return };
+        if self.text != self.original {
+            return;
+        }
+        let range = self.selection.clone().filter(|r| r.start < r.end).unwrap_or(0..self.text.len());
+        let on = underlined_at(block, &self.original, &range);
+        self.extras.underline = on;
+        self.extras0.underline = on;
+    }
+
     /// The text changed from `before` through the box's own typing (typing, Undo, Redo): rows
     /// aligned on their own keep their alignment, and a row Undo brings back gets its own back.
     pub(crate) fn follow_typed_rows(&mut self, ctx: &egui::Context, before: &str) {
@@ -525,6 +538,20 @@ impl LineEditor {
             look.aligns = pdfcraft_engine::paragraph_align::remap(before, &self.text, &look.aligns);
         }
     }
+}
+
+/// Thai edition: whether every letter of `range` (bytes of `text`, the paragraph's text as the
+/// page has it) is drawn with PdfCraft's underline.
+pub(crate) fn underlined_at(block: &pdfcraft_engine::TextBlock, text: &str, range: &std::ops::Range<usize>) -> bool {
+    if !block.underlined {
+        return false;
+    }
+    // Parts that couldn't be placed in the text: the paragraph reads as underlined as a whole.
+    if block.underlined_parts.is_empty() || text != block.editor_text {
+        return true;
+    }
+    let mut letters = text.char_indices().filter(|(i, c)| range.contains(i) && !c.is_whitespace()).peekable();
+    letters.peek().is_some() && letters.all(|(i, _)| block.underlined_parts.iter().any(|p| p.contains(&i)))
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -654,7 +681,9 @@ pub(crate) fn user_box(xf: &PageXform, info: &DocInfo, page: usize, r: Rect) -> 
 fn open_editor(cx: PageToolContext<'_>, lines: &[pdfcraft_engine::TextBlock], boxes: &[Rect], block: usize, view: &mut DocView) {
     let PageToolContext { ui, xf, doc, page, .. } = cx;
     view.pending_text_open = None;
+    let selection = view.pending_text_selection.take();
     let (Some(l), Some(b)) = (lines.get(block), boxes.get(block)) else { return };
+    let selection = selection.filter(|r| r.start < r.end && l.editor_text.get(r.clone()).is_some());
     view.image_selection = None;
     let source_lines = doc.text_lines(page);
     let text = l.editor_text.clone();
@@ -665,7 +694,7 @@ fn open_editor(cx: PageToolContext<'_>, lines: &[pdfcraft_engine::TextBlock], bo
     let right = xf.rect.right().min(view.viewport_rect().right()) - 6.0;
     let max_width = if l.rows.len() == 1 { (right - b.left()).max(b.width()) } else { b.width() };
     view.line_editor = Some(LineEditor {
-        selection: None,
+        selection,
         font_resource: None,
         page,
         block,
@@ -685,9 +714,10 @@ fn open_editor(cx: PageToolContext<'_>, lines: &[pdfcraft_engine::TextBlock], bo
         look0: look_of(l),
         family_chosen: false,
         size_chosen: false,
-        // An underline PdfCraft drew shows as on, so it can be turned off (Thai edition).
-        extras: Extras { underline: l.underlined, ..Extras::default() },
-        extras0: Extras { underline: l.underlined, ..Extras::default() },
+        // An underline PdfCraft drew under all of it shows as on, so it can be turned off (Thai
+        // edition); one under a part shows on that part when it is selected.
+        extras: Extras { underline: underlined_at(l, &l.editor_text, &(0..l.editor_text.len())), ..Extras::default() },
+        extras0: Extras { underline: underlined_at(l, &l.editor_text, &(0..l.editor_text.len())), ..Extras::default() },
         typing_from: None,
     });
 }
@@ -721,7 +751,10 @@ pub(crate) fn page_input(cx: PageToolContext<'_>, lines: &[pdfcraft_engine::Text
         // is now, and none if it was merged into another (#2516).
         match key.find(lines, 0) {
             Some(block) => open_editor(cx, lines, &boxes, block, view),
-            None => view.pending_text_open = None,
+            None => {
+                view.pending_text_open = None;
+                view.pending_text_selection = None;
+            }
         }
     }
     if !allow_interaction {
@@ -835,6 +868,7 @@ pub(crate) fn page_input(cx: PageToolContext<'_>, lines: &[pdfcraft_engine::Text
                 }
             }
             // The clicked box opens next frame, from the document with that edit applied.
+            view.pending_text_selection = None;
             view.pending_text_open = lines.get(hit).map(|l| (page, pdfcraft_engine::BlockKey::of(l)));
             return true;
         }

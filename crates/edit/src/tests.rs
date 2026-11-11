@@ -5262,7 +5262,7 @@ fn paragraphs_move_and_rewrap_to_a_new_width() {
 
 /// A page split into several content streams, as AutoCAD writes them: the first scales the
 /// page (`0.12 0 0 0.12 0 0 cm`, no `q`), the text comes in a later one.
-fn split_page(first: &str, second: &str) -> Document {
+pub(crate) fn split_page(first: &str, second: &str) -> Document {
     let objs: Vec<String> = vec![
         "<< /Type /Catalog /Pages 2 0 R >>".into(),
         "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".into(),

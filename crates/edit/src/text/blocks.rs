@@ -37,6 +37,9 @@ pub struct TextBlock {
     /// A rewrite underlined it (Thai edition): the next rewrite keeps the underline unless asked
     /// otherwise ([`BlockStyle::underline`]). Set by [`text_blocks`].
     pub underlined: bool,
+    /// The parts of `editor_text` (bytes) drawn with such an underline (Thai edition): a part
+    /// underlined on its own shows so in the editor. Set by [`text_blocks`].
+    pub underlined_parts: Vec<std::ops::Range<usize>>,
 }
 
 impl TextBlock {
@@ -265,9 +268,31 @@ pub fn text_blocks(doc: &Document, page: usize) -> Result<Vec<TextBlock>, EditEr
         for block in &mut blocks {
             let members: Vec<&TextLine> = block.lines.iter().filter_map(|i| lines.get(*i)).collect();
             block.underlined = !super::underline::own_underlines(&ops, &members).is_empty();
+            if block.underlined {
+                block.underlined_parts = underlined_in_editor(block, &lines, &ops);
+            }
         }
     }
     Ok(blocks)
+}
+
+/// Thai edition: the parts of `block`'s editor text drawn with PdfCraft's underline, from each of
+/// its lines' underlined parts placed where that line's text is in its span.
+fn underlined_in_editor(block: &TextBlock, lines: &[TextLine], ops: &[Op]) -> Vec<std::ops::Range<usize>> {
+    let mut out: Vec<std::ops::Range<usize>> = Vec::new();
+    for (span, index) in &block.spans {
+        let (Some(line), Some(shown)) = (lines.get(*index), block.editor_text.get(span.clone())) else { continue };
+        for part in super::underline::underlined_parts(ops, line) {
+            let Some(piece) = line.text.get(part).map(str::trim).filter(|p| !p.is_empty()) else { continue };
+            let Some(at) = shown.find(piece) else { continue };
+            let range = span.start + at..span.start + at + piece.len();
+            match out.last_mut() {
+                Some(last) if block.editor_text.get(last.end..range.start).is_some_and(|gap| gap.trim().is_empty()) => last.end = range.end,
+                _ => out.push(range),
+            }
+        }
+    }
+    out
 }
 
 /// Remove a paragraph's glyphs for a temporary editor background. Numeric TJ adjustments

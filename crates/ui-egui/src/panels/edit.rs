@@ -286,6 +286,7 @@ fn format_section(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens) {
             .collect();
         let fmt = ed.selection_formatting(&sources);
         ed.sync_selection_look(&fmt);
+        ed.sync_selection_underline();
         let mut shown = fmt.font_shown;
         let mixed_size = fmt.size.is_none();
         // Thai edition: the paragraph's own font, when this computer doesn't have it.
@@ -573,20 +574,28 @@ impl PdfCraftApp {
         let blocked = view.content.blocked().is_some();
         let Some(d) = view.content.draft.as_mut() else { return };
         let committed = d.style.clone();
-        // Thai edition: a colour or size for a selected part of the box makes it text of the page,
-        // that part in its own colour and size, as one undo step (an added box has one look).
+        // Thai edition: a font, bold, italic, size, colour or underline for a selected part of the
+        // box makes it text of the page, that part in its own look, as one undo step (an added box
+        // has one look). The paragraph it became opens in Edit text with the part still selected,
+        // so a second choice reaches the same text.
         if !blocked
-            && (style.color != committed.color || style.size != committed.size)
-            && let Some(edit) = crate::content_ui::part_styled_draft(
+            && let Some((edit, chars)) = crate::content_ui::part_styled_draft(
                 d,
                 &style,
                 self.session.get(view.id).and_then(|doc| doc.info.pages.get(d.page)).map(|p| f64::from(p.width)),
             )
         {
+            let (page, text) = (d.page, d.text.trim_end().to_string());
             if self.apply_edit(edit)
                 && let Some(v) = self.views.get_mut(index)
             {
                 v.content.draft = None;
+                let blocks = self.session.get(v.id).map(|doc| doc.text_blocks(page)).unwrap_or_default();
+                let visible = |t: &str| t.chars().filter(|c| !c.is_whitespace()).collect::<String>();
+                if let Some(b) = blocks.iter().rev().find(|b| visible(&b.editor_text) == visible(&text)) {
+                    v.pending_text_open = Some((page, pdfcraft_engine::BlockKey::of(b)));
+                    v.pending_text_selection = Some(pdfcraft_engine::editor_range(&text, &b.editor_text, chars));
+                }
             }
             return;
         }

@@ -14,6 +14,7 @@ mod labels;
 mod run;
 
 pub use labels::{BATCH_LABELS, EDIT_LABELS};
+pub use run::editor_range;
 pub(crate) use run::{EditCtx, check_permission, run_edit};
 
 /// Edits that can be applied to a document. Page indices are 0-based.
@@ -551,6 +552,15 @@ pub enum Edit {
         page: usize,
         text: AddedText,
         runs: Vec<TextRun>,
+    },
+    /// Thai edition: Format text on a selected part of an added text box: `text` added, made text
+    /// of the page, and `part` (its `range` in characters of `text.text`) given its own font,
+    /// bold, italic, size, colour or underline, as one step. An added box has one look, so a part
+    /// with its own takes the page's text.
+    AddTextPart {
+        page: usize,
+        text: AddedText,
+        part: crate::RangeStyle,
     },
     /// Thai edition: added text box `index` of `page` becomes text of the page, drawn as it is, so
     /// Edit text can style a part of it.

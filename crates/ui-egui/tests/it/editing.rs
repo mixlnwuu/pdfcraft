@@ -9564,7 +9564,15 @@ fn format_panel_shows_selection_size_and_updates_after_font_applied() {
     h.get_by_label("Times").click();
     h.run_steps(4);
 
-    // Font combo box for the whole block is now Mixed because Heading is Helvetica and Paragraph is Times
+    // Thai edition: the part stays selected after a format, so the next choice reaches it too:
+    // the list shows its font, Times.
+    let font_node = h.get_by_role_and_label(Role::ComboBox, "Font");
+    assert_eq!(font_node.value().as_deref(), Some("Times"), "the selection's font");
+    assert_eq!(h.state().views[0].line_editor.as_ref().and_then(|e| e.selection.clone()).map(|r| r.len()), Some("Paragraph".len()));
+
+    // All of it selected: the whole block is Mixed, Heading being Helvetica and Paragraph Times.
+    h.key_press_modifiers(Modifiers::COMMAND, Key::A);
+    h.run_steps(2);
     let font_node = h.get_by_role_and_label(Role::ComboBox, "Font");
     assert_eq!(font_node.value().as_deref(), Some("Mixed"), "whole block has mixed fonts");
 

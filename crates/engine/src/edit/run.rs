@@ -116,6 +116,7 @@ pub(crate) fn check_permission(edit: &Edit, p: &pdfcraft_cos::Permissions) -> Re
         | Edit::AddCover { .. }
         | Edit::ReleaseContent { .. }
         | Edit::AddStyledText { .. }
+        | Edit::AddTextPart { .. }
         | Edit::UpdateContent { .. }
         | Edit::MoveObjects { .. }
         | Edit::DeleteContent { .. }
@@ -867,6 +868,15 @@ pub(crate) fn run_edit(doc: &mut pdfcraft_cos::Document, edit: &Edit, cx: &mut E
                 Err(e) => return Err(e.into()),
             }
         }
+        Edit::AddTextPart { page, text, part } => {
+            let (block, b) = released_text(doc, *page, text)?;
+            let range = pdfcraft_edit::RangeStyle { range: editor_range(&text.text, &b.editor_text, part.range.clone()), ..part.clone() };
+            if range.range.start >= range.range.end {
+                return Err(EditError::Edit(pdfcraft_edit::EditError::Invalid("the part of the text to format is empty".into())));
+            }
+            let style = pdfcraft_edit::BlockStyle { ranges: vec![range], ..Default::default() };
+            pdfcraft_edit::rewrite_block(doc, *page, block, Some(&b.editor_text), &style)?;
+        }
         Edit::AddStyledText { page, text, runs } => {
             let index = pdfcraft_edit::add_content(doc, *page, &AddedContent::Text(text.clone()))?;
             pdfcraft_edit::release_content(doc, *page, index)?;
@@ -1080,6 +1090,39 @@ pub(crate) fn run_edit(doc: &mut pdfcraft_cos::Document, edit: &Edit, cx: &mut E
 
 /// A font name as shown to people (Thai edition): without the `ABCDEF+` subset tag a PDF adds, or
 /// the `Type3` suffix a generated fallback font carries.
+/// Thai edition: `text` added to `page` and made text of the page; the paragraph it became (the
+/// last of the page with its text, else the one over its box).
+fn released_text(
+    doc: &mut pdfcraft_cos::Document,
+    page: usize,
+    text: &pdfcraft_edit::AddedText,
+) -> Result<(usize, pdfcraft_edit::TextBlock), EditError> {
+    let index = pdfcraft_edit::add_content(doc, page, &AddedContent::Text(text.clone()))?;
+    pdfcraft_edit::release_content(doc, page, index)?;
+    let blocks = pdfcraft_edit::text_blocks(doc, page)?;
+    let visible = |s: &str| s.chars().filter(|c| !c.is_whitespace()).collect::<String>();
+    let wanted = visible(&text.text);
+    let found = blocks.iter().rposition(|b| visible(&b.editor_text) == wanted).or_else(|| {
+        pdfcraft_edit::block_overlapping(&blocks, text.rect).filter(|&i| blocks.get(i).is_some_and(|b| visible(&b.editor_text).contains(&wanted)))
+    });
+    found
+        .and_then(|i| blocks.get(i).cloned().map(|b| (i, b)))
+        .ok_or_else(|| EditError::Edit(pdfcraft_edit::EditError::Invalid("the text box's text was not found on the page after converting it".into())))
+}
+
+/// Thai edition: where characters `chars` of `text` (the box a paragraph was made from) are in
+/// `editor` (the paragraph's text as Edit text shows it), matching the two by their visible
+/// characters (its rows may break where the box had a space): from the first visible character
+/// in the range to the end of the last, so a part ending before a space doesn't take the space.
+pub fn editor_range(text: &str, editor: &str, chars: std::ops::Range<usize>) -> std::ops::Range<usize> {
+    let marks: Vec<(usize, usize)> = editor.char_indices().filter(|(_, c)| !c.is_whitespace()).map(|(i, c)| (i, i + c.len_utf8())).collect();
+    let visible_before = |n: usize| text.chars().take(n).filter(|c| !c.is_whitespace()).count();
+    let (first, last) = (visible_before(chars.start), visible_before(chars.end));
+    let start = marks.get(first).map_or(editor.len(), |m| m.0);
+    let end = last.checked_sub(1).and_then(|k| marks.get(k)).map_or(start, |m| m.1);
+    start..end.max(start)
+}
+
 fn plain_font_name(name: &str) -> String {
     let name = match name.split_once('+') {
         Some((tag, rest)) if tag.len() == 6 && tag.bytes().all(|b| b.is_ascii_uppercase()) => rest,

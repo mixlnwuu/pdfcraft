@@ -10978,3 +10978,56 @@ fn a_styled_paste_keeps_the_colours_of_its_parts() {
     s.undo(id).unwrap();
     assert!(s.get(id).unwrap().text_lines(0).is_empty(), "one Undo removes the paste");
 }
+
+/// Thai edition: Format text on a selected part of an added Thai box changes that part only, for
+/// each of bold, italic, colour, size and underline: the box becomes text of the page in one step.
+#[test]
+fn a_part_of_a_thai_box_takes_each_format_alone() {
+    if crate::FontFamily::Sarabun.craft(false, false).is_none() || crate::FontFamily::Sarabun.craft(true, false).is_none() {
+        return; // built without craft-fonts
+    }
+    let whole = "แทนข้าพเจ้า เสร็จการ และ";
+    let part = "เสร็จการ";
+    let at = whole.find(part).unwrap();
+    let chars = whole[..at].chars().count()..whole[..at].chars().count() + part.chars().count();
+    let none =
+        RangeStyle { range: chars.clone(), family: None, resource: None, size: None, color: None, underline: None, char_spacing: None, scale: None };
+    let cases: Vec<(&str, RangeStyle)> = vec![
+        ("bold", RangeStyle { family: Some((crate::FontFamily::Sarabun, true, false)), ..none.clone() }),
+        ("italic", RangeStyle { family: Some((crate::FontFamily::Sarabun, false, true)), ..none.clone() }),
+        ("colour", RangeStyle { color: Some([0.9, 0.1, 0.1]), ..none.clone() }),
+        ("size", RangeStyle { size: Some(24.0), ..none.clone() }),
+        ("underline", RangeStyle { underline: Some(true), ..none.clone() }),
+    ];
+    for (name, style) in cases {
+        let mut s = Session::new();
+        let pdf = s.create_blank(595.0, 842.0, 1).unwrap();
+        let id = s.open("scan.pdf", None, pdf, None).unwrap();
+        let text =
+            AddedText { text: whole.into(), rect: [50.0, 100.0, 500.0, 120.0], family: crate::FontFamily::Sarabun, size: 16.0, ..Default::default() };
+        s.apply(id, Edit::AddTextPart { page: 0, text, part: style }).unwrap();
+        let doc = s.get(id).unwrap();
+        let lines = doc.text_lines(0);
+        let inside = lines.iter().find(|l| l.text.contains("เสร็จ")).unwrap_or_else(|| panic!("{name}: {lines:?}"));
+        let outside = lines.iter().find(|l| l.text.contains("แทน")).unwrap_or_else(|| panic!("{name}: {lines:?}"));
+        if name != "underline" {
+            assert!(!outside.text.contains("เสร็จ"), "{name}: the part is drawn on its own: {lines:?}");
+        }
+        match name {
+            "bold" => assert!(inside.bold && !outside.bold, "{name}: {lines:?}"),
+            "italic" => assert!(inside.italic && !outside.italic, "{name}: {lines:?}"),
+            "colour" => assert!(inside.color[0] > 0.8 && outside.color[0] < 0.1, "{name}: {lines:?}"),
+            "size" => assert!((inside.size - 24.0).abs() < 0.1 && (outside.size - 16.0).abs() < 0.1, "{name}: {lines:?}"),
+            _ => {
+                let blocks = doc.text_blocks(0);
+                let b = blocks.iter().find(|b| b.editor_text.contains(part)).unwrap();
+                let shown: Vec<&str> = b.underlined_parts.iter().filter_map(|r| b.editor_text.get(r.clone())).collect();
+                assert_eq!(shown, vec![part], "{name}: only the part is underlined: {blocks:?}");
+            }
+        }
+        // Neither bold nor italic where nothing asked for it.
+        assert!(lines.iter().filter(|l| !l.text.contains("เสร็จ")).all(|l| !l.bold && !l.italic), "{name}: {lines:?}");
+        s.undo(id).unwrap();
+        assert!(s.get(id).unwrap().text_lines(0).is_empty(), "{name}: one Undo takes it back");
+    }
+}

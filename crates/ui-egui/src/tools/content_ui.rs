@@ -1418,8 +1418,18 @@ pub(crate) fn editor(ctx: &egui::Context, view: &mut DocView, info: &DocInfo, ad
             // box doesn't show it realigned.
             let style = AddedText { direction: pdfcraft_engine::TextDirection::Horizontal, ..t.style.clone() };
             let line_font = font.clone();
+            // A Format text preview shows on the selected part, or on all of the text without one,
+            // as the change will be applied (Thai edition).
+            let part = previewed_look(ui.ctx()).map(|preview| {
+                let mut look = t.style.clone();
+                preview.apply(&mut look);
+                let sel = t.selection.clone().filter(|r| r.start < r.end && r.end <= t.text.len()).unwrap_or(0..t.text.len());
+                let [r, g, b] = look.color.map(|v| (v.clamp(0.0, 1.0) * 255.0) as u8);
+                let font = crate::edit_text_ui::editor_font(ui.ctx(), &look, (look.size as f32 * zoom).clamp(1.0, 300.0));
+                PartLook { range: sel, font, color: Color32::from_rgb(r, g, b), underline: look.underline }
+            });
             let mut layouter = |ui: &egui::Ui, text: &dyn egui::TextBuffer, wrap: f32| {
-                aligned_galley(ui, text.as_str(), &style, &line_font, color, letter_spacing, wrap, hugs)
+                aligned_galley(ui, text.as_str(), &style, &line_font, color, letter_spacing, wrap, hugs, part.as_ref())
             };
             let before = t.text.clone();
             let input = input_id();
@@ -1553,27 +1563,42 @@ fn finish(cv: &mut ContentView, d: TextDraft, added: &[Added], info: &DocInfo) -
     }
 }
 
-/// Thai edition: draft `d` with a selected part (not all of it) given `style`'s colour and size:
-/// the box as it was, made text of the page with that part in its own colour and size (replacing
-/// the box being retyped, in one step). `None` without such a part.
-pub(crate) fn part_styled_draft(d: &TextDraft, style: &AddedText, page_width: Option<f64>) -> Option<Edit> {
+/// Thai edition: Format text on a selected part of an added box being typed: the box becomes
+/// text of the page, that part in `style` where it differs from the box (font, bold, italic,
+/// size, colour or underline), as one undo step (an added box has one look). `None` when nothing
+/// but the whole box is selected, or nothing a part can take changed. Also the selection, as
+/// characters of the box's text, for Edit text to keep selected.
+pub(crate) fn part_styled_draft(d: &TextDraft, style: &AddedText, page_width: Option<f64>) -> Option<(Edit, std::ops::Range<usize>)> {
     let text = d.text.trim_end().to_string();
     let sel = d.selection.clone().filter(|r| r.start < r.end && r.end <= text.len() && !(r.start == 0 && r.end >= text.len()))?;
     let chars = |at: usize| text.get(..at).map(|s| s.chars().count());
-    let (s, e, n) = (chars(sel.start)?, chars(sel.end)?, text.chars().count());
+    let (s, e) = (chars(sel.start)?, chars(sel.end)?);
     let base = &d.style;
+    let face = style.family != base.family || style.bold != base.bold || style.italic != base.italic;
+    let part = pdfcraft_engine::RangeStyle {
+        range: s..e,
+        family: face.then_some((style.family, style.bold, style.italic)),
+        resource: None,
+        size: (style.size != base.size).then_some(style.size),
+        color: (style.color != base.color).then_some(style.color),
+        underline: (style.underline != base.underline).then_some(style.underline),
+        char_spacing: None,
+        scale: None,
+    };
+    if part.family.is_none() && part.size.is_none() && part.color.is_none() && part.underline.is_none() {
+        return None;
+    }
     let box_text = AddedText { text: text.clone(), rect: d.rect, ..base.clone() };
     let box_text = match page_width {
         Some(w) if d.auto => pdfcraft_engine::fitted_text(&box_text, w),
         _ => box_text,
     };
-    let run = |chars: std::ops::Range<usize>, t: &AddedText| pdfcraft_engine::TextRun { chars, color: t.color, size: t.size };
-    let runs = vec![run(0..s, base), run(s..e, style), run(e..n, base)].into_iter().filter(|r| r.chars.start < r.chars.end).collect();
-    let add = Edit::AddStyledText { page: d.page, text: box_text, runs };
-    Some(match d.index {
+    let add = Edit::AddTextPart { page: d.page, text: box_text, part };
+    let edit = match d.index {
         Some(index) => Edit::Batch { label: "Edit text".into(), edits: vec![Edit::DeleteContent { page: d.page, index }, add] },
         None => add,
-    })
+    };
+    Some((edit, s..e))
 }
 
 /// A restyled item: one whose box hugged its text is refitted to the new font or size. A new
@@ -2017,6 +2042,36 @@ pub(crate) fn input_id() -> egui::Id {
     egui::Id::unique("added-text-input")
 }
 
+/// Thai edition: how a Format text preview shows on bytes `range` of an added box being typed.
+struct PartLook {
+    range: std::ops::Range<usize>,
+    font: egui::FontId,
+    color: Color32,
+    underline: bool,
+}
+
+/// `job` (one section, starting at byte `offset` of the whole text) with `part` drawn in its own
+/// look where it falls in it (Thai edition).
+fn show_part(job: &mut egui::text::LayoutJob, part: &PartLook, offset: usize) {
+    let Some(base) = job.sections.first().map(|s| s.format.clone()) else { return };
+    let len = job.text.len();
+    let (a, b) = (part.range.start.saturating_sub(offset).min(len), part.range.end.saturating_sub(offset).min(len));
+    if a >= b || !job.text.is_char_boundary(a) || !job.text.is_char_boundary(b) {
+        return;
+    }
+    let shown = egui::TextFormat {
+        font_id: part.font.clone(),
+        color: part.color,
+        underline: if part.underline { Stroke::new(1.0, part.color) } else { Stroke::NONE },
+        ..base.clone()
+    };
+    job.sections = [(0..a, base.clone()), (a..b, shown), (b..len, base)]
+        .into_iter()
+        .filter(|(r, _)| r.start < r.end)
+        .map(|(r, format)| egui::text::LayoutSection { leading_space: 0.0, byte_range: r.start.into()..r.end.into(), format })
+        .collect();
+}
+
 /// `text` laid out as added text with `style` is drawn: each paragraph (line typed with Enter) wrapped
 /// to `wrap` and placed by its own alignment, a justified one with every row but its last
 /// stretched. With `hugs` (Thai edition) a paragraph doesn't wrap: `wrap` is only the width it is
@@ -2031,14 +2086,19 @@ fn aligned_galley(
     letter_spacing: f32,
     wrap: f32,
     hugs: bool,
+    part: Option<&PartLook>,
 ) -> std::sync::Arc<egui::Galley> {
     use pdfcraft_engine::TextAlign;
     let line_width = if hugs { f32::INFINITY } else { wrap };
     // Lines as far apart as the page sets them, when the spacing isn't the ordinary one.
     let line_height = (style.line_spacing != 0.0).then(|| font.size * (style.line_advance() / style.size.max(f64::EPSILON)) as f32);
-    let job = |text: &str, align: TextAlign| {
+    // `text` starts at byte `offset` of the whole text.
+    let job = |text: &str, align: TextAlign, offset: usize| {
         let mut job = spaced_job(text, font, color, letter_spacing, style.underline, line_width, egui::Align::Min);
         job.justify = align == TextAlign::Justify && !hugs;
+        if let Some(part) = part {
+            show_part(&mut job, part, offset);
+        }
         for s in &mut job.sections {
             s.format.line_height = line_height;
         }
@@ -2046,7 +2106,7 @@ fn aligned_galley(
     };
     let uniform = text.split('\n').enumerate().all(|(i, _)| style.paragraph_align(i) == style.align);
     if uniform && style.align != TextAlign::Center && style.align != TextAlign::Right {
-        return ui.fonts_mut(|f| f.layout_job(job(text, style.align)));
+        return ui.fonts_mut(|f| f.layout_job(job(text, style.align, 0)));
     }
     // Each paragraph on its own (egui aligns a whole job one way), its rows moved within the
     // box's width, then joined in order: the caret and selection see one text.
@@ -2057,7 +2117,7 @@ fn aligned_galley(
         // The last paragraph keeps a trailing break, as egui's own split does.
         let last = end + 1 == text.len();
         let piece = if last { text.get(start..).unwrap_or_default() } else { paragraph };
-        let mut galley = ui.fonts_mut(|f| f.layout_job(job(piece, style.paragraph_align(i))));
+        let mut galley = ui.fonts_mut(|f| f.layout_job(job(piece, style.paragraph_align(i), start)));
         let g = std::sync::Arc::make_mut(&mut galley);
         for placed in &mut g.rows {
             let free = (wrap - placed.row.size.x).max(0.0);
@@ -2658,6 +2718,29 @@ fn spaced_job(
     // so a centred or right-aligned line must too, or the editor shifts it.
     job.keep_trailing_whitespace = true;
     job
+}
+
+#[cfg(test)]
+mod part_preview_tests {
+    /// Thai edition: a Format text preview over a selected part of an added box shows on that
+    /// part only, in each paragraph it reaches.
+    #[test]
+    fn a_preview_shows_on_the_selected_part_of_an_added_box() {
+        let font = egui::FontId::proportional(12.0);
+        let part = super::PartLook { range: 3..9, font: egui::FontId::proportional(20.0), color: egui::Color32::RED, underline: true };
+        // "abc def" then, from byte 8, "ghij".
+        let mut first = super::spaced_job("abc def", &font, egui::Color32::BLACK, 0.0, false, 100.0, egui::Align::Min);
+        super::show_part(&mut first, &part, 0);
+        let looks: Vec<_> = first.sections.iter().map(|s| (usize::from(s.byte_range.start)..usize::from(s.byte_range.end), s.format.color)).collect();
+        assert_eq!(looks, vec![(0..3, egui::Color32::BLACK), (3..7, egui::Color32::RED)]);
+        assert_eq!(first.sections[1].format.font_id.size, 20.0);
+        let mut second = super::spaced_job("ghij", &font, egui::Color32::BLACK, 0.0, false, 100.0, egui::Align::Min);
+        super::show_part(&mut second, &part, 8);
+        let looks: Vec<_> =
+            second.sections.iter().map(|s| (usize::from(s.byte_range.start)..usize::from(s.byte_range.end), s.format.color)).collect();
+        assert_eq!(looks, vec![(0..1, egui::Color32::RED), (1..4, egui::Color32::BLACK)]);
+        assert!(second.sections[0].format.underline.width > 0.0);
+    }
 }
 
 #[cfg(test)]

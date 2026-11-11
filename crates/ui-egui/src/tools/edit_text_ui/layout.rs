@@ -246,7 +246,23 @@ pub(super) fn editor_job(ui: &egui::Ui, ed: &LineEditor, text: &str, scale: f32,
         // A preview over a selected part shows on that part only, as the change will (Thai edition):
         // each run is cut where the selection starts and ends.
         let previewed = previewed_part(ui.ctx(), ed, text);
-        for (range, index, inside) in preview_parts(block.edited_spans(text), previewed.as_ref()) {
+        // The underline as the page draws it, part by part (Thai edition), and as previewed on
+        // the selected part (or all of it).
+        let previewed_underline = crate::content_ui::previewed_look(ui.ctx()).and_then(|p| p.underline);
+        let unchanged = text == ed.original;
+        let on_page = |range: &std::ops::Range<usize>| {
+            if unchanged { super::underlined_at(block, text, range) } else { ed.extras.underline }
+        };
+        let cuts: Vec<usize> = if unchanged { block.underlined_parts.iter().flat_map(|p| [p.start, p.end]).collect() } else { Vec::new() };
+        let pieces = preview_parts(block.edited_spans(text), previewed.as_ref()).into_iter().flat_map(|(range, index, inside)| {
+            let mut bounds = vec![range.start];
+            bounds.extend(cuts.iter().copied().filter(|c| *c > range.start && *c < range.end && text.is_char_boundary(*c)));
+            bounds.push(range.end);
+            bounds.sort_unstable();
+            bounds.dedup();
+            bounds.windows(2).map(|w| (w[0]..w[1], index, inside)).collect::<Vec<_>>()
+        });
+        for (range, index, inside) in pieces {
             let Some(line) = lines.get(index) else { continue };
             let ed_look = if inside { &ed_look } else { &ed.look };
             let mut look = source_look(&line.base_font, line.size, line.color, line.bold, line.italic);
@@ -279,7 +295,7 @@ pub(super) fn editor_job(ui: &egui::Ui, ed: &LineEditor, text: &str, scale: f32,
             let spacing = if original_face { (target_width - native_width) / line.text.chars().count().saturating_sub(1).max(1) as f32 } else { 0.0 };
             let size = font.size;
             job.append(
-                text.get(range).unwrap_or_default(),
+                text.get(range.clone()).unwrap_or_default(),
                 0.0,
                 egui::TextFormat {
                     font_id: font,
@@ -287,7 +303,14 @@ pub(super) fn editor_job(ui: &egui::Ui, ed: &LineEditor, text: &str, scale: f32,
                     color: color32(look.color),
                     italics: look.italic && !embedded && !own_face,
                     // A previewed underline shows under the selected part only, as it will be drawn.
-                    underline: underline_stroke(if inside { underline } else { ed.extras.underline }, size, color32(look.color)),
+                    underline: underline_stroke(
+                        match previewed_underline {
+                            Some(previewed) if inside => previewed,
+                            _ => on_page(&range),
+                        },
+                        size,
+                        color32(look.color),
+                    ),
                     ..Default::default()
                 },
             );

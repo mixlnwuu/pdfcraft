@@ -311,6 +311,7 @@ impl Edit {
             Edit::RemoveMarks { kind: MarkKind::Watermark } => Label::of("Remove watermark"),
             Edit::RemoveMarks { kind: MarkKind::Background } => Label::of("Remove background"),
             Edit::AddText { .. } | Edit::AddStyledText { .. } => Label::of("Add text"),
+            Edit::AddTextPart { .. } => Label::of("Edit text"),
             Edit::AddImage { .. } | Edit::AddCover { .. } => Label::of("Add image"),
             Edit::ReleaseContent { .. } => Label::of("Convert to page text"),
             Edit::UpdateContent { .. } => Label::of("Edit content"),

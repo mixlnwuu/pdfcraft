@@ -629,6 +629,8 @@ pub struct DocView {
     /// queued edit has applied, so its index and geometry come from the document it now is (#2022).
     /// It is held as the paragraph's text and box, not an index: the edit can regroup the page.
     pub(crate) pending_text_open: Option<(usize, pdfcraft_engine::BlockKey)>,
+    /// The part of that paragraph to select once it opens (bytes of its text; Thai edition).
+    pub(crate) pending_text_selection: Option<std::ops::Range<usize>>,
     pub(crate) text_background: crate::edit_text_ui::TextBackground,
     pub(crate) move_background: crate::content_ui::MoveBackground,
     /// Edit text & images: the images per page (by document generation), and the selected one.
@@ -1029,6 +1031,7 @@ impl DocView {
             line_editor: None,
             applied_editor: None,
             pending_text_open: None,
+            pending_text_selection: None,
             text_background: Default::default(),
             move_background: Default::default(),
             edit_images: HashMap::new(),

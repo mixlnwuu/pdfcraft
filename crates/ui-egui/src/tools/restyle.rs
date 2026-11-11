@@ -559,7 +559,8 @@ startxref
             selection: Some(4..8),
             typing_from: None,
         };
-        let edit = crate::content_ui::part_styled_draft(&d, &AddedText { color: [1.0, 0.0, 0.0], ..text.clone() }, Some(600.0)).unwrap();
+        let (edit, chars) = crate::content_ui::part_styled_draft(&d, &AddedText { color: [1.0, 0.0, 0.0], ..text.clone() }, Some(600.0)).unwrap();
+        assert_eq!(chars, 4..8);
         s.apply(id, edit).unwrap();
         let lines = s.get(id).unwrap().text_lines(0);
         assert!(lines.iter().any(|l| l.text.trim() == "ware" && red(l.color)), "{lines:?}");

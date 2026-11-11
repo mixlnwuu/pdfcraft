@@ -92,6 +92,7 @@ pub(crate) fn scope_of(edit: &Edit) -> Scope {
         | Edit::AddCover { .. }
         | Edit::ReleaseContent { .. }
         | Edit::AddStyledText { .. }
+        | Edit::AddTextPart { .. }
         | Edit::UpdateContent { .. }
         | Edit::DeleteContent { .. }
         | Edit::MoveContentToPage { .. }

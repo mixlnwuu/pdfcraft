@@ -408,6 +408,7 @@ impl Session {
                     | Edit::AddCover { .. }
                     | Edit::ReleaseContent { .. }
                     | Edit::AddStyledText { .. }
+                    | Edit::AddTextPart { .. }
                     | Edit::UpdateContent { .. }
                     | Edit::DeleteContent { .. }
                     | Edit::MoveContentToPage { .. }

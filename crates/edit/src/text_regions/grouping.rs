@@ -263,6 +263,9 @@ fn group_layout(lines: &[TextLine], mixed: bool) -> Vec<TextBlock> {
                 // between them, are separate labels (for example a paragraph dragged against
                 // another, #594). Style runs and words separated by a space or gap still join.
                 && (prev.origin.bt_op == line.origin.bt_op
+                    // One marked-content scope is one paragraph's (Thai edition): a part a rewrite
+                    // drew in its own text object, touching the rest, stays with it.
+                    || prev.scope.is_some() && prev.scope == line.scope
                     || gap > prev.size.min(line.size) * 0.01
                     || !same_style(prev, line)
                     || prev.text.ends_with(char::is_whitespace)
@@ -360,6 +363,7 @@ fn group_layout(lines: &[TextLine], mixed: bool) -> Vec<TextBlock> {
                 rows: Vec::new(),
                 invisible: true,
                 underlined: false,
+                underlined_parts: Vec::new(),
             });
         }
         let Some(block) = blocks.last_mut() else { continue };

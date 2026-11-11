@@ -422,6 +422,7 @@ fn gesture_input(s: &mut ObjectSelection, cx: PageToolContext<'_>, view: &mut Do
             // A double click on the paragraph selected opens it for typing: the press belongs to
             // the selection, so the paragraphs' own input won't take it (Thai edition).
             let block = s.selected.first().filter(|o| s.selected.len() == 1 && o.target.kind == ObjectKind::Text).map(|o| o.target.index);
+            view.pending_text_selection = None;
             view.pending_text_open = block.and_then(|b| doc.text_blocks(page).get(b).map(|l| (page, pdfcraft_engine::BlockKey::of(l))));
             s.clear();
             return false;

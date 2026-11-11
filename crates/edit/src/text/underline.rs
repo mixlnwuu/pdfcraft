@@ -121,4 +121,19 @@ mod tests {
         rewrite_block(&mut doc, 0, 0, Some(&b.editor_text), &BlockStyle::default()).unwrap();
         assert_eq!(underlined(&doc), vec!["Hello".to_string()], "still only Hello");
     }
+    /// Thai edition: underlining a part keeps the paragraph one paragraph. The part is drawn in a
+    /// text object of its own, touching the rest ("เรื่อง" against its dotted leader), inside the
+    /// rewrite's marked-content scope; read as a separate label touching it, it split the
+    /// paragraph, and the open editor lost its selection.
+    #[test]
+    fn touching_text_objects_in_one_marked_scope_are_one_paragraph() {
+        // Helvetica "Hello" at 12 pt is 27.336 pt wide: the dots, in a content stream of their
+        // own, start where it ends.
+        let (hello, dots) = ("BT /F1 12 Tf 72 700 Td (Hello) Tj ET", "BT /F1 12 Tf 99.336 700 Td (....) Tj ET");
+        let doc = crate::tests::split_page(&format!("/P BMC {hello}"), &format!("{dots} EMC"));
+        let blocks = text_blocks(&doc, 0).unwrap();
+        assert_eq!(blocks.iter().map(|b| b.editor_text.as_str()).collect::<Vec<_>>(), vec!["Hello...."], "{blocks:?}");
+        // Without a scope of their own they stay apart, as labels dragged against each other do (#594).
+        assert_eq!(text_blocks(&crate::tests::split_page(hello, dots), 0).unwrap().len(), 2);
+    }
 }

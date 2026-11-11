@@ -199,7 +199,12 @@ pub fn embed_mapping(
     descriptor.set(b"Type".to_vec(), Object::name("FontDescriptor"));
     descriptor.set(b"FontName".to_vec(), Object::name(&name));
     descriptor.set(b"FontFamily".to_vec(), Object::String(PdfString::literal(family.as_bytes().to_vec())));
-    descriptor.set(b"Flags".to_vec(), Object::Int(4));
+    // The face's own weight and slant (Thai edition): a family's bold or italic face embedded
+    // under the family's name still reads as bold or italic, so Edit text shows it so.
+    let attributes = font.attributes();
+    let italic = attributes.style != skrifa::attribute::Style::Normal;
+    descriptor.set(b"Flags".to_vec(), Object::Int(if italic { 4 | 64 } else { 4 }));
+    descriptor.set(b"FontWeight".to_vec(), Object::Int(attributes.weight.value().round().clamp(100.0, 900.0) as i64));
     descriptor.set(b"ItalicAngle".to_vec(), Object::Real(f64::from(m.italic_angle)));
     descriptor.set(b"Ascent".to_vec(), Object::Real(f64::from(m.ascent) * scale));
     descriptor.set(b"Descent".to_vec(), Object::Real(f64::from(m.descent) * scale));
