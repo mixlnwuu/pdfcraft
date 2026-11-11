@@ -69,8 +69,55 @@ pub fn shape(bytes: &[u8], text: &str) -> Result<ShapedRun, String> {
             x += f64::from(p.x_advance) / em;
         }
     }
+    // Thai edition: a Thai face with no Thai layout of its own (TH Sarabun PSK) takes the lowered
+    // and shifted mark forms Windows draws, as added text does, or every tone mark of a paragraph
+    // written again floats as high as over a vowel.
+    if text.chars().any(|c| ('\u{0E01}'..='\u{0E4E}').contains(&c)) && !crate::shaping::has_thai_layout(&face) {
+        thai_forms(&face, &mut glyphs);
+    }
     if !x.is_finite() || glyphs.len() > 65_534 {
         return Err("shaped row exceeds its geometry budget".into());
     }
     Ok(ShapedRun { glyphs, advance: x })
+}
+
+/// [`crate::shaping::thai_pua_swaps`] on shaped glyphs: a cluster starts at a glyph that carries
+/// text and takes the glyphs after it that carry none.
+fn thai_forms(face: &FontRef<'_>, glyphs: &mut [ShapedGlyph]) {
+    let mut clusters: Vec<std::ops::Range<usize>> = Vec::new();
+    for (i, g) in glyphs.iter().enumerate() {
+        match clusters.last_mut() {
+            Some(last) if g.text.is_empty() => last.end = i + 1,
+            _ => clusters.push(i..i + 1),
+        }
+    }
+    let texts: Vec<&str> = clusters.iter().map(|r| glyphs.get(r.start).map_or("", |g| g.text.as_str())).collect();
+    let swaps = crate::shaping::thai_pua_swaps(face, &texts);
+    for (range, swaps) in clusters.into_iter().zip(swaps) {
+        for (from, to) in swaps {
+            if let Some(g) = glyphs.get_mut(range.clone()).and_then(|c| c.iter_mut().find(|g| g.id.to_u32() == from)) {
+                g.id = GlyphId::new(to);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod thai_tests {
+    use skrifa::MetadataProvider;
+
+    /// Thai edition: TH Sarabun PSK has no Thai layout tables, so a tone mark on a consonant with
+    /// no vowel above takes its lowered form when a paragraph is written again, as when added;
+    /// over a vowel it stays raised.
+    #[test]
+    fn a_tone_mark_with_no_vowel_above_is_lowered() {
+        let Some(face) = crate::document_family_font("TH Sarabun PSK", false, false) else { return };
+        let Some((bytes, _)) = crate::face_data(face) else { return };
+        let font = skrifa::FontRef::new(bytes).unwrap();
+        let id = |c: char| font.charmap().map(c).map(|g| g.to_u32());
+        let (Some(high), Some(low)) = (id('\u{0E49}'), id('\u{F70B}')) else { return };
+        let ids = |t: &str| super::shape(bytes, t).unwrap().glyphs.iter().map(|g| g.id.to_u32()).collect::<Vec<_>>();
+        assert!(ids("ข้").contains(&low) && !ids("ข้").contains(&high), "lowered over ข, shaped alone: {:?}", ids("ข้"));
+        assert!(!ids("นี้").contains(&low), "raised over the vowel: {:?}", ids("นี้"));
+    }
 }

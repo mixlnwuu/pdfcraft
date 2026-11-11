@@ -198,7 +198,7 @@ fn shape_run(text: &str, rtl: bool, kind: ShapedScript, script: Option<harfrust:
 }
 
 /// Whether `font` lays Thai out itself: its GSUB or GPOS has a Thai script.
-fn has_thai_layout(font: &FontRef<'_>) -> bool {
+pub(crate) fn has_thai_layout(font: &FontRef<'_>) -> bool {
     let thai = |tags: Vec<skrifa::raw::types::Tag>| tags.iter().any(|t| t == &skrifa::raw::types::Tag::new(b"thai"));
     let gsub =
         font.gsub().ok().and_then(|t| t.script_list().ok()).map(|l| l.script_records().iter().map(|r| r.script_tag()).collect()).unwrap_or_default();
@@ -215,16 +215,34 @@ fn has_thai_layout(font: &FontRef<'_>) -> bool {
 /// under their tails. Each glyph of `clusters` is swapped for the form that fits where it sits, when
 /// the font has it; the text the clusters show stays as typed.
 fn thai_pua_forms(font: &FontRef<'_>, clusters: &mut [ShapedCluster]) {
+    let texts: Vec<&str> = clusters.iter().map(|c| c.text.as_str()).collect();
+    let swaps = thai_pua_swaps(font, &texts);
+    for (cluster, swaps) in clusters.iter_mut().zip(swaps) {
+        for (from, to) in swaps {
+            if let Some(g) = cluster.glyphs.iter_mut().find(|(id, _)| *id == from) {
+                g.0 = to;
+            }
+        }
+    }
+}
+
+/// The glyph swaps of [`thai_pua_forms`] for clusters showing `texts`, in order: for each cluster,
+/// which of its glyphs (by id) becomes which form. Also used when a paragraph is written again in
+/// its own face ([`crate::source_shaping::shape`]).
+pub(crate) fn thai_pua_swaps(font: &FontRef<'_>, texts: &[&str]) -> Vec<Vec<(u32, u32)>> {
     let charmap = font.charmap();
     let glyph = |c: char| charmap.map(c).map(|g| g.to_u32());
     let upper_vowel = |c: char| matches!(c, '\u{0E31}' | '\u{0E34}'..='\u{0E37}' | '\u{0E47}' | '\u{0E4D}');
     let below_vowel = |c: char| matches!(c, '\u{0E38}'..='\u{0E3A}');
-    for i in 0..clusters.len() {
+    let mut out = Vec::with_capacity(texts.len());
+    for i in 0..texts.len() {
         // A tone mark before a Sara Am sits over its Nikhahit: high.
-        let next = clusters.get(i + 1).and_then(|c| c.text.chars().next());
-        let Some(cluster) = clusters.get_mut(i) else { continue };
-        let chars: Vec<char> = cluster.text.chars().collect();
-        let Some(&base) = chars.first() else { continue };
+        let next = texts.get(i + 1).and_then(|t| t.chars().next());
+        let chars: Vec<char> = texts.get(i).map(|t| t.chars().collect()).unwrap_or_default();
+        let Some(&base) = chars.first() else {
+            out.push(Vec::new());
+            continue;
+        };
         let tall = matches!(base, '\u{0E1B}' | '\u{0E1D}' | '\u{0E1F}' | '\u{0E2C}');
         let below = chars.iter().copied().any(below_vowel);
         let mut swaps: Vec<(char, char)> = Vec::new();
@@ -257,13 +275,9 @@ fn thai_pua_forms(font: &FontRef<'_>, clusters: &mut [ShapedCluster]) {
                 swaps.push((c, form));
             }
         }
-        for (c, form) in swaps {
-            let (Some(from), Some(to)) = (glyph(c), glyph(form)) else { continue };
-            if let Some(g) = cluster.glyphs.iter_mut().find(|(id, _)| *id == from) {
-                g.0 = to;
-            }
-        }
+        out.push(swaps.into_iter().filter_map(|(c, form)| Some((glyph(c)?, glyph(form)?))).collect());
     }
+    out
 }
 
 /// Glyph `id` of the Arabic document face, bounded like [`crate::japanese_glyph`]. Glyphs without

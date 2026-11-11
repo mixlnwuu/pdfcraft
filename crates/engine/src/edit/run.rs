@@ -1107,7 +1107,13 @@ fn reveal_covered_text(doc: &mut pdfcraft_cos::Document, page: usize, rect: [f64
     for _ in 0..500 {
         let blocks = pdfcraft_edit::text_blocks(doc, page)?;
         let Some((i, b)) = blocks.iter().enumerate().find(|(_, b)| b.invisible && mostly_inside(b)) else { return Ok(()) };
-        pdfcraft_edit::rewrite_block(doc, page, i, Some(&b.editor_text), &pdfcraft_edit::BlockStyle::default())?;
+        // A phrase read off one line of the scan stays on one line: drawn in a real face it is
+        // wider than the stretched recognised words were, and would wrap at their width.
+        let style = pdfcraft_edit::BlockStyle {
+            width: (b.rows.len() == 1).then(|| (b.rect[2] - b.rect[0]).abs() * 3.0 + b.size.abs() * 4.0),
+            ..Default::default()
+        };
+        pdfcraft_edit::rewrite_block(doc, page, i, Some(&b.editor_text), &style)?;
     }
     Ok(())
 }

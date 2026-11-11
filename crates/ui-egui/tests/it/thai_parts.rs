@@ -196,3 +196,49 @@ fn bold_after_a_size_that_rewraps_the_row_still_reaches_the_part() {
         "the rest as it was: {lines:?}"
     );
 }
+
+/// Bold, then Italic, on all of a paragraph whose part is red: every letter turns bold and
+/// italic, and the red part stays red and the rest black. Before, the whole paragraph took the
+/// first part's colour (the owner's "โดยหนังสือฉบับนี้" turned red).
+#[test]
+fn bold_and_italic_on_all_of_a_partly_coloured_paragraph_keep_its_colours() {
+    if FontFamily::Sarabun.craft(false, false).is_none() || FontFamily::Sarabun.craft(true, true).is_none() {
+        return; // built without craft-fonts
+    }
+    let mut h = harness_bytes(page_with("เสร็จการ และข้าพเจ้า"));
+    assert!(h.state_mut().execute("edit.edit_text"));
+    h.run_steps(4);
+    let p = at(&h, 90.0, 700.0);
+    h.hover_at(p);
+    h.run_steps(2);
+    double_click(&mut h, p);
+    h.run_steps(4);
+    h.key_press_modifiers(Modifiers::COMMAND, Key::Home);
+    h.run_steps(1);
+    for _ in 0..7 {
+        h.key_press_modifiers(Modifiers::SHIFT, Key::ArrowRight);
+        h.run_steps(1);
+    }
+    h.run_steps(1);
+    h.get_by_label("Colour").click();
+    h.run_steps(3);
+    h.get_by_label("Red").click();
+    h.run_steps(6);
+    assert_eq!(selected(&h).as_deref(), Some(PART), "the red part, selected in the paragraph it became");
+    h.key_press_modifiers(Modifiers::COMMAND, Key::A);
+    h.run_steps(2);
+    h.get_by_label("Bold").click();
+    h.run_steps(6);
+    h.get_by_label("Italic").click();
+    h.run_steps(6);
+    let out = at(&h, 300.0, 300.0);
+    click(&mut h, out);
+    h.run_steps(6);
+    let id = h.state().views[0].id;
+    let lines = h.state().session.get(id).unwrap().text_lines(0);
+    let red = |c: [f64; 3]| c[0] > 0.8 && c[1] < 0.3;
+    assert!(lines.iter().all(|l| l.text.trim().is_empty() || (l.bold && l.italic)), "all bold and italic: {lines:?}");
+    let part = lines.iter().find(|l| l.text.contains("เสร็จ")).unwrap_or_else(|| panic!("{lines:?}"));
+    assert!(red(part.color), "the part stays red: {lines:?}");
+    assert!(lines.iter().filter(|l| l.text.contains("ข้า")).all(|l| !red(l.color)), "the rest stays black: {lines:?}");
+}

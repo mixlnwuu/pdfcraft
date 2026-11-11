@@ -311,6 +311,34 @@ impl LineEditor {
         if l.aligns != o.aligns || self.text != self.original || style != pdfcraft_engine::BlockStyle::default() {
             style.aligns = l.aligns.clone();
         }
+        // Thai edition: a new face (bold, italic, a font) for all of a paragraph of several colours
+        // or sizes keeps each part's own, as for a selected box: a rewrite in another face draws
+        // every part alike.
+        let partial = self.selection.as_ref().is_some_and(|r| r.start < r.end && !(r.start == 0 && r.end >= self.text.len()));
+        if !partial
+            && (style.family.is_some() || style.resource.is_some())
+            && self.text == self.original
+            && let Some((block, lines)) = &self.source
+        {
+            let text = &self.text;
+            let byte = |n: usize| text.char_indices().nth(n).map_or(text.len(), |(i, _)| i);
+            for run in paragraph_runs(block, lines) {
+                let range = byte(run.chars.start)..byte(run.chars.end);
+                let (color, size) = (style.color.is_none().then_some(run.color), style.size.is_none().then_some(run.size));
+                if range.start < range.end && (color.is_some() || size.is_some()) {
+                    style.ranges.push(pdfcraft_engine::RangeStyle {
+                        range,
+                        family: None,
+                        resource: None,
+                        size,
+                        color,
+                        underline: None,
+                        char_spacing: None,
+                        scale: None,
+                    });
+                }
+            }
+        }
         // A selection of the whole paragraph styles the paragraph: that keeps a Thai paragraph in
         // its own installed face (a part of one is shaped from a face it can embed whole).
         if let Some(range) = self.selection.as_ref().filter(|r| !(r.start == 0 && r.end >= self.text.len()))
