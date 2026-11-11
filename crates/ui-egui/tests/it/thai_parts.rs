@@ -11,12 +11,16 @@ use pdfcraft_ui_egui::PdfCraftApp;
 const WHOLE: &str = "แทนข้าพเจ้า เสร็จการ และ";
 const PART: &str = "เสร็จการ";
 
-/// A blank A4 page with one added box in TH Sarabun PSK, across user space y 690–710.
+/// A blank A4 page with one added box of `whole` in TH Sarabun PSK, across user space y 690–710.
 fn page_with_a_thai_box() -> Vec<u8> {
+    page_with(WHOLE)
+}
+
+fn page_with(whole: &str) -> Vec<u8> {
     let mut s = Session::new();
     let pdf = s.create_blank(595.0, 842.0, 1).unwrap();
     let id = s.open("blank.pdf", None, pdf, None).unwrap();
-    let text = AddedText { text: WHOLE.into(), rect: [60.0, 690.0, 500.0, 710.0], family: FontFamily::Sarabun, size: 16.0, ..Default::default() };
+    let text = AddedText { text: whole.into(), rect: [60.0, 690.0, 540.0, 710.0], family: FontFamily::Sarabun, size: 16.0, ..Default::default() };
     s.apply(id, Edit::AddText { page: 0, text }).unwrap();
     s.save_bytes(id).unwrap().to_vec()
 }
@@ -128,4 +132,67 @@ fn bold_underline_and_colour_on_a_selected_part_of_a_thai_box_change_that_part_o
     let b = blocks.iter().find(|b| b.editor_text.contains(PART)).unwrap();
     let underlined: Vec<&str> = b.underlined_parts.iter().filter_map(|r| b.editor_text.get(r.clone())).collect();
     assert_eq!(underlined, vec![PART], "only the part is underlined: {b:?}");
+}
+
+/// A bigger size on a part of a full-width row rewraps it: the part stays selected all the same
+/// (its text changed only where the rows break), so Bold after it reaches the part, not the row.
+#[test]
+fn bold_after_a_size_that_rewraps_the_row_still_reaches_the_part() {
+    if FontFamily::Sarabun.craft(false, false).is_none() || FontFamily::Sarabun.craft(true, false).is_none() {
+        return; // built without craft-fonts
+    }
+    let row = "แทนข้าพเจ้าจนเสร็จการ และข้าพเจ้ายอมรับผิดชอบในการที่ผู้รับมอบอำนาจได้ทำไปตามที่มอบอำนาจนี้ เสมือนหนึ่งข้าพเจ้าได้ทำการด้วยตนเอง";
+    let mut h = harness_bytes(page_with(row));
+    assert!(h.state_mut().execute("edit.edit_text"));
+    h.run_steps(4);
+    let p = at(&h, 90.0, 700.0);
+    h.hover_at(p);
+    h.run_steps(2);
+    double_click(&mut h, p);
+    h.run_steps(4);
+    // To the start of the box: up past its first row, then Home.
+    for _ in 0..3 {
+        h.key_press(Key::ArrowUp);
+        h.run_steps(1);
+    }
+    h.key_press(Key::Home);
+    h.run_steps(1);
+    // "แทนข้าพเจ้าจน" is eleven caret steps, "เสร็จการ" seven.
+    for _ in 0..11 {
+        h.key_press(Key::ArrowRight);
+        h.run_steps(1);
+    }
+    for _ in 0..7 {
+        h.key_press_modifiers(Modifiers::SHIFT, Key::ArrowRight);
+        h.run_steps(1);
+    }
+    h.run_steps(1);
+    let draft = h.state().views[0].content.draft.clone().unwrap();
+    assert_eq!(draft.selection.as_ref().and_then(|r| draft.text.get(r.clone())), Some(PART));
+    h.get_by_label("Common font sizes").click();
+    h.run_steps(3);
+    h.get_by_label("28 pt").click();
+    h.run_steps(6);
+    assert_eq!(selected(&h).as_deref(), Some(PART), "still selected after the size");
+    h.get_by_label("Bold").click();
+    h.run_steps(6);
+    // A size again, now in the open paragraph; the part stays selected for Italic.
+    h.get_by_label("Common font sizes").click();
+    h.run_steps(3);
+    h.get_by_label("16 pt").click();
+    h.run_steps(6);
+    assert_eq!(selected(&h).as_deref(), Some(PART), "still selected after a second size");
+    h.get_by_label("Italic").click();
+    h.run_steps(6);
+    let out = at(&h, 300.0, 300.0);
+    click(&mut h, out);
+    h.run_steps(6);
+    let id = h.state().views[0].id;
+    let lines = h.state().session.get(id).unwrap().text_lines(0);
+    let part = lines.iter().find(|l| l.text.contains("เสร็จ")).unwrap_or_else(|| panic!("{lines:?}"));
+    assert!(part.bold && part.italic && (part.size - 16.0).abs() < 0.1, "the part is bold, italic and 16 pt: {lines:?}");
+    assert!(
+        lines.iter().filter(|l| !l.text.contains("เสร็จ")).all(|l| !l.bold && !l.italic && (l.size - 16.0).abs() < 0.1),
+        "the rest as it was: {lines:?}"
+    );
 }

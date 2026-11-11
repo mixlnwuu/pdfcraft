@@ -392,8 +392,10 @@ impl LineEditor {
         self.source = Some((block.clone(), lines));
         let before = std::mem::replace(&mut self.text, block.editor_text.clone());
         if self.text != before {
-            // A byte range of the old text: it may name other characters, or none, in the new.
-            self.selection = None;
+            // A byte range of the old text names other characters in the new. The same letters
+            // with rows broken elsewhere (a bigger size rewraps the paragraph) keep the selection
+            // on them, matched by their visible characters (Thai edition); other text drops it.
+            self.selection = self.selection.take().and_then(|r| kept_selection(&before, &self.text, r));
         }
         self.follow_rows(&before);
         self.original = self.text.clone();
@@ -538,6 +540,18 @@ impl LineEditor {
             look.aligns = pdfcraft_engine::paragraph_align::remap(before, &self.text, &look.aligns);
         }
     }
+}
+
+/// Thai edition: selection `range` (bytes of `before`) in `after`, the same letters with rows
+/// broken elsewhere; `None` when the letters differ.
+fn kept_selection(before: &str, after: &str, range: std::ops::Range<usize>) -> Option<std::ops::Range<usize>> {
+    let visible = |t: &str| t.chars().filter(|c| !c.is_whitespace()).collect::<String>();
+    if visible(before) != visible(after) {
+        return None;
+    }
+    let chars = |at: usize| before.get(..at).map(|s| s.chars().count());
+    let kept = pdfcraft_engine::editor_range(before, after, chars(range.start)?..chars(range.end)?);
+    (kept.start < kept.end).then_some(kept)
 }
 
 /// Thai edition: whether every letter of `range` (bytes of `text`, the paragraph's text as the
@@ -1480,6 +1494,24 @@ C", &picked
         assert_eq!(caret_color_on(Color32::from_rgb(0xFF, 0xFF, 0xF4)), Color32::BLACK);
         assert_eq!(caret_color_on(Color32::BLACK), Color32::WHITE);
         assert_eq!(caret_color_on(DARK_EDITOR_FILL), Color32::WHITE);
+    }
+
+    /// Thai edition: a paragraph rewrapped by a format keeps its selection on the same letters.
+    #[test]
+    fn a_selection_follows_its_letters_into_rows_broken_elsewhere() {
+        let before = "one two three four";
+        let after = "one two
+three four";
+        let at = before.find("two three").unwrap();
+        let kept = super::kept_selection(before, after, at..at + "two three".len()).unwrap();
+        assert_eq!(
+            after.get(kept),
+            Some(
+                "two
+three"
+            )
+        );
+        assert_eq!(super::kept_selection(before, "one 2 three four", at..at + 3), None, "other letters: no selection");
     }
 
     #[test]

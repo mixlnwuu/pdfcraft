@@ -586,10 +586,15 @@ impl PdfCraftApp {
             )
         {
             let (page, text) = (d.page, d.text.trim_end().to_string());
+            // Only Edit text & images opens page paragraphs; the Add text tool leaves it closed.
+            let reopen = self.quick_tool == crate::QuickTool::EditText;
             if self.apply_edit(edit)
                 && let Some(v) = self.views.get_mut(index)
             {
                 v.content.draft = None;
+                if !reopen {
+                    return;
+                }
                 let blocks = self.session.get(v.id).map(|doc| doc.text_blocks(page)).unwrap_or_default();
                 let visible = |t: &str| t.chars().filter(|c| !c.is_whitespace()).collect::<String>();
                 if let Some(b) = blocks.iter().rev().find(|b| visible(&b.editor_text) == visible(&text)) {
