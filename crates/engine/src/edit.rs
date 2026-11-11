@@ -19,12 +19,27 @@ pub(crate) use run::{EditCtx, check_permission, run_edit};
 
 /// Edits that can be applied to a document. Page indices are 0-based.
 /// Thai edition: a part of a paragraph (characters `chars`, counted in its text) and its colour
-/// (RGB 0–1) and size (points), for [`Edit::AddStyledText`].
-#[derive(Clone, Debug, PartialEq)]
+/// (RGB 0–1), size (points), weight, slant and underline, for [`Edit::AddStyledText`] and the
+/// format painter.
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct TextRun {
     pub chars: std::ops::Range<usize>,
     pub color: [f64; 3],
     pub size: f64,
+    pub bold: bool,
+    pub italic: bool,
+    pub underline: bool,
+}
+
+impl TextRun {
+    /// Whether two runs look alike.
+    pub fn same_look(&self, other: &TextRun) -> bool {
+        self.color == other.color
+            && self.size == other.size
+            && self.bold == other.bold
+            && self.italic == other.italic
+            && self.underline == other.underline
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]

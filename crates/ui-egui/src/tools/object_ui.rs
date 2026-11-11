@@ -263,7 +263,8 @@ fn painter_input(cx: PageToolContext<'_>, view: &mut DocView) -> bool {
                 })
             })
         {
-            view.pending_edit = Some(if target.kind == ObjectKind::Text { crate::restyle::with_runs(edit, &painter.runs) } else { edit });
+            view.pending_edit =
+                Some(if target.kind == ObjectKind::Text { crate::restyle::with_runs(edit, &painter.runs, painter.look.family) } else { edit });
         }
         if !painter.keep {
             view.format_painter = None;
@@ -927,7 +928,14 @@ pub(crate) fn merge_edit(view: &DocView, doc: &Document) -> Option<(Edit, usize,
             _ => Vec::new(),
         };
         let own = if own.is_empty() {
-            vec![pdfcraft_engine::TextRun { chars: 0..text.text.chars().count(), color: text.color, size: text.size }]
+            vec![pdfcraft_engine::TextRun {
+                chars: 0..text.text.chars().count(),
+                color: text.color,
+                size: text.size,
+                bold: text.bold,
+                italic: text.italic,
+                underline: text.underline,
+            }]
         } else {
             own
         };
@@ -942,7 +950,7 @@ pub(crate) fn merge_edit(view: &DocView, doc: &Document) -> Option<(Edit, usize,
     let mut edits = delete_edits_in(doc, page, objects.iter().map(|o| o.target).collect());
     let merged = pdfcraft_engine::fitted_text(&merged, width);
     // Pieces of several colours or sizes stay so (Thai edition): the merged box is text of the page.
-    let mixed = runs.windows(2).any(|w| w[0].color != w[1].color || w[0].size != w[1].size);
+    let mixed = runs.windows(2).any(|w| !w[0].same_look(&w[1]));
     edits.push(if mixed { Edit::AddStyledText { page, text: merged, runs } } else { Edit::AddText { page, text: merged } });
     Some((Edit::Batch { label: "Merge text boxes".into(), edits }, page, index))
 }
@@ -1292,7 +1300,7 @@ startxref
             color,
             ..Default::default()
         };
-        let run = |n: usize, color: [f64; 3]| vec![pdfcraft_engine::TextRun { chars: 0..n, color, size: 12.0 }];
+        let run = |n: usize, color: [f64; 3]| vec![pdfcraft_engine::TextRun { chars: 0..n, color, size: 12.0, ..Default::default() }];
         let (red, blue) = ([1.0, 0.0, 0.0], [0.0, 0.0, 1.0]);
         let pieces = vec![b("Soft", [100.0, 500.0, 140.0, 514.0], red), b("ware", [42.0, 500.0, 90.0, 514.0], blue)];
         let (merged, runs) = merged_text_runs(pieces, vec![run(4, red), run(4, blue)]).unwrap();

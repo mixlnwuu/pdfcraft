@@ -2012,7 +2012,8 @@ pub(crate) fn paint_look_preview(
             }
             let c = if preview.color.is_some() { look.color } else { run.color };
             let size = if preview.size.is_some() { look.size } else { run.size };
-            let run_font = crate::theme::document_font(ui.ctx(), look.family, look.bold, look.italic, (size as f32 * zoom).max(4.0));
+            let (bold, italic) = (preview.bold.unwrap_or(run.bold), preview.italic.unwrap_or(run.italic));
+            let run_font = crate::theme::document_font(ui.ctx(), look.family, bold, italic, (size as f32 * zoom).max(4.0));
             let [r, g, b2] = c.map(|v| (v.clamp(0.0, 1.0) * 255.0) as u8);
             job.append(
                 t.text.get(a..b).unwrap_or_default(),

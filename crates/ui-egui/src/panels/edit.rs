@@ -267,6 +267,33 @@ pub(super) fn stamp_palette(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens
     });
 }
 
+/// Fonts by (resource, name).
+type FontNames = Vec<(String, String)>;
+
+/// Thai edition: the page's fonts for Format text, each named by its program (TH Sarabun PSK
+/// Bold reads "THSarabunPSK-Bold", not the subset tag or the name a rewrite gave it): all of them
+/// by resource, for reading what a paragraph is set in, and each font once for the menu, a
+/// complete face of the page first. A much edited page has dozens of resources sharing one
+/// program, which listed the same font over and over.
+fn font_sources(programs: impl IntoIterator<Item = (String, String, Vec<u8>)>) -> (FontNames, FontNames) {
+    let mut all = Vec::new();
+    let mut menu: Vec<(String, String, usize, bool)> = Vec::new();
+    for (resource, face, bytes) in programs {
+        let label = pdfcraft_fonts::embedding::names(&bytes).map_or(face, |(_, postscript)| postscript);
+        let approved = resource.starts_with("PCApproved");
+        match menu.iter_mut().find(|(_, l, _, _)| *l == label) {
+            // A resource of the page over the edition's own face, then the complete program over a subset.
+            Some(entry) if (entry.3 && !approved) || (entry.3 == approved && bytes.len() > entry.2) => {
+                *entry = (resource.clone(), label.clone(), bytes.len(), approved);
+            }
+            Some(_) => {}
+            None => menu.push((resource.clone(), label.clone(), bytes.len(), approved)),
+        }
+        all.push((resource, label));
+    }
+    (all, menu.into_iter().map(|(resource, label, _, _)| (resource, label)).collect())
+}
+
 /// Edit a PDF ▸ Format text: for the selected added text (one undoable change), or the style
 /// new text gets.
 fn format_section(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens) {
@@ -276,14 +303,8 @@ fn format_section(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens) {
     {
         use crate::format_text_ui::{FontChoice, Fonts};
         let mut ed = ed;
-        let sources: Vec<(String, String)> = app
-            .session
-            .get(app.views[i].id)
-            .map(|d| d.text_editor_fonts(ed.page))
-            .unwrap_or_default()
-            .into_iter()
-            .map(|f| (f.resource, f.face))
-            .collect();
+        let programs = app.session.get(app.views[i].id).map(|d| d.text_editor_fonts(ed.page)).unwrap_or_default();
+        let (sources, menu) = font_sources(programs.into_iter().map(|f| (f.resource, f.face, f.bytes)));
         let fmt = ed.selection_formatting(&sources);
         ed.sync_selection_look(&fmt);
         ed.sync_selection_underline();
@@ -302,7 +323,7 @@ fn format_section(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens) {
             t,
             &mut ed.look,
             Some(&mut ed.extras),
-            Fonts { sources: Some(&sources), shown, mixed_size, directions: false },
+            Fonts { sources: Some(&menu), shown, mixed_size, directions: false },
             Some(paragraphs),
         );
         if out.size_committed {
@@ -647,5 +668,26 @@ impl PdfCraftApp {
             }
         }
         self.views[index].line_editor = Some(ed);
+    }
+}
+
+#[cfg(test)]
+mod font_source_tests {
+    /// Thai edition: Format text lists each font of the page once, named by its program, a
+    /// resource of the page first, while every resource keeps its name for reading.
+    #[test]
+    fn each_font_is_listed_once_by_its_own_name() {
+        let Some((bytes, _)) = pdfcraft_engine::FontFamily::Sarabun.craft(false, false).and_then(pdfcraft_fonts::face_data) else {
+            return; // built without craft-fonts
+        };
+        let regular = bytes.to_vec();
+        let mut programs: Vec<(String, String, Vec<u8>)> =
+            (0..40).map(|k| (format!("PCFull{k}"), "BCDHEETHSarabunPSK".to_owned(), regular.clone())).collect();
+        programs.insert(0, ("PCApprovedTH Sarabun PSK Regular".into(), "THSarabunPSK".into(), regular.clone()));
+        let (all, menu) = super::font_sources(programs);
+        assert_eq!(all.len(), 41);
+        assert_eq!(menu.len(), 1, "{menu:?}");
+        assert_eq!(menu[0].0, "PCFull0", "a resource of the page");
+        assert!(menu[0].1.starts_with("THSarabunPSK"), "named by the program: {menu:?}");
     }
 }

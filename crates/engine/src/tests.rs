@@ -10970,7 +10970,10 @@ fn a_styled_paste_keeps_the_colours_of_its_parts() {
     let pdf = s.create_from_images(&[("scan.png".into(), crate::export::encode_png(2, 2, &[200; 16]).unwrap())]).unwrap();
     let id = s.open("scan.pdf", None, pdf, None).unwrap();
     let text = AddedText { text: "Hard ware".into(), rect: [10.0, 10.0, 200.0, 30.0], ..Default::default() };
-    let runs = vec![TextRun { chars: 0..4, color: [1.0, 0.0, 0.0], size: 12.0 }, TextRun { chars: 4..9, color: [0.0; 3], size: 12.0 }];
+    let runs = vec![
+        TextRun { chars: 0..4, color: [1.0, 0.0, 0.0], size: 12.0, ..Default::default() },
+        TextRun { chars: 4..9, color: [0.0; 3], size: 12.0, ..Default::default() },
+    ];
     s.apply(id, Edit::AddStyledText { page: 0, text, runs }).unwrap();
     let lines = s.get(id).unwrap().text_lines(0);
     assert!(lines.iter().any(|l| l.text.trim() == "Hard" && l.color[0] > 0.9), "{lines:?}");
@@ -11144,4 +11147,26 @@ fn a_bold_part_stays_bold_when_another_part_is_coloured() {
     let lines = s.get(id).unwrap().text_lines(0);
     let bold: String = lines.iter().filter(|l| l.bold).map(|l| l.text.as_str()).collect();
     assert_eq!(bold, "หนังสือ", "all of the bold part, and only it: {lines:?}");
+}
+
+/// Thai edition: parts copied by the format painter or a paste keep their weight, slant and
+/// underline, not only their colour and size: "Hard" lands bold and underlined, "ware" plain.
+#[test]
+fn styled_text_keeps_each_parts_weight_and_underline() {
+    let mut s = Session::new();
+    let pdf = s.create_blank(595.0, 842.0, 1).unwrap();
+    let id = s.open("blank.pdf", None, pdf, None).unwrap();
+    let text = AddedText { text: "Hard ware".into(), rect: [60.0, 600.0, 400.0, 620.0], size: 14.0, ..Default::default() };
+    let runs = vec![
+        TextRun { chars: 0..4, color: [0.9, 0.1, 0.1], size: 14.0, bold: true, underline: true, ..Default::default() },
+        TextRun { chars: 4..9, color: [0.0; 3], size: 14.0, ..Default::default() },
+    ];
+    s.apply(id, Edit::AddStyledText { page: 0, text, runs }).unwrap();
+    let doc = s.get(id).unwrap();
+    let lines = doc.text_lines(0);
+    assert!(lines.iter().any(|l| l.text.trim() == "Hard" && l.bold), "{lines:?}");
+    assert!(lines.iter().filter(|l| l.text.contains("ware")).all(|l| !l.bold), "{lines:?}");
+    let b = doc.text_blocks(0).remove(0);
+    let underlined: Vec<&str> = b.underlined_parts.iter().filter_map(|r| b.editor_text.get(r.clone())).collect();
+    assert_eq!(underlined, vec!["Hard"], "{b:?}");
 }

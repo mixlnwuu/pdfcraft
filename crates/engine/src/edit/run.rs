@@ -893,11 +893,13 @@ pub(crate) fn run_edit(doc: &mut pdfcraft_cos::Document, edit: &Edit, cx: &mut E
                     .filter(|r| r.chars.start < r.chars.end)
                     .map(|r| pdfcraft_edit::RangeStyle {
                         range: byte(r.chars.start)..byte(r.chars.end),
-                        family: None,
+                        // Each part's weight, slant and underline too (Thai edition), where they
+                        // differ from the text's own.
+                        family: (r.bold != text.bold || r.italic != text.italic).then_some((text.family, r.bold, r.italic)),
                         resource: None,
                         size: (r.size.is_finite() && r.size > 0.0 && (r.size - text.size).abs() > 0.01).then_some(r.size),
                         color: Some(r.color),
-                        underline: None,
+                        underline: (r.underline != text.underline).then_some(r.underline),
                         char_spacing: None,
                         scale: None,
                     })

@@ -64,12 +64,12 @@ pub(crate) fn editor_font(ctx: &egui::Context, look: &pdfcraft_engine::AddedText
     if look.family.craft(look.bold, look.italic).is_some() {
         return crate::theme::document_font(ctx, look.family, look.bold, look.italic, size);
     }
-    let family = match (look.family, look.bold) {
-        (pdfcraft_engine::FontFamily::Courier, _) => FontFamily::Monospace,
-        (_, true) => FontFamily::Name("semibold".into()),
-        (_, false) => FontFamily::Proportional,
-    };
-    FontId::new(size, family)
+    // Thai in a standard family is drawn in the document Thai face, on the page as here (Thai
+    // edition): the interface's own Thai face is a loopless one.
+    match look.family {
+        pdfcraft_engine::FontFamily::Courier => FontId::new(size, FontFamily::Monospace),
+        _ => crate::theme::document_standard_font(ctx, look.bold, size),
+    }
 }
 
 pub(super) fn color32(color: [f64; 3]) -> Color32 {
@@ -205,21 +205,30 @@ pub(super) fn preview_parts(
     out
 }
 
-/// Thai edition: the parts of paragraph `block` (its lines `lines`) by colour and size, as
-/// characters of its text, for a paste to keep; empty when it has one colour and one size.
+/// Thai edition: the parts of paragraph `block` (its lines `lines`) by colour, size, weight,
+/// slant and underline, as characters of its text, for a paste or the format painter to keep;
+/// empty when all of it looks alike.
 pub(crate) fn paragraph_runs(block: &pdfcraft_engine::TextBlock, lines: &[pdfcraft_engine::TextLine]) -> Vec<pdfcraft_engine::TextRun> {
     let text = &block.editor_text;
     let chars = |at: usize| text.get(..at).map_or(0, |s| s.chars().count());
     let mut runs: Vec<pdfcraft_engine::TextRun> = Vec::new();
     for (range, index) in block.edited_spans(text) {
         let Some(line) = lines.get(index) else { continue };
-        let span = chars(range.start)..chars(range.end);
+        let underline = block.underlined && (block.underlined_parts.is_empty() || block.underlined_parts.iter().any(|p| p.contains(&range.start)));
+        let run = pdfcraft_engine::TextRun {
+            chars: chars(range.start)..chars(range.end),
+            color: line.color,
+            size: line.size,
+            bold: line.bold,
+            italic: line.italic,
+            underline,
+        };
         match runs.last_mut() {
-            Some(last) if last.color == line.color && last.size == line.size && last.chars.end == span.start => last.chars.end = span.end,
-            _ => runs.push(pdfcraft_engine::TextRun { chars: span, color: line.color, size: line.size }),
+            Some(last) if last.same_look(&run) && last.chars.end == run.chars.start => last.chars.end = run.chars.end,
+            _ => runs.push(run),
         }
     }
-    let uniform = runs.windows(2).all(|w| w[0].color == w[1].color && w[0].size == w[1].size);
+    let uniform = runs.windows(2).all(|w| w[0].same_look(&w[1]));
     if uniform { Vec::new() } else { runs }
 }
 
