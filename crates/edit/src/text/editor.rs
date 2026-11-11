@@ -20,9 +20,26 @@ pub fn text_editor_fonts(doc: &Document, page: usize) -> Result<Vec<TextEditorFo
     let mut budget = 32_usize << 20;
     // Every program decoded counts, usable or not, so aliases of one program can't repeat the work.
     let mut decode = DecodeBudget::new(2 * budget, 0);
-    let mut result = Vec::new();
-    for (name, font) in fonts.iter().take(128) {
+    let mut result: Vec<TextEditorFont> = Vec::new();
+    // Thai edition: the program each font file object gave, by position in `result`. Every
+    // rewrite adds a resource for the program it shapes with, and they share the one file: read
+    // once, the copies cost no budget, or a much edited page ran out of it and the editor drew
+    // its later runs in another face.
+    let mut read: std::collections::HashMap<pdfcraft_cos::ObjRef, usize> = std::collections::HashMap::new();
+    for (name, font) in fonts.iter().take(512) {
         let Some(font) = doc.dict(font) else { continue };
+        let file = program_file(doc, &font);
+        if let Some(at) = file.and_then(|f| read.get(&f)).copied()
+            && let Some(first) = result.get(at)
+        {
+            let copy = TextEditorFont {
+                resource: String::from_utf8_lossy(name).into_owned(),
+                face: Metrics::from_dict(doc, &font).base_font.rsplit('+').next().unwrap_or_default().to_owned(),
+                bytes: first.bytes.clone(),
+            };
+            result.push(copy);
+            continue;
+        }
         let Some(bytes) = pdfcraft_fonts::pdf::embedded_sfnt_within(doc, &font, &mut decode) else { continue };
         // Thai edition: a subset whose character map sends Thai to emptied glyphs would show the
         // paragraph's Thai as blanks once it is edited; the editor draws it with another face.
@@ -30,6 +47,9 @@ pub fn text_editor_fonts(doc: &Document, page: usize) -> Result<Vec<TextEditorFo
             continue;
         }
         budget -= bytes.len();
+        if let Some(file) = file {
+            read.insert(file, result.len());
+        }
         result.push(TextEditorFont {
             resource: String::from_utf8_lossy(name).into_owned(),
             face: Metrics::from_dict(doc, &font).base_font.rsplit('+').next().unwrap_or_default().to_owned(),
@@ -49,6 +69,13 @@ pub fn text_editor_fonts(doc: &Document, page: usize) -> Result<Vec<TextEditorFo
         }
     }
     Ok(result)
+}
+
+/// The font file object (`/FontFile2` or `/FontFile3`) behind font `font`, when it is a reference.
+fn program_file(doc: &Document, font: &pdfcraft_cos::Dict) -> Option<pdfcraft_cos::ObjRef> {
+    let descendant = font.get(b"DescendantFonts").and_then(|o| doc.resolve(o).as_array().and_then(|a| a.first().cloned())).and_then(|d| doc.dict(&d));
+    let descriptor = descendant.as_ref().unwrap_or(font).get(b"FontDescriptor").and_then(|d| doc.dict(d))?;
+    [b"FontFile2".as_slice(), b"FontFile3".as_slice()].into_iter().find_map(|key| descriptor.get(key).and_then(Object::as_ref))
 }
 
 /// Load an explicit full face into this page's resources. Nothing on the page is replaced;
@@ -126,4 +153,58 @@ pub(crate) fn layout_draft(
     let overflow = rect
         .is_some_and(|r| r[0] < source.rect[0] - 0.5 || r[1] < source.rect[1] - 0.5 || r[2] > source.rect[2] + 0.5 || r[3] > source.rect[3] + 0.5);
     Ok(TextEditLayout { source_rect: source.rect, draft_rect: rect, overflow })
+}
+
+#[cfg(test)]
+mod shared_program_tests {
+    use crate::{AddedText, Content as AddedContent, Family};
+
+    /// Thai edition: a page whose rewrites left many font resources sharing one embedded program
+    /// gives the editor every one of them: the program is read once, the copies cost no budget.
+    /// The budget ran out after some sixty, and the editor drew the rest in an interface face.
+    #[test]
+    fn many_resources_sharing_one_program_all_reach_the_editor() {
+        if Family::Sarabun.craft(false, false).is_none() {
+            return; // built without craft-fonts
+        }
+        let mut doc = crate::tests::text_page("");
+        let text = AddedText {
+            text: "ข้าพเจ้า".into(), rect: [60.0, 600.0, 400.0, 620.0], family: Family::Sarabun, size: 16.0, ..Default::default()
+        };
+        crate::add_content(&mut doc, 0, &AddedContent::Text(text)).unwrap();
+        crate::release_content(&mut doc, 0, 0).unwrap();
+        let range = super::super::RangeStyle {
+            range: 0..3,
+            family: None,
+            resource: None,
+            size: None,
+            color: Some([0.9, 0.1, 0.1]),
+            underline: None,
+            char_spacing: None,
+            scale: None,
+        };
+        let block = super::super::text_blocks(&doc, 0).unwrap().remove(0);
+        super::super::rewrite_block(
+            &mut doc,
+            0,
+            0,
+            Some(&block.editor_text),
+            &super::super::BlockStyle { ranges: vec![range], ..Default::default() },
+        )
+        .unwrap();
+        let fonts = super::text_editor_fonts(&doc, 0).unwrap();
+        let full = fonts.iter().find(|f| f.resource.starts_with("PCFull")).expect("a full face on the page").resource.clone();
+        // Copy that resource under 150 more names, as many rewrites leave them.
+        let p = super::page_dict(&doc, 0).unwrap();
+        let mut resources = p.dict.get(b"Resources").and_then(|o| doc.dict(o)).unwrap();
+        let mut table = resources.get(b"Font").and_then(|o| doc.dict(o)).unwrap();
+        let entry = table.get(full.as_bytes()).cloned().unwrap();
+        for k in 0..150 {
+            table.set(format!("PCCopy{k}").into_bytes(), entry.clone());
+        }
+        resources.set(b"Font".to_vec(), super::Object::Dict(table));
+        doc.update_dict(p.obj, |d| d.set(b"Resources".to_vec(), super::Object::Dict(resources))).unwrap();
+        let fonts = super::text_editor_fonts(&doc, 0).unwrap();
+        assert!((0..150).all(|k| fonts.iter().any(|f| f.resource == format!("PCCopy{k}"))), "{} fonts", fonts.len());
+    }
 }

@@ -113,9 +113,24 @@ pub(crate) fn install_source_fonts(ctx: &egui::Context, doc: &pdfcraft_engine::D
     definitions.font_data.retain(|name, _| !name.starts_with("pdf-source-"));
     definitions.families.retain(|family, _| !matches!(family, FontFamily::Name(name) if name.starts_with("pdf-source-")));
     let mut families = BTreeMap::new();
+    // One atlas font per program (Thai edition): a much edited page has many resources sharing
+    // the one program, each of which would otherwise be loaded again.
+    let mut loaded: std::collections::HashMap<(usize, u64), String> = std::collections::HashMap::new();
     for (index, program) in programs.iter().enumerate() {
-        let name = format!("pdf-source-{index}");
-        definitions.font_data.insert(name.clone(), Arc::new(egui::FontData::from_owned(program.bytes.clone())));
+        let key = {
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            program.bytes.hash(&mut h);
+            (program.bytes.len(), h.finish())
+        };
+        let name = loaded
+            .entry(key)
+            .or_insert_with(|| {
+                let name = format!("pdf-source-{index}");
+                definitions.font_data.insert(name.clone(), Arc::new(egui::FontData::from_owned(program.bytes.clone())));
+                name
+            })
+            .clone();
         families.insert(program.resource.clone(), name);
     }
     for program in &programs {
@@ -135,6 +150,8 @@ pub(crate) fn install_source_fonts(ctx: &egui::Context, doc: &pdfcraft_engine::D
         if let Some(fallback) = definitions.families.get(&FontFamily::Proportional) {
             stack.extend(fallback.iter().cloned());
         }
+        let mut seen = std::collections::HashSet::new();
+        stack.retain(|n| seen.insert(n.clone()));
         definitions.families.insert(FontFamily::Name(name.clone().into()), stack);
     }
     if !families.is_empty() {
