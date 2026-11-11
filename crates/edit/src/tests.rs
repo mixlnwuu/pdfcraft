@@ -15347,3 +15347,54 @@ fn thai_paragraphs_break_the_row_on_unicode_row_breaks() {
         assert_eq!(rows(&doc), ["กข", "ค"], "matching U+{:04X}", u32::from(separator));
     }
 }
+
+/// Thai edition: Word writes some Thai runs with a negative character spacing it cancels after
+/// every glyph in TJ (`-0.11 Tc` and `-110`), so the run is as wide as its glyphs. Part of such a
+/// run coloured is shaped again and lost those adjustments: with the bare spacing its letters ran
+/// into each other and into the part after it ("ปุ่มเปิดปิด" in a Dell checklist).
+#[test]
+fn a_coloured_part_of_a_run_whose_spacing_tj_cancels_stays_clear_of_the_rest() {
+    if pdfcraft_fonts::document_thai_font().is_none() {
+        return; // built without craft-fonts
+    }
+    let text = "ปุ่มเปิดปิด";
+    // A subset with no layout tables, as Word embeds it (Thai at 0x00d6 on, the tone marks at
+    // 0x0160), every glyph half an em wide; the clusters are shaped again in the bundled face.
+    let code = |c: char| match u32::from(c) {
+        0x0E48 => 0x0160,
+        c @ 0x0E01..=0x0E3A => c - 0x0E01 + 0x00D6,
+        c => c - 0x0E3F + 0x0110,
+    };
+    let glyphs: Vec<String> = text.chars().map(|c| format!("<{:04x}>", code(c))).collect();
+    // Word's spacing: -0.11 em at 12 pt, given back after every glyph.
+    let mut doc = text_page(&format!("BT /F1 12 Tf -1.32 Tc 72 700 Td [{}] TJ ET", glyphs.join(" -110 ")));
+    let font = legacy_thai_font(&mut doc, "ABCDEF+AngsanaNew", &legacy_thai_program(), LEGACY_THAI_UNICODE);
+    doc.set(pdfcraft_cos::ObjRef::new(5, 0), Object::Dict(font));
+    let line = text::text_lines(&doc, 0).unwrap().remove(0);
+    assert_eq!(line.text, text);
+    assert!((line.rect[2] - line.rect[0] - 11.0 * 6.0).abs() < 1.5, "Word's spacing cancels: {:?}", line.rect);
+    // "ปุ่มเปิด" orange.
+    let part = "ปุ่มเปิด".len();
+    let style = text::BlockStyle {
+        ranges: vec![text::RangeStyle {
+            range: 0..part,
+            family: None,
+            resource: None,
+            size: None,
+            color: Some([1.0, 0.5, 0.0]),
+            underline: None,
+            char_spacing: None,
+            scale: None,
+        }],
+        ..Default::default()
+    };
+    text::rewrite_block(&mut doc, 0, 0, Some(text), &style).unwrap();
+    let doc = reopen(&doc);
+    let mut lines = text::text_lines(&doc, 0).unwrap();
+    lines.sort_by(|a, b| a.rect[0].total_cmp(&b.rect[0]));
+    let drawn: String = lines.iter().map(|l| l.text.as_str()).collect();
+    assert_eq!(drawn, text, "{lines:?}");
+    for pair in lines.windows(2) {
+        assert!(pair[1].rect[0] >= pair[0].rect[2] - 0.5, "{:?} runs into {:?}", pair[0].text, pair[1].text);
+    }
+}

@@ -374,6 +374,57 @@ fn fit_to_phrase(calibration: &mut HashMap<usize, f64>, lines: &[TextLine], phra
     }
 }
 
+/// The character spacing each source run is drawn with in the end (Thai edition), where it
+/// differs from its `Tc`: Word writes some Thai runs with a negative `Tc` that a `TJ` adjustment
+/// after every glyph cancels again, so the run is as wide as its glyphs. A run shaped in another
+/// face loses those adjustments, and with the bare `Tc` its letters ran into each other. The
+/// spacing comes from the run's width: what it has over its glyphs, a glyph at a time, and never
+/// past the `Tc` written.
+fn drawn_char_spacing(
+    doc: &Document,
+    fonts: &Dict,
+    lines: &[TextLine],
+    metrics: &std::collections::BTreeMap<String, Metrics>,
+    space_of: impl Fn(&str, &Metrics) -> f64,
+) -> HashMap<usize, f64> {
+    let mut drawn = HashMap::new();
+    for (index, source) in lines.iter().enumerate() {
+        let written = source.origin.state.char_spacing;
+        let glyphs = source.text.chars().count() as f64;
+        if written.abs() < 1e-6 || glyphs < 1.0 {
+            continue;
+        }
+        // The source's font, though none of the new text is written in it.
+        let read;
+        let m = match metrics.get(&source.font) {
+            Some(m) => m,
+            None => {
+                let Some(font) = fonts.get(source.font.as_bytes()).and_then(|f| doc.dict(f)) else { continue };
+                read = Metrics::from_dict(doc, &font);
+                &read
+            }
+        };
+        let to_user = source.origin.state.scale * across(source);
+        let bare = source_width(
+            m,
+            &source.text,
+            source.origin.state.font.as_ref().map_or(1.0, |(_, size)| *size),
+            space_of(&source.font, m),
+            0.0,
+            source.origin.state.word_spacing,
+        ) * to_user;
+        let width = source.rect[2] - source.rect[0];
+        if !(bare > 0.0 && to_user > 0.0 && width.is_finite()) {
+            continue;
+        }
+        let spacing = (width - bare) / to_user / glyphs;
+        if spacing.is_finite() {
+            drawn.insert(index, if written < 0.0 { spacing.clamp(written, 0.0) } else { spacing.clamp(0.0, written) });
+        }
+    }
+    drawn
+}
+
 fn calibration_factors(
     lines: &[TextLine],
     metrics: &std::collections::BTreeMap<String, Metrics>,
@@ -1146,6 +1197,16 @@ pub(crate) fn rewrite_styled_block(
     };
     let mut calibration = calibration_factors(lines, &metrics, style, &overrides, space_of);
     fit_to_phrase(&mut calibration, lines, phrase_size);
+    let drawn_spacing = drawn_char_spacing(doc, &fonts, lines, &metrics, space_of);
+    // The spacing a run shaped in its own face is drawn with: the one chosen, else the source's as
+    // drawn ([`drawn_char_spacing`]).
+    let shaped_spacing = |source: &TextLine, index: usize| {
+        overrides
+            .get(&index)
+            .and_then(|r| r.char_spacing)
+            .or(style.char_spacing)
+            .map_or_else(|| drawn_spacing.get(&index).copied().unwrap_or(source.origin.state.char_spacing), |s| s / source.origin.k.max(1e-6))
+    };
     let advance = |item: &(char, usize, String)| -> f64 {
         let source = lines.get(item.1).unwrap_or(first);
         let Some(m) = metrics.get(&item.2) else { return 0.0 };
@@ -1175,11 +1236,7 @@ pub(crate) fn rewrite_styled_block(
                 let source = lines.get(item.1).unwrap_or(first);
                 let scale =
                     overrides.get(&item.1).and_then(|r| r.scale).or(style.scale).map_or(source.origin.state.scale, |s| (s / 100.0).clamp(0.1, 10.0));
-                let spacing = overrides
-                    .get(&item.1)
-                    .and_then(|r| r.char_spacing)
-                    .or(style.char_spacing)
-                    .map_or(source.origin.state.char_spacing, |s| s / source.origin.k.max(1e-6));
+                let spacing = shaped_spacing(source, item.1);
                 width += (shaped.advance * size_of(source, item.1)
                     + spacing * string.chars().count() as f64
                     + source.origin.state.word_spacing * string.matches(' ').count() as f64)
@@ -1314,7 +1371,9 @@ pub(crate) fn rewrite_styled_block(
             if let Some(s) = overrides.get(&item.1).and_then(|r| r.scale).or(style.scale) {
                 state.scale = (s / 100.0).clamp(0.1, 10.0);
             }
-            if !shaped_runs.contains_key(&(row_index, pos)) {
+            if shaped_runs.contains_key(&(row_index, pos)) {
+                state.char_spacing = shaped_spacing(source, item.1);
+            } else {
                 state.scale *= calibration.get(&item.1).copied().unwrap_or(1.0);
             }
             if let Some([r, g, b]) = overrides.get(&item.1).and_then(|r| r.color).or(style.color) {
