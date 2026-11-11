@@ -50,8 +50,12 @@ impl FontResolver<'_> {
         if self.metrics.get(&source.font).is_some_and(|metrics| source_encodes(metrics, text)) {
             return Ok(Some(source.font.clone()));
         }
+        // Another font of the family on the page, of the source's weight and slant (Thai edition):
+        // a regular subset drew letters of a bold part regular.
         if let Some((name, _)) = self.metrics.iter().find(|(_, metrics)| {
             pdfcraft_fonts::embedding::face_key(&metrics.base_font) == pdfcraft_fonts::embedding::face_key(&source.base_font)
+                && metrics.bold == source.bold
+                && metrics.italic == source.italic
                 && source_encodes(metrics, text)
         }) {
             return Ok(Some(name.clone()));

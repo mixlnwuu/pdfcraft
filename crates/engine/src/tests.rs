@@ -11106,3 +11106,42 @@ fn a_part_coloured_in_a_regular_row_stays_regular_beside_a_bold_title() {
     assert!(!row.is_empty() && row.iter().all(|l| !l.bold), "the row stays regular: {row:?}");
     assert!(lines.iter().filter(|l| l.rect[1] > 650.0 && !l.text.trim().is_empty()).all(|l| l.bold), "the title stays bold: {lines:?}");
 }
+
+/// Thai edition: a bold part stays bold, every letter of it, when another part of its paragraph
+/// is coloured next: letters its own subset couldn't encode one at a time were borrowed from a
+/// regular font of the family on the page ("หนังสือ" kept ห ง อ bold and lost นั สื).
+#[test]
+fn a_bold_part_stays_bold_when_another_part_is_coloured() {
+    if crate::FontFamily::Sarabun.craft(true, false).is_none() {
+        return; // built without craft-fonts
+    }
+    let mut s = Session::new();
+    let pdf = s.create_blank(595.0, 842.0, 1).unwrap();
+    let id = s.open("form.pdf", None, pdf, None).unwrap();
+    let text = AddedText {
+        text: "โดยหนังสือฉบับนี้".into(),
+        rect: [60.0, 600.0, 500.0, 620.0],
+        family: crate::FontFamily::Sarabun,
+        size: 16.0,
+        ..Default::default()
+    };
+    s.apply(id, Edit::AddText { page: 0, text }).unwrap();
+    s.apply(id, Edit::ReleaseContent { page: 0, index: 0 }).unwrap();
+    let none = RangeStyle { range: 0..0, family: None, resource: None, size: None, color: None, underline: None, char_spacing: None, scale: None };
+    for (word, style) in [
+        ("หนังสือ", RangeStyle { family: Some((crate::FontFamily::Sarabun, true, false)), ..none.clone() }),
+        ("ฉบับ", RangeStyle { color: Some([0.9, 0.1, 0.1]), ..none.clone() }),
+    ] {
+        let b = s.get(id).unwrap().text_blocks(0).remove(0);
+        let at = b.editor_text.find(word).unwrap();
+        let range = RangeStyle { range: at..at + word.len(), ..style };
+        s.apply(
+            id,
+            Edit::EditTextBlock { page: 0, block: 0, text: b.editor_text.clone(), style: BlockStyle { ranges: vec![range], ..Default::default() } },
+        )
+        .unwrap();
+    }
+    let lines = s.get(id).unwrap().text_lines(0);
+    let bold: String = lines.iter().filter(|l| l.bold).map(|l| l.text.as_str()).collect();
+    assert_eq!(bold, "หนังสือ", "all of the bold part, and only it: {lines:?}");
+}
