@@ -10,7 +10,7 @@ use pdfcraft_ui_egui::updates::{Release, UpdateSource, is_newer};
 fn source(answer: Result<&str, &str>) -> UpdateSource {
     let answer = answer.map(str::to_string).map_err(str::to_string);
     Arc::new(move || {
-        answer.clone().map(|v| Release { installer: None, url: format!("https://github.com/mixlnwuu/pdfcraft/releases/tag/{v}"), version: v })
+        answer.clone().map(|v| Release { installer: None, url: format!("https://github.com/mixlnwuu/maewpdf/releases/tag/{v}"), version: v })
     })
 }
 
@@ -128,7 +128,7 @@ fn nothing_is_asked_until_the_user_checks() {
         let counted = counted.clone();
         app.update_source = Some(Arc::new(move || {
             counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            Ok(Release { version: "v99.0.0".into(), url: "https://github.com/mixlnwuu/pdfcraft/releases/tag/v99.0.0".into(), installer: None })
+            Ok(Release { version: "v99.0.0".into(), url: "https://github.com/mixlnwuu/maewpdf/releases/tag/v99.0.0".into(), installer: None })
         }));
         app
     });
@@ -145,9 +145,9 @@ fn nothing_is_asked_until_the_user_checks() {
 fn newer_release() -> Release {
     Release {
         version: "v99.0.0".into(),
-        url: "https://github.com/mixlnwuu/pdfcraft/releases/tag/v99.0.0".into(),
+        url: "https://github.com/mixlnwuu/maewpdf/releases/tag/v99.0.0".into(),
         installer: Some(pdfcraft_ui_egui::updates::Installer {
-            url: "https://github.com/mixlnwuu/pdfcraft/releases/download/v99.0.0/pdfcraft-99.0.0-windows-x64.msi".into(),
+            url: "https://github.com/mixlnwuu/maewpdf/releases/download/v99.0.0/maewpdf-99.0.0-windows-x64.msi".into(),
             size: 1,
             sha256: "0".repeat(64),
         }),
@@ -193,9 +193,9 @@ fn wait_for(h: &mut Harness<'static, PdfCraftApp>, label: &str) {
 fn a_newer_release_at_start_is_offered_and_installed_on_closing() {
     let runs = Arc::new(std::sync::Mutex::new(Vec::new()));
     let mut h = starting(newer_release(), true, runs.clone());
-    wait_for(&mut h, "Update and restart");
+    wait_for(&mut h, "ย้ายไป MaewPDF");
     h.get_by_label("What's new");
-    h.get_by_label("Update and restart").click();
+    h.get_by_label("ย้ายไป MaewPDF").click();
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
     while runs.lock().unwrap().is_empty() {
         assert!(std::time::Instant::now() < deadline, "the installer never ran");
@@ -210,10 +210,10 @@ fn a_newer_release_at_start_is_offered_and_installed_on_closing() {
 fn later_leaves_the_app_as_it_is() {
     let runs = Arc::new(std::sync::Mutex::new(Vec::new()));
     let mut h = starting(newer_release(), true, runs.clone());
-    wait_for(&mut h, "Update and restart");
+    wait_for(&mut h, "ย้ายไป MaewPDF");
     h.get_by_label("Later").click();
     h.run_steps(3);
-    assert!(h.query_by_label("Update and restart").is_none());
+    assert!(h.query_by_label("ย้ายไป MaewPDF").is_none());
     assert!(runs.lock().unwrap().is_empty());
 }
 
@@ -222,14 +222,14 @@ fn later_leaves_the_app_as_it_is() {
 fn a_portable_copy_is_offered_the_download_page() {
     let mut h = starting(newer_release(), false, Default::default());
     wait_for(&mut h, "Download");
-    assert!(h.query_by_label("Update and restart").is_none());
+    assert!(h.query_by_label("ย้ายไป MaewPDF").is_none());
 }
 
 /// Thai edition: a check at start that finds nothing newer says nothing, and Preferences turn the
 /// check off.
 #[test]
 fn nothing_new_at_start_says_nothing() {
-    let current = Release { version: "v0.0.1".into(), url: "https://github.com/mixlnwuu/pdfcraft/releases".into(), installer: None };
+    let current = Release { version: "v0.0.1".into(), url: "https://github.com/mixlnwuu/maewpdf/releases".into(), installer: None };
     let mut h = starting(current, true, Default::default());
     for _ in 0..30 {
         h.run_steps(2);
@@ -269,61 +269,27 @@ fn an_update_that_did_not_take_is_said_at_the_next_start() {
     assert!(!notified("v0.0.1"), "this build is newer than what was asked for");
 }
 
-/// Thai edition: the prompt is at most daily: once today's start has asked, another start the
-/// same day doesn't.
+/// Bridge release: every start offers MaewPDF, even when today's start already asked, the
+/// version was put aside or Preferences turned the check off; the prompt says where the edition
+/// went and has no box to put it aside.
 #[test]
-fn the_check_at_start_asks_once_a_day() {
-    let first = starting(newer_release(), true, Default::default());
-    let mut first = first;
-    wait_for(&mut first, "Update and restart");
+fn every_start_offers_maewpdf() {
+    let mut first = starting(newer_release(), true, Default::default());
+    wait_for(&mut first, "ย้ายไป MaewPDF");
+    first.get_by_label("PdfCraft ภาษาไทยเปลี่ยนชื่อเป็น MaewPDF แล้ว");
+    assert!(first.query_by_label("Don't remind me about this version").is_none());
     let today = first.state().update_asked_on.clone();
-    assert_eq!(today.len(), 10, "{today}");
     let mut again = Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_eframe(move |_cc| {
         let mut app = PdfCraftApp::new();
         app.set_option("language", "en").unwrap();
         app.update_source = Some(Arc::new(|| Ok(newer_release())));
+        app.update_install =
+            Some(pdfcraft_ui_egui::updates::UpdateInstall { download: Arc::new(|_, _, _| Err("no".into())), run: Arc::new(|_| Ok(())) });
         app.update_asked_on = today;
+        app.update_skipped = Some("v99.0.0".into());
+        app.check_updates_at_start = false;
         app.set_startup_update_check(true);
         app
     });
-    for _ in 0..20 {
-        again.run_steps(2);
-        std::thread::sleep(std::time::Duration::from_millis(5));
-    }
-    assert!(again.query_by_label("Later").is_none(), "asked already today");
-}
-
-/// Thai edition: ticking the box puts this version aside: later starts say nothing of it, a
-/// newer one is offered again, and Check for updates still finds it.
-#[test]
-fn a_version_put_aside_is_not_offered_at_start() {
-    let mut h = starting(newer_release(), true, Default::default());
-    wait_for(&mut h, "Update and restart");
-    h.get_by_label("Don't remind me about this version").click();
-    h.run_steps(2);
-    h.get_by_label("Later").click();
-    h.run_steps(3);
-    assert_eq!(h.state().update_skipped.as_deref(), Some("v99.0.0"));
-    let start = |release: Release| {
-        Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_eframe(move |_cc| {
-            let mut app = PdfCraftApp::new();
-            app.set_option("language", "en").unwrap();
-            app.update_source = Some(Arc::new(move || Ok(release.clone())));
-            app.update_install =
-                Some(pdfcraft_ui_egui::updates::UpdateInstall { download: Arc::new(|_, _, _| Err("no".into())), run: Arc::new(|_| Ok(())) });
-            app.update_skipped = Some("v99.0.0".into());
-            app.set_startup_update_check(true);
-            app
-        })
-    };
-    let mut quiet = start(newer_release());
-    for _ in 0..30 {
-        quiet.run_steps(2);
-        std::thread::sleep(std::time::Duration::from_millis(5));
-    }
-    assert!(quiet.query_by_label("Update and restart").is_none(), "put aside");
-    quiet.state_mut().check_for_updates();
-    wait_for(&mut quiet, "Update and restart");
-    let mut next = start(Release { version: "v99.1.0".into(), ..newer_release() });
-    wait_for(&mut next, "Update and restart");
+    wait_for(&mut again, "ย้ายไป MaewPDF");
 }

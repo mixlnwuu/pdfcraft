@@ -5,10 +5,12 @@ use std::time::Duration;
 use pdfcraft_ui_egui::updates::{Installer, RELEASES_PAGE, Release};
 
 /// The Thai edition's latest release (Thai edition: its own repository, see [`RELEASES_PAGE`]).
-const LATEST: &str = "https://api.github.com/repos/mixlnwuu/pdfcraft/releases/latest";
+// Bridge release (0.20.0-th.2): PdfCraft Thai Edition is now MaewPDF, a separate program with its
+// own installer, and this release moves its users there: it offers MaewPDF's releases.
+const LATEST: &str = "https://api.github.com/repos/mixlnwuu/maewpdf/releases/latest";
 
 /// Where the edition's release files are: an installer listed anywhere else is not offered.
-const DOWNLOADS: &str = "https://github.com/mixlnwuu/pdfcraft/releases/download/";
+const DOWNLOADS: &str = "https://github.com/mixlnwuu/maewpdf/releases/download/";
 
 /// The largest installer accepted (today's is about 100 MB).
 const MAX_INSTALLER: u64 = 1 << 30;
@@ -91,7 +93,7 @@ fn parse(body: &str) -> Result<Release, String> {
 /// The release's Windows installer: named for `version`, on [`DOWNLOADS`], with GitHub's SHA-256
 /// and a size that makes sense. Anything else is not offered.
 fn installer(v: &serde_json::Value, version: &str) -> Option<Installer> {
-    let name = format!("pdfcraft-{}-windows-x64.msi", version.trim_start_matches(['v', 'V']));
+    let name = format!("maewpdf-{}-windows-x64.msi", version.trim_start_matches(['v', 'V']));
     let asset = v["assets"].as_array()?.iter().find(|a| a["name"].as_str() == Some(name.as_str()))?;
     let url = asset["browser_download_url"].as_str().filter(|u| u.starts_with(DOWNLOADS) && !u.contains(['?', '#']) && !u.contains(".."))?;
     let size = asset["size"].as_u64().filter(|s| (1..=MAX_INSTALLER).contains(s))?;
@@ -164,14 +166,13 @@ pub fn download(installer: &Installer, progress: &(dyn Fn(f32) + Sync), stop: &s
 pub fn run(msi: &std::path::Path) -> Result<(), String> {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    let exe = std::env::current_exe().map_err(|e| format!("couldn't find PdfCraft ({e})"))?;
     let plain = |p: &std::path::Path| {
         p.to_str().filter(|s| !s.contains(['"', '%'])).map(str::to_owned).ok_or_else(|| "a path PdfCraft can't pass on".to_string())
     };
-    let (package, app) = (plain(msi)?, plain(&exe)?);
+    let package = plain(msi)?;
     let script = msi.with_extension("cmd");
     let log = plain(&msi.with_extension("log"))?;
-    std::fs::write(&script, update_script(std::process::id(), &package, &app, &log)).map_err(|e| format!("couldn't start the installer ({e})"))?;
+    std::fs::write(&script, update_script(std::process::id(), &package, &log)).map_err(|e| format!("couldn't start the installer ({e})"))?;
     std::process::Command::new("cmd.exe")
         .raw_arg(format!("/s /c \"\"{}\"\"", plain(&script)?))
         .creation_flags(CREATE_NO_WINDOW)
@@ -180,21 +181,17 @@ pub fn run(msi: &std::path::Path) -> Result<(), String> {
         .map_err(|e| format!("couldn't start the installer ({e})"))
 }
 
-/// The batch file behind [`run`]: wait up to a minute for process `pid` to end, install, reopen.
+/// The batch file behind [`run`]: wait up to a minute for process `pid` to end, install MaewPDF
+/// for this user (no administrator prompt), open it by its App Paths name. MaewPDF's first start
+/// copies the settings and removes this edition (MaewPDF's `old_edition.rs`).
 #[cfg(any(windows, test))]
-fn update_script(pid: u32, msi: &str, app: &str, log: &str) -> String {
-    let scope = if per_machine(app) { "ALLUSERS=1" } else { "ALLUSERS=2 MSIINSTALLPERUSER=1" };
+fn update_script(pid: u32, msi: &str, log: &str) -> String {
+    let scope = "ALLUSERS=2 MSIINSTALLPERUSER=1";
     format!(
         "@echo off\r\nchcp 65001 >nul\r\nset n=0\r\n:wait\r\ntasklist /fi \"PID eq {pid}\" /nh | find \"{pid}\" >nul\r\nif errorlevel 1 goto install\r\n\
          set /a n+=1\r\nif %n% lss 60 (\r\n  ping -n 2 127.0.0.1 >nul\r\n  goto wait\r\n)\r\n:install\r\n\
-         start \"\" /wait msiexec.exe /i \"{msi}\" /passive /norestart {scope} /l*v \"{log}\"\r\nstart \"\" \"{app}\"\r\n"
+         start \"\" /wait msiexec.exe /i \"{msi}\" /passive /norestart {scope} /l*v \"{log}\"\r\nstart \"\" maewpdf.exe\r\n"
     )
-}
-
-/// Whether the app at `exe` is installed for everyone: under Program Files.
-#[cfg(any(windows, test))]
-fn per_machine(exe: &str) -> bool {
-    exe.to_ascii_lowercase().contains(r"\program files")
 }
 
 #[cfg(test)]
@@ -211,16 +208,17 @@ mod tests {
                 r#"{{"tag_name":"v1.2.3-th.1","html_url":"","assets":[{{"name":"{name}","browser_download_url":"{url}","size":{size},"digest":"{digest}"}}]}}"#
             )
         };
-        let good = "https://github.com/mixlnwuu/pdfcraft/releases/download/v1.2.3-th.1/pdfcraft-1.2.3-th.1-windows-x64.msi";
-        let name = "pdfcraft-1.2.3-th.1-windows-x64.msi";
+        let good = "https://github.com/mixlnwuu/maewpdf/releases/download/v1.2.3-th.1/maewpdf-1.2.3-th.1-windows-x64.msi";
+        let name = "maewpdf-1.2.3-th.1-windows-x64.msi";
         let digest = format!("sha256:{hash}");
         let i = parse(&answer(name, good, 5, &digest)).unwrap().installer.expect("offered");
         assert_eq!((i.url.as_str(), i.size, i.sha256), (good, 5, "a".repeat(64)));
         for (name, url, size, digest) in [
-            ("pdfcraft-1.2.2-windows-x64.msi", good, 5, digest.as_str()),
+            ("maewpdf-1.2.2-windows-x64.msi", good, 5, digest.as_str()),
             (name, "https://example.com/pdfcraft.msi", 5, digest.as_str()),
             (name, "https://github.com/storytold/pdfcraft/releases/download/v1/x.msi", 5, digest.as_str()),
-            (name, "https://github.com/mixlnwuu/pdfcraft/releases/download/../../evil.msi", 5, digest.as_str()),
+            (name, "https://github.com/mixlnwuu/pdfcraft/releases/download/v1.2.3-th.1/maewpdf-1.2.3-th.1-windows-x64.msi", 5, digest.as_str()),
+            (name, "https://github.com/mixlnwuu/maewpdf/releases/download/../../evil.msi", 5, digest.as_str()),
             (name, good, 0, digest.as_str()),
             (name, good, MAX_INSTALLER + 1, digest.as_str()),
             (name, good, 5, "sha256:short"),
@@ -230,35 +228,29 @@ mod tests {
         }
     }
 
-    /// The installer starts only after PdfCraft has gone, is waited for, and PdfCraft is opened
-    /// after it: from the folder it runs in, at the install's scope.
+    /// Bridge release: MaewPDF's installer starts only after this app has gone, is waited for,
+    /// installs for this user, and MaewPDF (not this edition) is opened after it.
     #[test]
-    fn the_update_script_installs_after_closing_and_reopens_after_installing() {
-        let everyone = update_script(42, r"C:\\T\\u.msi", r"C:\\Program Files\\PdfCraft\\pdfcraft.exe", r"C:\\T\\u.log");
-        let wait = everyone.find("tasklist /fi \"PID eq 42\"").unwrap();
-        let install = everyone
-            .find(r#"start "" /wait msiexec.exe /i "C:\\T\\u.msi" /passive /norestart ALLUSERS=1 /l*v "C:\\T\\u.log""#)
+    fn the_bridge_script_installs_maewpdf_after_closing_and_opens_it() {
+        let script = update_script(42, r"C:\\T\\u.msi", r"C:\\T\\u.log");
+        let wait = script.find("tasklist /fi \"PID eq 42\"").unwrap();
+        let install = script
+            .find(r#"start "" /wait msiexec.exe /i "C:\\T\\u.msi" /passive /norestart ALLUSERS=2 MSIINSTALLPERUSER=1 /l*v "C:\\T\\u.log""#)
             .expect("the installer, waited for");
-        let reopen = everyone.find(r#"start "" "C:\\Program Files\\PdfCraft\\pdfcraft.exe""#).unwrap();
-        assert!(wait < install && install < reopen, "{everyone}");
-        let mine = update_script(42, "u.msi", r"C:\\Users\\a\\AppData\\Local\\Programs\\PdfCraft\\pdfcraft.exe", "u.log");
-        assert!(mine.contains("ALLUSERS=2 MSIINSTALLPERUSER=1"), "{mine}");
-    }
-
-    #[test]
-    fn an_install_under_program_files_is_for_everyone() {
-        assert!(per_machine(r"C:\Program Files\PdfCraft\pdfcraft.exe"));
-        assert!(!per_machine(r"C:\Users\a\AppData\Local\Programs\PdfCraft\pdfcraft.exe"));
+        let open = script.find("start \"\" maewpdf.exe\r\n").expect("MaewPDF opens");
+        assert!(wait < install && install < open, "{script}");
+        assert!(!script.contains("pdfcraft.exe"), "this edition is not reopened: {script}");
     }
 
     #[test]
     fn answers_are_read_and_only_our_release_pages_are_offered() {
-        let r = parse(r#"{"tag_name":"v0.2.0","html_url":"https://github.com/mixlnwuu/pdfcraft/releases/tag/v0.2.0"}"#).unwrap();
-        assert_eq!(r, Release { version: "v0.2.0".into(), url: "https://github.com/mixlnwuu/pdfcraft/releases/tag/v0.2.0".into(), installer: None });
+        let r = parse(r#"{"tag_name":"v0.2.0","html_url":"https://github.com/mixlnwuu/maewpdf/releases/tag/v0.2.0"}"#).unwrap();
+        assert_eq!(r, Release { version: "v0.2.0".into(), url: "https://github.com/mixlnwuu/maewpdf/releases/tag/v0.2.0".into(), installer: None });
         // Upstream's release pages too (Thai edition): the check offers only the edition's.
         for elsewhere in [
             "https://example.com/pdfcraft.exe",
-            "https://github.com/mixlnwuu/pdfcraft/releases.evil/x",
+            "https://github.com/mixlnwuu/maewpdf/releases.evil/x",
+            "https://github.com/mixlnwuu/pdfcraft/releases/tag/v9.9.9",
             "javascript:alert(1)",
             "https://github.com/storytold/pdfcraft/releases/tag/v9.9.9",
         ] {

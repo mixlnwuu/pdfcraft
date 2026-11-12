@@ -18,7 +18,8 @@ use crate::{PdfCraftApp, theme, widgets};
 
 /// Where every release of the Thai edition is listed (Thai edition: its own repository, not
 /// upstream's, so the check offers the edition's next release).
-pub const RELEASES_PAGE: &str = "https://github.com/mixlnwuu/pdfcraft/releases";
+/// Bridge release (0.20.0-th.2): MaewPDF's releases, where this edition's users move to.
+pub const RELEASES_PAGE: &str = "https://github.com/mixlnwuu/maewpdf/releases";
 
 /// The latest published release.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -190,7 +191,8 @@ impl PdfCraftApp {
             if std::mem::take(&mut self.updates.start_check) {
                 self.check_update_took();
                 let today = chrono::Local::now().format("%Y-%m-%d").to_string();
-                if self.check_updates_at_start && self.update_asked_on != today {
+                // Bridge release: every start offers MaewPDF, whatever Preferences say.
+                {
                     self.update_asked_on = today;
                     self.updates.quiet = true;
                     self.start_check();
@@ -206,7 +208,8 @@ impl PdfCraftApp {
                 let newer = result.as_ref().ok().filter(|r| is_newer(&r.version, &current));
                 let quiet = std::mem::take(&mut self.updates.quiet);
                 // A version put aside is said no more at start; asked for by hand, it still is.
-                let skipped = quiet && newer.is_some_and(|r| self.update_skipped.as_deref() == Some(r.version.as_str()));
+                // Bridge release: MaewPDF is never put aside.
+                let skipped = false;
                 match newer.filter(|_| !skipped) {
                     Some(r) if quiet || (r.installer.is_some() && self.update_install.is_some()) => {
                         self.updates.prompt = Some(Prompt { release: r.clone(), state: PromptState::Offered });
@@ -301,7 +304,7 @@ fn prompt(app: &mut PdfCraftApp, ctx: &egui::Context) {
     let page = p.release.url.clone();
     let installable = can_install && p.release.installer.is_some();
     let (mut close, mut update, mut download, mut cancel) = (false, false, false, false);
-    let mut skip_ticked = app.updates.skip_ticked;
+    let skip_ticked = app.updates.skip_ticked;
     let tag = p.release.version.clone();
     let modal = crate::widgets::show_modal(ctx, "update-prompt", |ui| {
         ui.set_width(440.0);
@@ -309,14 +312,18 @@ fn prompt(app: &mut PdfCraftApp, ctx: &egui::Context) {
             crate::thai_edition_mark(ui, 56.0);
             ui.add_space(8.0);
             ui.vertical(|ui| {
-                ui.label(egui::RichText::new("PdfCraft").font(theme::semibold(18.0)));
+                ui.label(egui::RichText::new("MaewPDF").font(theme::semibold(18.0)));
                 ui.label(egui::RichText::new(format!("v{current} \u{2192} {version}")).monospace().color(t.text_muted));
             });
         });
         ui.add_space(10.0);
-        ui.label(crate::i18n::fmt(tl!("PdfCraft {v} is available with the latest features and bug fixes."), &[("v", &version)]));
-        ui.add_space(8.0);
-        ui.add(widgets::checkbox(&mut skip_ticked, tl!("Don't remind me about this version")));
+        // Bridge release: says where the edition went; the move is never put aside (no checkbox).
+        ui.label(egui::RichText::new("PdfCraft ภาษาไทยเปลี่ยนชื่อเป็น MaewPDF แล้ว").strong());
+        ui.add_space(4.0);
+        ui.label(crate::i18n::fmt(
+            "กด \"ย้ายไป MaewPDF\" เพื่อติดตั้ง MaewPDF {v} การตั้งค่าและไฟล์ล่าสุดจะตามไปด้วย และ PdfCraft ภาษาไทยรุ่นนี้จะถูกถอนออกให้ (PdfCraft ฉบับทางการ ถ้ามี จะไม่ถูกแตะ)",
+            &[("v", &version)],
+        ));
         ui.add_space(6.0);
         ui.separator();
         ui.add_space(6.0);
@@ -337,7 +344,7 @@ fn prompt(app: &mut PdfCraftApp, ctx: &egui::Context) {
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     let failed = matches!(state, PromptState::Failed(_));
                     if installable && !failed {
-                        update = widgets::pill_button(ui, tl!("Update and restart"), true).clicked();
+                        update = widgets::pill_button(ui, "ย้ายไป MaewPDF", true).clicked();
                     } else {
                         download = widgets::pill_button(ui, tl!("Download"), true).clicked();
                     }
