@@ -15460,3 +15460,49 @@ fn a_thai_paragraph_with_a_coloured_part_takes_an_installed_font() {
     }
     assert!(lines.iter().any(|l| l.color == [1.0, 0.5, 0.0]) && lines.iter().any(|l| l.color == [0.0; 3]), "the parts keep their colours");
 }
+
+/// Thai edition: a font chosen for a whole paragraph whose parts have their own colours keeps
+/// each part's colour. With no ranges given, the paragraph was drawn in one style, its first
+/// part's: an orange first word turned all of it orange, and the paragraph, rewrapped, lost its
+/// last word to a new row.
+#[test]
+fn a_font_for_a_paragraph_of_several_colours_keeps_each_colour() {
+    if added::Family::Sarabun.craft(false, false).is_none() {
+        return; // built without craft-fonts
+    }
+    let text = "ไม่มีริ้วรอย";
+    let code = |c: char| match u32::from(c) {
+        0x0E48 => 0x0160,
+        0x0E49 => 0x0161,
+        c @ 0x0E01..=0x0E3A => c - 0x0E01 + 0x00D6,
+        c => c - 0x0E3F + 0x0110,
+    };
+    let glyphs: String = text.chars().map(|c| format!("{:04x}", code(c))).collect();
+    let mut doc = text_page(&format!("BT /F1 12 Tf 72 700 Td <{glyphs}> Tj ET"));
+    let font = legacy_thai_font(&mut doc, "ABCDEF+THSarabunPSK", &legacy_thai_program(), LEGACY_THAI_UNICODE);
+    doc.set(pdfcraft_cos::ObjRef::new(5, 0), Object::Dict(font));
+    let orange = [1.0, 0.5, 0.0];
+    let coloured = text::BlockStyle {
+        ranges: vec![text::RangeStyle {
+            range: 0.."ไม่มี".len(),
+            family: None,
+            resource: None,
+            size: None,
+            color: Some(orange),
+            underline: None,
+            char_spacing: None,
+            scale: None,
+        }],
+        ..Default::default()
+    };
+    text::rewrite_block(&mut doc, 0, 0, Some(text), &coloured).unwrap();
+    let mut doc = reopen(&doc);
+    let face = text::BlockStyle { family: Some((added::Family::Sarabun, true, false)), ..Default::default() };
+    text::rewrite_block(&mut doc, 0, 0, None, &face).unwrap();
+    let doc = reopen(&doc);
+    let lines = text::text_lines(&doc, 0).unwrap();
+    let in_colour = |c: [f64; 3]| lines.iter().filter(|l| l.color == c).map(|l| l.text.as_str()).collect::<String>();
+    assert_eq!((in_colour(orange), in_colour([0.0; 3])), ("ไม่มี".to_owned(), "ริ้วรอย".to_owned()), "{lines:?}");
+    assert!(lines.iter().all(|l| l.bold), "in the face chosen: {lines:?}");
+    assert_eq!(text::text_blocks(&doc, 0).unwrap()[0].rows.len(), 1, "one row still");
+}

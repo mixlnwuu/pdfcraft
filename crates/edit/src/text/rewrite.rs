@@ -285,13 +285,21 @@ fn choose_rewrite_path(
     let source_requires_styled_path =
         has_special_text || registered_face || text.is_some_and(|draft| source_program_completes(doc, fonts, first, draft)) || has_multiple_runs;
     let explicit_styled_text = !style.ranges.is_empty() || style.resource.is_some();
+    // Thai edition: parts in their own colours or sizes keep them when the face changes. The
+    // single-style path draws the whole paragraph in its first part's (a font chosen for a
+    // paragraph with an orange word turned all of it orange). Not an OCR phrase, whose words' sizes
+    // are guesses it is redrawn in one size of (#3313).
+    let parts_keep_their_look = !block.invisible
+        && ((style.color.is_none() && members.iter().any(|line| line.color != first.color))
+            || (style.size.is_none() && members.iter().any(|line| line.size != first.size)));
+    let face_changes = style.family.is_some() || style.bold.is_some();
     Ok(RewriteDispatch {
         upright,
         use_styled_path: upright
             && !hebrew
             && !visual_indic
-            && !thai_fallback
-            && (explicit_styled_text || (source_requires_styled_path && style.family.is_none() && style.bold.is_none())),
+            && ((!thai_fallback && (explicit_styled_text || (source_requires_styled_path && !face_changes)))
+                || (face_changes && parts_keep_their_look)),
     })
 }
 
