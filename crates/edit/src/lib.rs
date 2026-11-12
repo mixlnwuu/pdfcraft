@@ -23,7 +23,6 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 use pdfcraft_cos::{Dict, Document, ObjRef, Object, Stream};
-use pdfcraft_fonts::{helvetica_width, literal, win_ansi};
 
 #[derive(Debug, thiserror::Error, PartialEq)]
 pub enum EditError {
@@ -45,12 +44,17 @@ mod background;
 pub use background::page_background;
 mod shapes;
 pub use shapes::{DrawnShape, reading_shapes};
+mod rules;
+pub use rules::page_rules;
 pub mod objects;
-pub use objects::{EditableObject, MAX_MOVE_OBJECTS, ObjectKind, ObjectTarget, editable_objects, move_objects};
+pub use objects::{
+    CopiedObjects, EditableObject, MAX_MOVE_OBJECTS, ObjectKind, ObjectTarget, copy_objects, editable_objects, move_objects, paste_objects,
+};
 
 mod flatten;
 pub use flatten::{bring_over_comments, comment_to_content, comments_over, flatten, flatten_fill_sign};
 pub mod images;
+mod ungroup;
 pub use images::{ArrangeOrder, ImageChange, PageImage, change_image, page_images, reading_images, rect_to_rect, turn_about_centre, turn_by_degrees};
 pub mod bidi;
 pub mod indic;
@@ -61,9 +65,12 @@ pub use text::{
     BlockKey, BlockStyle, LineEdit, MAX_FORM_DEPTH, MAX_FORM_VISITS, RangeStyle, ReadingBlocks, TextBlock, TextLine, TextSession, block_overlapping,
     clear_block, glyph_text_lines, reading_blocks, reading_blocks_checked, replace_block, replace_line, rewrite_block, text_blocks, text_lines,
 };
+pub mod hairlines;
+mod page_streams;
+pub use hairlines::{Fixed as HairlinesFixed, Hairlines, fix_hairlines};
 pub mod added;
 pub use added::{
-    Added, AddedImage, AddedText, Align, Arrange, Content, Family, MarkerScan, TextDirection, add_content, added_layer, arrange_content,
+    Added, AddedImage, AddedText, Align, Arrange, Content, Family, Ink, MarkerScan, TextDirection, add_content, added_layer, arrange_content,
     arrange_paragraph, delete_content, first_undrawable, fitted_text, hugs_text, isolate_content, list_added, release_content, scan_markers,
     text_is_wrapped, update_content,
 };

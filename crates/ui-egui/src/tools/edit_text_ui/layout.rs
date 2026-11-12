@@ -64,12 +64,12 @@ pub(crate) fn editor_font(ctx: &egui::Context, look: &pdfcraft_engine::AddedText
     if look.family.craft(look.bold, look.italic).is_some() {
         return crate::theme::document_font(ctx, look.family, look.bold, look.italic, size);
     }
-    let family = match (look.family, look.bold) {
-        (pdfcraft_engine::FontFamily::Courier, _) => FontFamily::Monospace,
-        (_, true) => FontFamily::Name("semibold".into()),
-        (_, false) => FontFamily::Proportional,
-    };
-    FontId::new(size, family)
+    // Thai in a standard family is drawn in the document Thai face, on the page as here (Thai
+    // edition): the interface's own Thai face is a loopless one.
+    match look.family {
+        pdfcraft_engine::FontFamily::Courier => FontId::new(size, FontFamily::Monospace),
+        _ => crate::theme::document_standard_font(ctx, look.bold, size),
+    }
 }
 
 pub(super) fn color32(color: [f64; 3]) -> Color32 {
@@ -106,16 +106,33 @@ pub(crate) fn editor_fill(text: Color32) -> Color32 {
 
 /// One TextEdit lays out all source runs; its caret and selection span the whole region.
 pub(crate) fn install_source_fonts(ctx: &egui::Context, doc: &pdfcraft_engine::Document, page: usize) -> BTreeMap<String, String> {
-    let programs = doc.text_editor_fonts(page);
+    // Bundled replacement selectors are menu choices, never source resource names. Installing
+    // an unused choice would make even a standard-font editor wait a frame for its font atlas.
+    let programs: Vec<_> = doc.text_editor_fonts(page).into_iter().filter(|font| !font.choice_only).collect();
     let mut definitions = ctx.fonts(|f| f.definitions().clone());
     // Only the current editor's document fonts live in the atlas. Never accumulate the
     // programs of previously opened files or add them to the interface's default families.
     definitions.font_data.retain(|name, _| !name.starts_with("pdf-source-"));
     definitions.families.retain(|family, _| !matches!(family, FontFamily::Name(name) if name.starts_with("pdf-source-")));
     let mut families = BTreeMap::new();
+    // One atlas font per program (Thai edition): a much edited page has many resources sharing
+    // the one program, each of which would otherwise be loaded again.
+    let mut loaded: std::collections::HashMap<(usize, u64), String> = std::collections::HashMap::new();
     for (index, program) in programs.iter().enumerate() {
-        let name = format!("pdf-source-{index}");
-        definitions.font_data.insert(name.clone(), Arc::new(egui::FontData::from_owned(program.bytes.clone())));
+        let key = {
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            program.bytes.hash(&mut h);
+            (program.bytes.len(), h.finish())
+        };
+        let name = loaded
+            .entry(key)
+            .or_insert_with(|| {
+                let name = format!("pdf-source-{index}");
+                definitions.font_data.insert(name.clone(), Arc::new(egui::FontData::from_owned(program.bytes.clone())));
+                name
+            })
+            .clone();
         families.insert(program.resource.clone(), name);
     }
     for program in &programs {
@@ -135,6 +152,8 @@ pub(crate) fn install_source_fonts(ctx: &egui::Context, doc: &pdfcraft_engine::D
         if let Some(fallback) = definitions.families.get(&FontFamily::Proportional) {
             stack.extend(fallback.iter().cloned());
         }
+        let mut seen = std::collections::HashSet::new();
+        stack.retain(|n| seen.insert(n.clone()));
         definitions.families.insert(FontFamily::Name(name.clone().into()), stack);
     }
     if !families.is_empty() {
@@ -188,21 +207,30 @@ pub(super) fn preview_parts(
     out
 }
 
-/// Thai edition: the parts of paragraph `block` (its lines `lines`) by colour and size, as
-/// characters of its text, for a paste to keep; empty when it has one colour and one size.
+/// Thai edition: the parts of paragraph `block` (its lines `lines`) by colour, size, weight,
+/// slant and underline, as characters of its text, for a paste or the format painter to keep;
+/// empty when all of it looks alike.
 pub(crate) fn paragraph_runs(block: &pdfcraft_engine::TextBlock, lines: &[pdfcraft_engine::TextLine]) -> Vec<pdfcraft_engine::TextRun> {
     let text = &block.editor_text;
     let chars = |at: usize| text.get(..at).map_or(0, |s| s.chars().count());
     let mut runs: Vec<pdfcraft_engine::TextRun> = Vec::new();
     for (range, index) in block.edited_spans(text) {
         let Some(line) = lines.get(index) else { continue };
-        let span = chars(range.start)..chars(range.end);
+        let underline = block.underlined && (block.underlined_parts.is_empty() || block.underlined_parts.iter().any(|p| p.contains(&range.start)));
+        let run = pdfcraft_engine::TextRun {
+            chars: chars(range.start)..chars(range.end),
+            color: line.color,
+            size: line.size,
+            bold: line.bold,
+            italic: line.italic,
+            underline,
+        };
         match runs.last_mut() {
-            Some(last) if last.color == line.color && last.size == line.size && last.chars.end == span.start => last.chars.end = span.end,
-            _ => runs.push(pdfcraft_engine::TextRun { chars: span, color: line.color, size: line.size }),
+            Some(last) if last.same_look(&run) && last.chars.end == run.chars.start => last.chars.end = run.chars.end,
+            _ => runs.push(run),
         }
     }
-    let uniform = runs.windows(2).all(|w| w[0].color == w[1].color && w[0].size == w[1].size);
+    let uniform = runs.windows(2).all(|w| w[0].same_look(&w[1]));
     if uniform { Vec::new() } else { runs }
 }
 
@@ -246,11 +274,31 @@ pub(super) fn editor_job(ui: &egui::Ui, ed: &LineEditor, text: &str, scale: f32,
         // A preview over a selected part shows on that part only, as the change will (Thai edition):
         // each run is cut where the selection starts and ends.
         let previewed = previewed_part(ui.ctx(), ed, text);
-        for (range, index, inside) in preview_parts(block.edited_spans(text), previewed.as_ref()) {
+        // The underline as the page draws it, part by part (Thai edition), and as previewed on
+        // the selected part (or all of it).
+        let previewed_underline = crate::content_ui::previewed_look(ui.ctx()).and_then(|p| p.underline);
+        let unchanged = text == ed.original;
+        let on_page = |range: &std::ops::Range<usize>| {
+            if unchanged { super::underlined_at(block, text, range) } else { ed.extras.underline }
+        };
+        let cuts: Vec<usize> = if unchanged { block.underlined_parts.iter().flat_map(|p| [p.start, p.end]).collect() } else { Vec::new() };
+        let pieces = preview_parts(block.edited_spans(text), previewed.as_ref()).into_iter().flat_map(|(range, index, inside)| {
+            let mut bounds = vec![range.start];
+            bounds.extend(cuts.iter().copied().filter(|c| *c > range.start && *c < range.end && text.is_char_boundary(*c)));
+            bounds.push(range.end);
+            bounds.sort_unstable();
+            bounds.dedup();
+            bounds.windows(2).map(|w| (w[0]..w[1], index, inside)).collect::<Vec<_>>()
+        });
+        // An OCR phrase is set in one size, as the engine redraws it: each word's own is a guess
+        // from its box. Its words still keep their widths.
+        let phrase = block.phrase_size();
+        for (range, index, inside) in pieces {
             let Some(line) = lines.get(index) else { continue };
             let ed_look = if inside { &ed_look } else { &ed.look };
-            let mut look = source_look(&line.base_font, line.size, line.color, line.bold, line.italic);
-            look.size = line.size;
+            let base = phrase.unwrap_or(line.size);
+            let mut look = source_look(&line.base_font, base, line.color, line.bold, line.italic);
+            look.size = base;
             if ed_look.family != ed.look0.family || ed.family_chosen {
                 look.family = ed_look.family;
             }
@@ -275,11 +323,11 @@ pub(super) fn editor_job(ui: &egui::Ui, ed: &LineEditor, text: &str, scale: f32,
                 font.family = FontFamily::Name(name.clone().into());
             }
             let native_width = ui.fonts_mut(|f| f.layout_no_wrap(line.text.clone(), font.clone(), Color32::BLACK).size().x);
-            let target_width = ((line.rect[2] - line.rect[0]) * look.size / line.size.max(0.01)) as f32 * scale;
+            let target_width = ((line.rect[2] - line.rect[0]) * look.size / base.max(0.01)) as f32 * scale;
             let spacing = if original_face { (target_width - native_width) / line.text.chars().count().saturating_sub(1).max(1) as f32 } else { 0.0 };
             let size = font.size;
             job.append(
-                text.get(range).unwrap_or_default(),
+                text.get(range.clone()).unwrap_or_default(),
                 0.0,
                 egui::TextFormat {
                     font_id: font,
@@ -287,7 +335,14 @@ pub(super) fn editor_job(ui: &egui::Ui, ed: &LineEditor, text: &str, scale: f32,
                     color: color32(look.color),
                     italics: look.italic && !embedded && !own_face,
                     // A previewed underline shows under the selected part only, as it will be drawn.
-                    underline: underline_stroke(if inside { underline } else { ed.extras.underline }, size, color32(look.color)),
+                    underline: underline_stroke(
+                        match previewed_underline {
+                            Some(previewed) if inside => previewed,
+                            _ => on_page(&range),
+                        },
+                        size,
+                        color32(look.color),
+                    ),
                     ..Default::default()
                 },
             );
@@ -351,8 +406,6 @@ pub(super) fn editor_galley(ui: &egui::Ui, ed: &LineEditor, text: &str, scale: f
         sources.windows(2).map(|r| (r[0].0 - r[1].0).abs()).rfind(|v| *v > 0.0).unwrap_or(fallback)
     };
     let g = Arc::make_mut(&mut galley);
-    let mut bounds = Rect::NOTHING;
-    let mut meshes = Rect::NOTHING;
     // Which line of the text (between `\n`s) each row is on: rows aligned on their own go where
     // the rewrite will put them, in the paragraph's width.
     let mut line = 0usize;
@@ -394,6 +447,14 @@ pub(super) fn editor_galley(ui: &egui::Ui, ed: &LineEditor, text: &str, scale: f
             }
         }
         row.size.y = (ascent + descent).max(1.0);
+    }
+    if text == ed.original && ed.look == ed.look0 && ed.extras == ed.extras0 && block.rotation.abs() < 0.5 {
+        place_on_source_words(g, block, lines, text, scale);
+    }
+    let mut bounds = Rect::NOTHING;
+    let mut meshes = Rect::NOTHING;
+    for placed in &mut g.rows {
+        let row = Arc::make_mut(&mut placed.row);
         row.visuals.mesh_bounds = row.visuals.mesh.vertices.iter().fold(Rect::NOTHING, |r, v| r.union(Rect::from_min_max(v.pos, v.pos)));
         bounds = bounds.union(Rect::from_min_size(placed.pos, row.size));
         meshes = meshes.union(row.visuals.mesh_bounds.translate(placed.pos.to_vec2()));
@@ -401,6 +462,128 @@ pub(super) fn editor_galley(ui: &egui::Ui, ed: &LineEditor, text: &str, scale: f
     g.rect = Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(bounds.right().max(0.0), bounds.bottom().max(0.0)));
     g.mesh_bounds = meshes;
     galley
+}
+
+/// While a paragraph is unchanged the page shows its own text, and the editor's galley is drawn
+/// unseen: it only places the caret and the selection. Put each source word's glyphs across that
+/// word's box on the page, so a click or a drag lands on the word under the pointer. The editor's
+/// face is often a stand-in whose advances differ from the PDF's (a font program it can't load, or
+/// an OCR layer whose every word has its own size), and stretching each run to its width still let
+/// every word boundary drift, so a drag over one word selected another two words along.
+///
+/// A word takes its `ink` box when the run's words and boxes pair up, else the run's box spans all
+/// its words. Within a word the stand-in's proportions are kept; spaces fill the gaps between
+/// words. A row with a character this can't place, or with boxes out of reading order, is left as
+/// laid out.
+fn place_on_source_words(g: &mut egui::Galley, block: &pdfcraft_engine::TextBlock, lines: &[pdfcraft_engine::TextLine], text: &str, scale: f32) {
+    let starts: Vec<usize> = text.char_indices().map(|(at, _)| at).collect();
+    let chars: Vec<char> = text.chars().collect();
+    let x = |user: f64| ((user - block.rect[0]) * f64::from(scale)) as f32;
+    // Each character's glyph advance, in the galley's character order (a newline has no glyph).
+    let mut advance = vec![0.0f32; chars.len()];
+    let mut at = 0usize;
+    for placed in &g.rows {
+        for (glyph, slot) in placed.row.glyphs.iter().zip(advance.iter_mut().skip(at)) {
+            *slot = glyph.advance_width.max(0.0);
+        }
+        at = at.saturating_add(placed.row.glyphs.len()).saturating_add(usize::from(placed.ends_with_newline));
+    }
+    if at != chars.len() {
+        return;
+    }
+    // Where each character goes: its left edge and width, in galley coordinates.
+    let mut target: Vec<Option<(f32, f32)>> = vec![None; chars.len()];
+    let place = |range: std::ops::Range<usize>, left: f32, right: f32, target: &mut [Option<(f32, f32)>]| {
+        let natural: f32 = advance.get(range.clone()).map_or(0.0, |a| a.iter().sum());
+        let count = range.len().max(1) as f32;
+        let mut pos = left;
+        for i in range {
+            let share = if natural > 0.0 { advance.get(i).copied().unwrap_or(0.0) / natural } else { 1.0 / count };
+            let width = ((right - left) * share).max(0.0);
+            if let Some(slot) = target.get_mut(i) {
+                *slot = Some((pos, width));
+            }
+            pos += width;
+        }
+    };
+    for (range, index) in &block.spans {
+        let Some(line) = lines.get(*index) else { continue };
+        let (first, end) = (starts.partition_point(|b| *b < range.start), starts.partition_point(|b| *b < range.end));
+        let mut words = Vec::new();
+        let mut i = first;
+        while i < end {
+            if chars.get(i).is_some_and(|c| c.is_whitespace()) {
+                i += 1;
+                continue;
+            }
+            let from = i;
+            while i < end && chars.get(i).is_some_and(|c| !c.is_whitespace()) {
+                i += 1;
+            }
+            words.push(from..i);
+        }
+        let (Some(head), Some(tail)) = (words.first().cloned(), words.last().cloned()) else { continue };
+        if line.ink.len() == words.len() {
+            for (word, ink) in words.iter().zip(&line.ink) {
+                place(word.clone(), x(ink[0]), x(ink[2]), &mut target);
+            }
+        } else {
+            place(head.start..tail.end, x(line.rect[0]), x(line.rect[2]), &mut target);
+        }
+    }
+    let mut first = 0usize;
+    for placed in &mut g.rows {
+        let row = Arc::make_mut(&mut placed.row);
+        let range = first..first.saturating_add(row.glyphs.len());
+        first = range.end.saturating_add(usize::from(placed.ends_with_newline));
+        let Some(mut spots) = target.get(range.clone()).map(<[_]>::to_vec) else { continue };
+        let row_chars = chars.get(range).unwrap_or_default();
+        // Spaces between two placed characters share the gap between them; at the row's ends
+        // they sit against the nearest placed character.
+        let mut i = 0;
+        while i < spots.len() {
+            if spots.get(i).is_some_and(Option::is_some) {
+                i += 1;
+                continue;
+            }
+            let from = i;
+            while i < spots.len() && spots.get(i).is_some_and(Option::is_none) {
+                i += 1;
+            }
+            if row_chars.get(from..i).is_none_or(|c| !c.iter().all(|c| c.is_whitespace())) {
+                break;
+            }
+            let left = from.checked_sub(1).and_then(|p| spots.get(p).copied().flatten()).map(|(at, w)| at + w);
+            let right = spots.get(i).copied().flatten().map(|(at, _)| at);
+            let (left, right) = match (left, right) {
+                (Some(l), Some(r)) => (l, r.max(l)),
+                (Some(l), None) => (l, l),
+                (None, Some(r)) => (r, r),
+                (None, None) => break,
+            };
+            let width = (right - left) / (i - from) as f32;
+            for (k, spot) in spots.iter_mut().enumerate().take(i).skip(from) {
+                *spot = Some((left + width * (k - from) as f32, width));
+            }
+        }
+        let placed_all: Option<Vec<(f32, f32)>> = spots.into_iter().collect();
+        let Some(spots) = placed_all else { continue };
+        if spots.iter().any(|(at, w)| !at.is_finite() || !w.is_finite()) || spots.windows(2).any(|p| p[1].0 + 0.01 < p[0].0) {
+            continue;
+        }
+        for (glyph, (at, width)) in row.glyphs.iter_mut().zip(spots) {
+            let new_x = at - placed.pos.x;
+            let dx = new_x - glyph.pos.x;
+            glyph.pos.x = new_x;
+            glyph.advance_width = width;
+            if !glyph.uv_rect.is_nothing() {
+                for vertex in row.visuals.mesh.vertices.iter_mut().skip(glyph.first_vertex as usize).take(4) {
+                    vertex.pos.x += dx;
+                }
+            }
+        }
+        row.size.x = row.glyphs.iter().map(|g| g.pos.x + g.advance_width).fold(row.size.x.min(0.0), f32::max);
+    }
 }
 
 /// Caret colour that stays visible on a field filled with `fill`: black on light fills, white on dark ones.

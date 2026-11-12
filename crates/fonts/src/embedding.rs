@@ -22,6 +22,24 @@ pub fn matching_faces(name: &str) -> Vec<&'static crate::CraftFont> {
     crate::CRAFT_FONTS.iter().filter(|f| face_key(f.family) == key || face_key(&f.name()) == key).collect()
 }
 
+/// [`matching_faces`], the face of the asked weight and slant first (Thai edition): a family's
+/// faces come Bold first, and text the source's subset can't draw was written again in bold.
+pub fn matching_faces_styled(name: &str, bold: bool, italic: bool) -> Vec<&'static crate::CraftFont> {
+    let mut faces = matching_faces(name);
+    faces.sort_by_key(|f| {
+        let style = f.style.to_ascii_lowercase();
+        let (b, i) = (style.contains("bold"), style.contains("italic") || style.contains("oblique"));
+        u8::from(b != bold) * 2 + u8::from(i != italic)
+    });
+    faces
+}
+
+/// Whether a font program is bold and italic, by its own weight and slant (Thai edition).
+pub fn program_style(bytes: &[u8]) -> Option<(bool, bool)> {
+    let a = FontRef::new(bytes).ok()?.attributes();
+    Some((a.weight.value() >= 600.0, a.style != skrifa::attribute::Style::Normal))
+}
+
 /// Whether a complete font program can show every non-newline character.
 pub fn covers(bytes: &[u8], text: &str) -> bool {
     FontRef::new(bytes).is_ok_and(|f| text.chars().all(|c| matches!(c, '\n' | '\r') || f.charmap().map(c).is_some_and(|g| g.to_u32() != 0)))
@@ -84,6 +102,49 @@ pub fn validate_document_input(bytes: &[u8]) -> Result<(), String> {
         return Err("select an openly licensed font whose name table declares its licence (OFL, Apache, Ubuntu, Bitstream Vera or MIT)".into());
     }
     Ok(())
+}
+
+/// Thai edition: face `index` of a font file as a standalone font, for embedding: a collection
+/// (`ttcf`, as Windows ships Angsana New) can't be embedded whole, so its face's tables are copied
+/// into a font file of their own. A standalone font (index 0) comes back as it is. `None` when the
+/// file is not a font or the face is not in it.
+pub fn standalone_face(bytes: &[u8], index: u32) -> Option<Vec<u8>> {
+    let be16 = |at: usize| bytes.get(at..at.checked_add(2)?).map(|b| u16::from_be_bytes([b[0], b[1]]));
+    let be32 = |at: usize| bytes.get(at..at.checked_add(4)?).map(|b| u32::from_be_bytes([b[0], b[1], b[2], b[3]]));
+    if bytes.get(..4) != Some(b"ttcf") {
+        return (index == 0 && bytes.len() >= 12).then(|| bytes.to_vec());
+    }
+    let count = be32(8)?;
+    if index >= count {
+        return None;
+    }
+    let face = usize::try_from(be32(12usize.checked_add(usize::try_from(index).ok()?.checked_mul(4)?)?)?).ok()?;
+    let tables = usize::from(be16(face.checked_add(4)?)?);
+    // Every table's record (tag, checksum, offset, length) and data, as the face lists them.
+    let mut records = Vec::with_capacity(tables);
+    for k in 0..tables {
+        let at = face.checked_add(12)?.checked_add(k.checked_mul(16)?)?;
+        let record = bytes.get(at..at.checked_add(16)?)?;
+        let offset = usize::try_from(be32(at.checked_add(8)?)?).ok()?;
+        let length = usize::try_from(be32(at.checked_add(12)?)?).ok()?;
+        records.push((record.get(..8)?, bytes.get(offset..offset.checked_add(length)?)?));
+    }
+    let header = 12usize.checked_add(tables.checked_mul(16)?)?;
+    let mut out = Vec::with_capacity(header.saturating_add(records.iter().map(|(_, d)| d.len().saturating_add(3)).sum::<usize>()));
+    out.extend_from_slice(bytes.get(face..face.checked_add(12)?)?);
+    let mut offset = header;
+    for (record, data) in &records {
+        out.extend_from_slice(record);
+        out.extend_from_slice(&u32::try_from(offset).ok()?.to_be_bytes());
+        out.extend_from_slice(&u32::try_from(data.len()).ok()?.to_be_bytes());
+        // Each table starts on a four-byte boundary.
+        offset = offset.checked_add(data.len().checked_add(3)? & !3)?;
+    }
+    for (_, data) in records {
+        out.extend_from_slice(data);
+        out.resize(out.len().checked_add(3)? & !3, 0);
+    }
+    Some(out)
 }
 
 /// Validate before allocating any PDF objects, so an invalid font cannot partly mutate a doc.
@@ -199,7 +260,12 @@ pub fn embed_mapping(
     descriptor.set(b"Type".to_vec(), Object::name("FontDescriptor"));
     descriptor.set(b"FontName".to_vec(), Object::name(&name));
     descriptor.set(b"FontFamily".to_vec(), Object::String(PdfString::literal(family.as_bytes().to_vec())));
-    descriptor.set(b"Flags".to_vec(), Object::Int(4));
+    // The face's own weight and slant (Thai edition): a family's bold or italic face embedded
+    // under the family's name still reads as bold or italic, so Edit text shows it so.
+    let attributes = font.attributes();
+    let italic = attributes.style != skrifa::attribute::Style::Normal;
+    descriptor.set(b"Flags".to_vec(), Object::Int(if italic { 4 | 64 } else { 4 }));
+    descriptor.set(b"FontWeight".to_vec(), Object::Int(attributes.weight.value().round().clamp(100.0, 900.0) as i64));
     descriptor.set(b"ItalicAngle".to_vec(), Object::Real(f64::from(m.italic_angle)));
     descriptor.set(b"Ascent".to_vec(), Object::Real(f64::from(m.ascent) * scale));
     descriptor.set(b"Descent".to_vec(), Object::Real(f64::from(m.descent) * scale));
@@ -359,6 +425,39 @@ mod tests {
     use super::*;
     use crate::pdf::Metrics;
 
+    /// Thai edition: a face of a font collection comes out as a standalone font that embeds
+    /// (Windows ships Angsana New in one); a standalone font comes back as it is, and a face the
+    /// file doesn't have, or bytes that are no font, give nothing.
+    #[test]
+    fn a_face_of_a_collection_is_taken_out_as_a_font_of_its_own() {
+        let inter = crate::script::INTER_REGULAR;
+        assert_eq!(standalone_face(inter, 0).as_deref(), Some(inter));
+        assert!(standalone_face(inter, 1).is_none());
+        // A collection of the same face twice, its tables shared as a collection's often are.
+        let tables = usize::from(u16::from_be_bytes([inter[4], inter[5]]));
+        let shift = u32::try_from(12 + 8).unwrap();
+        let mut ttc = b"ttcf".to_vec();
+        ttc.extend_from_slice(&[0, 1, 0, 0, 0, 0, 0, 2]);
+        ttc.extend_from_slice(&shift.to_be_bytes());
+        ttc.extend_from_slice(&shift.to_be_bytes());
+        let mut face = inter.to_vec();
+        for k in 0..tables {
+            let at = 12 + k * 16 + 8;
+            let offset = u32::from_be_bytes(face[at..at + 4].try_into().unwrap()) + shift;
+            face[at..at + 4].copy_from_slice(&offset.to_be_bytes());
+        }
+        ttc.extend_from_slice(&face);
+        assert!(validate(&ttc).is_err(), "a collection doesn't embed whole");
+        for index in [0, 1] {
+            let alone = standalone_face(&ttc, index).expect("the face");
+            validate(&alone).expect("a standalone font that embeds");
+            assert!(covers(&alone, "Hello"));
+        }
+        assert!(standalone_face(&ttc, 2).is_none());
+        assert!(standalone_face(b"not a font", 0).is_none());
+        assert!(standalone_face(b"ttcf\0\x01\0\0\0\0\0\x05", 0).is_none(), "a truncated collection");
+    }
+
     /// Thai edition: a face with no Thai, or with real Thai outlines, draws its Thai; bytes that
     /// are no font don't.
     #[test]
@@ -514,5 +613,19 @@ mod tests {
         let programs = doc.scan_objects().filter(|(_, o)| matches!(o.as_ref(), Object::Stream(s) if s.dict.get(b"PCFullFont").is_some())).count();
         assert_eq!(programs, 1, "one program for both pages");
         assert!(doc.scan_objects().count() > objects, "the second page gets its own resource");
+    }
+}
+
+#[cfg(test)]
+mod styled_faces_tests {
+    /// Thai edition: the regular face of a family comes first for regular text, the bold one for
+    /// bold text.
+    #[test]
+    fn the_face_of_the_asked_style_comes_first() {
+        let regular = super::matching_faces_styled("THSarabunPSK", false, false);
+        let Some(first) = regular.first() else { return }; // built without craft-fonts
+        assert_eq!(first.style, "Regular", "{:?}", regular.iter().map(|f| f.style).collect::<Vec<_>>());
+        let bold = super::matching_faces_styled("BCDHEE+THSarabunPSK", true, false);
+        assert_eq!(bold.first().map(|f| f.style), Some("Bold"));
     }
 }

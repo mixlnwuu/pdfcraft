@@ -111,6 +111,8 @@ pub enum Dialog {
     Split,
     /// Pages ▸ Number pages… (page labels).
     NumberPages,
+    /// Print production ▸ Fix hairlines.
+    FixHairlines,
     /// Organize pages ▸ Page properties (the tab order of the selected pages).
     PageProps,
     /// Protect Using Password.
@@ -282,27 +284,6 @@ pub struct PageImageClip {
     pub object: Option<pdfcraft_cos::ObjRef>,
     pub rect: [f64; 4],
     /// How many times it was pasted: each paste on its own page lands a step further down and right.
-    pub pastes: u32,
-}
-
-/// One of several things copied together (Thai edition): a text box (an added one, or a paragraph
-/// of the page as a box in its look; display space), an added picture, or a picture of the page.
-#[derive(Clone, Debug, PartialEq)]
-pub enum MultiItem {
-    Text(pdfcraft_engine::AddedText),
-    Added { index: usize, content: pdfcraft_engine::AddedContent },
-    PageImage { index: usize, rect: [f64; 4] },
-}
-
-/// Several objects selected together in Edit text & images and copied with ⌘C (Thai edition):
-/// where they were, what each is with its user-space box (to select the pasted ones), and the text
-/// put on the system clipboard for them, by which ⌘V knows the clipboard still holds them.
-#[derive(Clone, Debug, PartialEq)]
-pub struct MultiClip {
-    pub doc: pdfcraft_engine::DocId,
-    pub page: usize,
-    pub items: Vec<(MultiItem, pdfcraft_engine::EditableObject)>,
-    pub marker: String,
     pub pastes: u32,
 }
 

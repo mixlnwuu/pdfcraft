@@ -3,9 +3,9 @@
 use std::sync::Arc;
 
 use crate::{
-    AddedContent, AddedText, Arrange, Background, BorderShape, BoxSpec, EditError, FieldProps, FieldValue, FillMark, HeaderFooter, Hidden, ImageEdit,
-    InitialView, Label, LineEnding, LinkAction, LinkStyle, MarkFile, MarkKind, Markup, NewAnnotation, NewField, NoteIcon, ObjectTarget, PageBox,
-    Protection, ReviewState, Rgb, Shape, Standard, Style, TabOrder, TextFont, TransitionSpec, Watermark, a11y, copy_image, decode_data_file,
+    AddedContent, AddedText, Arrange, Background, BorderShape, BoxSpec, EditError, FieldProps, FieldValue, FillMark, Hairlines, HeaderFooter, Hidden,
+    ImageEdit, InitialView, Label, LineEnding, LinkAction, LinkStyle, MarkFile, MarkKind, Markup, NewAnnotation, NewField, NoteIcon, ObjectTarget,
+    PageBox, Protection, ReviewState, Rgb, Shape, Standard, Style, TabOrder, TextFont, TransitionSpec, Watermark, a11y, copy_image, decode_data_file,
     embed_image, field_table, fit_picture, image_content_type, is_xfa_data_file, js, mark_source, measure, model_poster, open_source, strip_xfa,
     unrestricted, xfa, xfa_after_data_change,
 };
@@ -14,16 +14,32 @@ mod labels;
 mod run;
 
 pub use labels::{BATCH_LABELS, EDIT_LABELS};
+pub use run::editor_range;
 pub(crate) use run::{EditCtx, check_permission, run_edit};
 
 /// Edits that can be applied to a document. Page indices are 0-based.
 /// Thai edition: a part of a paragraph (characters `chars`, counted in its text) and its colour
-/// (RGB 0–1) and size (points), for [`Edit::AddStyledText`].
-#[derive(Clone, Debug, PartialEq)]
+/// (RGB 0–1), size (points), weight, slant and underline, for [`Edit::AddStyledText`] and the
+/// format painter.
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct TextRun {
     pub chars: std::ops::Range<usize>,
     pub color: [f64; 3],
     pub size: f64,
+    pub bold: bool,
+    pub italic: bool,
+    pub underline: bool,
+}
+
+impl TextRun {
+    /// Whether two runs look alike.
+    pub fn same_look(&self, other: &TextRun) -> bool {
+        self.color == other.color
+            && self.size == other.size
+            && self.bold == other.bold
+            && self.italic == other.italic
+            && self.underline == other.underline
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -364,6 +380,12 @@ pub enum Edit {
     },
     /// Document Properties ▸ Initial View (and the language and binding).
     SetInitialView(Box<InitialView>),
+    /// Print production ▸ Fix hairlines: strokes narrower than `settings.narrower_than` points on
+    /// the page (after every transformation; zero-width lines always) get `settings.width`.
+    FixHairlines {
+        pages: Vec<usize>,
+        settings: Hairlines,
+    },
     /// Edit ▸ Attach a file: a document-level attachment (`/Names /EmbeddedFiles`) under
     /// `name`, made unique; `mime` is the embedded file's `/Subtype` when known.
     AddAttachment {
@@ -404,6 +426,11 @@ pub enum Edit {
     },
     /// Tags panel ▸ Mark as artifact: retire a leaf tag and mark its content as an artifact.
     MarkTagArtifact {
+        object: pdfcraft_cos::ObjRef,
+    },
+    /// A layout table as plain blocks: the table, its row groups and rows become Div tags and its
+    /// cells P tags (Div when they hold tags), without their Table attributes.
+    LayoutTableToBlocks {
         object: pdfcraft_cos::ObjRef,
     },
     /// Document JavaScripts: add, replace (`script`) or remove (`None`) the document-level
@@ -475,6 +502,12 @@ pub enum Edit {
         objects: Vec<ObjectTarget>,
         offset: [f64; 2],
     },
+    /// Delete mixed existing and added objects together (references from one inventory of
+    /// `page`), as one step: what Delete and Cut do to objects selected together.
+    DeleteObjects {
+        page: usize,
+        objects: Vec<ObjectTarget>,
+    },
     /// Edit text in a paragraph box: replace paragraph `block` (from `Document::text_blocks`),
     /// rewrapped to the box's width.
     EditTextBlock {
@@ -483,6 +516,10 @@ pub enum Edit {
         text: String,
         /// Formatting changes (font, size, colour, alignment); default keeps the paragraph's.
         style: pdfcraft_edit::BlockStyle,
+    },
+    /// Expose supported grouped source text on one page for direct editing.
+    PrepareText {
+        page: usize,
     },
     /// An explicit open-licensed full font program, completing subsets or selected by a user.
     RegisterTextFont {
@@ -538,7 +575,8 @@ pub enum Edit {
     },
     /// Thai edition: Comment ▸ Cover box. A picture (`bytes`, one pixel in the box's colour)
     /// stretched over `rect` (display space) and sent to the back in the same step: behind the
-    /// page's text, but never under a picture covering the page (the paper of a scan).
+    /// page's text, but never under a picture covering the page (the paper of a scan). Recognised
+    /// text it covers, invisible over the scan, is drawn visibly in the same step.
     AddCover {
         page: usize,
         rect: [f64; 4],
@@ -551,6 +589,15 @@ pub enum Edit {
         page: usize,
         text: AddedText,
         runs: Vec<TextRun>,
+    },
+    /// Thai edition: Format text on a selected part of an added text box: `text` added, made text
+    /// of the page, and `part` (its `range` in characters of `text.text`) given its own font,
+    /// bold, italic, size, colour or underline, as one step. An added box has one look, so a part
+    /// with its own takes the page's text.
+    AddTextPart {
+        page: usize,
+        text: AddedText,
+        part: crate::RangeStyle,
     },
     /// Thai edition: added text box `index` of `page` becomes text of the page, drawn as it is, so
     /// Edit text can style a part of it.
@@ -655,6 +702,13 @@ pub enum Edit {
         page: usize,
         content: AddedContent,
         file: Option<(String, Arc<Vec<u8>>)>,
+    },
+    /// Edit ▸ Paste of objects copied together in Edit a PDF ([`Document::copy_objects`](crate::Document::copy_objects)), in this
+    /// document or another: drawn on top of `page` as they were, moved by `offset` (user space).
+    PasteObjects {
+        page: usize,
+        clip: Arc<crate::ObjectClip>,
+        offset: [f64; 2],
     },
     /// Apply redaction marks (all, or those on `pages`): remove what they cover for good.
     ApplyRedactions {

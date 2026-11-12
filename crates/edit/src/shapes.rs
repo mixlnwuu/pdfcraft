@@ -6,7 +6,7 @@
 //! shadings, patterns, curves and clipping are left out. A rule is a straight stroke along x or
 //! y, or a filled rectangle thin enough to be one (a producer's way of drawing a table border).
 
-use pdfcraft_content::{Matrix, Op, Pieces};
+use pdfcraft_content::{Matrix, Op};
 use pdfcraft_cos::Document;
 
 use crate::{EditError, Rgb};
@@ -58,7 +58,7 @@ pub fn reading_shapes(doc: &Document, page: usize) -> Result<Vec<DrawnShape>, Ed
     let pages = pdfcraft_model::pages(doc);
     let p = pages.get(page).ok_or(EditError::NoSuchPage(page))?;
     let streams = crate::text::content_streams(doc, &p.dict)?;
-    let pieces = Pieces::join(&streams.iter().map(|(_, d)| d.as_slice()).collect::<Vec<_>>());
+    let pieces = crate::text::joined(&streams);
     Ok(shapes(&pieces.parse().ops))
 }
 

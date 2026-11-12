@@ -444,11 +444,36 @@ fn font_definitions_for_platform(prefer_hans: bool, platform: FontPolicyPlatform
         let mut stack = fallback.clone();
         stack.insert(1.min(stack.len()), name);
         fonts.families.insert(FontFamily::Name(DOCUMENT_STANDARD.into()), stack);
+        // Bold standard text (Thai edition): the interface's semibold Latin, and the document
+        // Thai face's bold for its Thai, as the page draws it.
+        let bold_thai = document_family_name(pdfcraft_engine::FontFamily::Sarabun, true, false);
+        if fonts.font_data.contains_key(&bold_thai) {
+            let mut stack = vec!["Inter-SemiBold".to_owned()];
+            stack.push(bold_thai);
+            stack.extend(fallback.iter().cloned());
+            fonts.families.insert(FontFamily::Name(DOCUMENT_STANDARD_BOLD.into()), stack);
+        }
     }
     fonts
 }
 
 const DOCUMENT_STANDARD: &str = "doc-standard";
+const DOCUMENT_STANDARD_BOLD: &str = "doc-standard-bold";
+
+/// Thai edition: the editor's font for text in a standard family (Helvetica, Times): the
+/// interface's Latin with the document Thai face for its Thai, as the page draws it, bold or
+/// not; the interface's own when there is no document Thai face.
+pub fn document_standard_font(ctx: &egui::Context, bold: bool, size: f32) -> FontId {
+    let name = if bold { DOCUMENT_STANDARD_BOLD } else { DOCUMENT_STANDARD };
+    let key = FontFamily::Name(name.into());
+    if ctx.fonts(|f| f.definitions().families.contains_key(&key)) {
+        FontId::new(size, key)
+    } else if bold {
+        semibold(size)
+    } else {
+        regular(size)
+    }
+}
 
 fn document_family_name(family: pdfcraft_engine::FontFamily, bold: bool, italic: bool) -> String {
     format!("doc-{}", family.base_font(bold, italic))

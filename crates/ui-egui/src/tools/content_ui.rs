@@ -12,7 +12,7 @@ use pdfcraft_render::DocInfo;
 
 use crate::canvas::{DocView, PageToolContext, PageXform};
 use crate::page_cursor::Layer;
-use crate::page_router::{Hit, Owner};
+use crate::page_router::{Hit, Owner, PagePress};
 use crate::theme::Tokens;
 use crate::widgets;
 
@@ -119,6 +119,10 @@ pub struct ContentView {
     /// page's menu is to open here, with its items (Split into lines, Arrange).
     pub menu_at: Option<Pos2>,
     grab: Option<(usize, Grab, Pos2)>,
+    /// Where the press nobody holds began, on which page: Add text's click starts its new box there.
+    pressed_at: Option<(usize, Pos2)>,
+    /// A button is down on the pages this frame (for [`keys`], which runs after them).
+    held: bool,
     undrawable: UndrawableMemo,
     layout: Option<(AddedText, f32, f64, [f64; 4])>,
 }
@@ -127,6 +131,12 @@ impl ContentView {
     /// Forget an in-progress pointer grab for content editing.
     pub(crate) fn cancel_pointer_gesture(&mut self) {
         self.grab = None;
+        self.pressed_at = None;
+    }
+
+    /// An added item is being moved or resized on `page`.
+    pub(crate) fn moving_on(&self, page: usize) -> bool {
+        self.grab.is_some_and(|(p, ..)| p == page)
     }
 
     pub(crate) fn finish_draft(&mut self, added: &[Added], info: &DocInfo) -> Option<Edit> {
@@ -764,17 +774,35 @@ pub(crate) fn hit(xf: &PageXform, info: &DocInfo, page: usize, added: &[Added], 
     Some(Hit::new(Owner::Added { index: *index, corner: None }, Layer::Placed, egui::CursorIcon::Move))
 }
 
-/// Pointer input on one page in Edit mode (`adding_text` with the Text tool). `true` when it
-/// used the input.
-pub(crate) fn page_input(
-    cx: PageToolContext<'_>,
-    added: &[Added],
-    adding_text: bool,
-    edit_on_click: bool,
-    style: &AddedText,
-    view: &mut DocView,
-) -> bool {
+/// What added content is told on one page.
+#[derive(Clone, Copy)]
+pub(crate) struct ContentCx<'a> {
+    pub added: &'a [Added],
+    /// What the press the pages hold is to this page. With the Edit panel open, a press on added
+    /// text is its own with the tools that pick it up ([`hit`]).
+    pub press: PagePress,
+    /// Edit text's input is open: no dialog, palette, other window or other tab has it.
+    pub gate: bool,
+    /// The tool picks added content up (Select, Add text, Edit text): a drag moves it or resizes it.
+    pub picks_up: bool,
+    /// The Add text tool: a click nobody holds starts a new box where it was pressed.
+    pub adding_text: bool,
+    /// A click on added text opens it for typing (Add text, Edit text); otherwise a double-click does.
+    pub edit_on_click: bool,
+    /// The style of new text.
+    pub style: &'a AddedText,
+}
+
+/// Pointer input on one page in Edit mode, on the presses that are added content's ([`hit`]) and,
+/// with Add text, the clicks nobody holds. `true` when it used the input.
+pub(crate) fn page_input(cx: PageToolContext<'_>, ccx: ContentCx<'_>, view: &mut DocView) -> bool {
     let PageToolContext { ui, resp, xf, ptr, page, info, .. } = cx;
+    let ContentCx { added, press, gate, picks_up, adding_text, edit_on_click, style } = ccx;
+    view.content.held = ptr.any_down;
+    if !gate {
+        return false;
+    }
+    let objects_hold = view.objects.holds(page);
     let mut consumed = false;
     let pointer = ptr.pos;
     // The other page under the pointer, where a dragged item lands (Thai edition).
@@ -835,8 +863,10 @@ pub(crate) fn page_input(
         return consumed;
     }
     // A right-click on an item selects it, and the page's menu shows its items (Arrange, Delete;
-    // see [`page_menu`]) (Thai edition).
+    // see [`page_menu`]) (Thai edition). Not while objects selected together are on the page: the
+    // menu is theirs.
     if resp.secondary_clicked()
+        && !objects_hold
         && let Some(p) = pointer.filter(|p| xf.rect.contains(*p))
     {
         // Pictures have the image controller's menu.
@@ -853,42 +883,28 @@ pub(crate) fn page_input(
             consumed = true;
         }
     }
-    // A drag starts where the button went down, which the pointer may already have left by the
-    // time egui calls it a drag (a quick drag toward another page; Thai edition).
-    if resp.drag_started()
-        && cv.draft.is_none()
-        && let Some(origin) = ptr.origin.filter(|o| xf.rect.contains(*o))
-    {
-        // Pictures are the image controller's.
-        let items: Vec<(usize, &Added)> = on_page(added, page).into_iter().filter(|(_, a)| matches!(a.content, AddedContent::Text(_))).collect();
-        let selected_rect = cv
-            .selected
-            .filter(|s| s.0 == page)
-            .and_then(|(_, si)| items.iter().find(|(i, _)| *i == si))
-            .map(|(_, a)| screen_rect(xf, info, page, a.content.rect()));
-        if let Some((_, left, top)) = selected_rect.and_then(|r| handles(r).into_iter().find(|(c, ..)| c.distance(origin) <= 6.0)) {
-            cv.grab = Some((page, Grab::Corner(left, top), origin));
-            return true;
-        }
-        if let Some((i, _)) = items.iter().rev().find(|(_, a)| screen_rect(xf, info, page, a.content.rect()).expand(2.0).contains(origin)) {
-            cv.selected = Some((page, *i));
-            cv.grab = Some((page, Grab::Move, origin));
-            return true;
-        }
+    // Where a press nobody holds begins on this page: Add text's click starts its box there.
+    if let Some(o) = ptr.pressed().filter(|_| press != PagePress::Elsewhere) {
+        cv.pressed_at = (press == PagePress::Free).then_some((page, o));
     }
     let Some(p) = pointer.filter(|p| xf.rect.contains(*p)) else { return consumed };
     let items: Vec<(usize, &Added)> = on_page(added, page).into_iter().filter(|(_, a)| matches!(a.content, AddedContent::Text(_))).collect();
-    let hit = items.iter().rev().find(|(_, a)| screen_rect(xf, info, page, a.content.rect()).expand(2.0).contains(p)).map(|(i, a)| (*i, *a));
-    let selected_rect = cv
-        .selected
-        .filter(|s| s.0 == page)
-        .and_then(|(_, si)| items.iter().find(|(i, _)| *i == si))
-        .map(|(_, a)| screen_rect(xf, info, page, a.content.rect()));
-    let corner = selected_rect.and_then(|r| handles(r).into_iter().find(|(c, ..)| c.distance(p) <= 6.0));
-    if adding_text && hit.is_none() {
+    // What the press was on ([`hit`]): an item, or a corner of the selected one.
+    let owned = match press {
+        PagePress::Mine(Owner::Added { index, corner }) => Some((index, corner)),
+        _ => None,
+    };
+    // The tools that don't pick added content up have no hit on it: with the Edit panel open their
+    // clicks on added text still select it and their presses there are its, by this test at the
+    // pointer, as before.
+    let under = (!picks_up)
+        .then(|| items.iter().rev().find(|(_, a)| screen_rect(xf, info, page, a.content.rect()).expand(2.0).contains(p)).map(|(i, _)| *i))
+        .flatten();
+    let target = if picks_up { owned } else { under.map(|i| (i, None)) };
+    if adding_text {
         view.cursor.claim(Layer::ToolArea, egui::CursorIcon::Text);
         // A new box where nothing drawn over the page holds the press.
-        if resp.clicked() && view.router.owner(page).is_none() {
+        if resp.clicked() && press == PagePress::Free {
             // Text that can't be drawn stays where it is being typed (#125).
             if cv.hold_blocked() {
                 return true;
@@ -898,7 +914,9 @@ pub(crate) fn page_input(
             let typed = cv.draft.take().and_then(|d| finish(cv, d, added, info));
             // The Format panel styles the new text, not the box just kept.
             (cv.selected, cv.select_added) = (None, None);
-            let at = to_display(xf, info, page, p);
+            // Where the click was pressed, as every owner acts where its press was.
+            let start = cv.pressed_at.take().filter(|(pg, _)| *pg == page).map_or(p, |(_, o)| o);
+            let at = to_display(xf, info, page, start);
             let mut style = style.clone();
             style.text.clear();
             let page_width = info.pages.get(page).map_or(f64::INFINITY, |p| p.width as f64);
@@ -910,29 +928,31 @@ pub(crate) fn page_input(
             if typed.is_some() {
                 view.pending_edit = typed;
             }
+            return consumed;
         }
-        return consumed;
     }
-    // A drag on what the press was on ([`hit`]): a corner resizes the selected item, the item
-    // itself moves.
-    if resp.drag_started() {
+    // A drag on what the press was on: a corner resizes the selected item, the item itself moves,
+    // with the tools that pick added content up.
+    if ptr.drag_started {
         let origin = ptr.origin.unwrap_or(p);
-        match view.router.owner(page) {
-            Some(Owner::Added { corner: Some((left, top)), .. }) => {
+        match owned.filter(|_| picks_up) {
+            Some((_, Some((left, top)))) => {
                 cv.grab = Some((page, Grab::Corner(left, top), origin));
                 consumed = true;
             }
-            Some(Owner::Added { index, corner: None }) => {
+            Some((index, None)) => {
                 cv.selected = Some((page, index));
                 cv.grab = Some((page, Grab::Move, origin));
                 consumed = true;
             }
-            _ => {}
+            None => {}
         }
-        return consumed;
+        return consumed || owned.is_some();
     }
-    if (resp.double_clicked() || edit_on_click && resp.clicked() && corner.is_none())
-        && let Some((i, a)) = hit
+    // A double-click, or with `edit_on_click` a click, opens the text the press was on for typing.
+    if (resp.double_clicked() || edit_on_click && resp.clicked())
+        && let Some((i, None)) = target
+        && let Some((_, a)) = items.iter().find(|(index, _)| *index == i)
         && let AddedContent::Text(t) = &a.content
     {
         if cv.hold_blocked() {
@@ -964,17 +984,21 @@ pub(crate) fn page_input(
         consumed = true;
         return consumed;
     }
+    // A click selects the item its press was on, keeps the selected one when on a corner of it, and
+    // on anything else on this page (but the objects selected together, which take the selection
+    // themselves) leaves it unselected.
     if resp.clicked() {
-        match hit {
-            Some((i, _)) => {
+        match (target, press) {
+            (Some((i, None)), _) => {
                 cv.selected = Some((page, i));
                 consumed = true;
             }
-            None if corner.is_none() => cv.selected = None,
-            None => consumed = true,
+            (Some((_, Some(_))), _) => consumed = true,
+            (None, PagePress::Elsewhere | PagePress::Mine(Owner::Objects { .. })) => {}
+            (None, _) => cv.selected = None,
         }
     }
-    consumed || hit.is_some() && resp.is_pointer_button_down_on()
+    consumed || owned.is_some() || under.is_some() && resp.is_pointer_button_down_on()
 }
 
 /// What the right-click menu of an added item chose.
@@ -1243,7 +1267,11 @@ pub(crate) fn keys(
         return;
     }
     let (del, esc) = ctx.input(|i| (i.key_pressed(egui::Key::Delete) || i.key_pressed(egui::Key::Backspace), i.key_pressed(egui::Key::Escape)));
-    if del && let Some((page, index)) = view.content.selected.take() {
+    // Not while a button is down: the press held would then name another item.
+    if del
+        && !view.content.held
+        && let Some((page, index)) = view.content.selected.take()
+    {
         view.pending_edit = Some(Edit::DeleteContent { page, index });
     } else if let Some(how) = arrange_key(ctx)
         && view.pending_edit.is_none()
@@ -1396,7 +1424,7 @@ pub(crate) fn editor(ctx: &egui::Context, view: &mut DocView, info: &DocInfo, ad
     // Shown at once, like the paragraph editor: a fade-in shows the page's copy through it. Over
     // the page, so only where the document shows: text scrolled under the mode bar or a side
     // panel must leave them their pointer (#2755).
-    egui::Area::new(egui::Id::unique(("added-text", view.id.0)))
+    egui::Area::new(egui::Id::unique(("added-text", view.view_key())))
         .fade_in(false)
         .order(egui::Order::Foreground)
         .fixed_pos(at)
@@ -1418,8 +1446,18 @@ pub(crate) fn editor(ctx: &egui::Context, view: &mut DocView, info: &DocInfo, ad
             // box doesn't show it realigned.
             let style = AddedText { direction: pdfcraft_engine::TextDirection::Horizontal, ..t.style.clone() };
             let line_font = font.clone();
+            // A Format text preview shows on the selected part, or on all of the text without one,
+            // as the change will be applied (Thai edition).
+            let part = previewed_look(ui.ctx()).map(|preview| {
+                let mut look = t.style.clone();
+                preview.apply(&mut look);
+                let sel = t.selection.clone().filter(|r| r.start < r.end && r.end <= t.text.len()).unwrap_or(0..t.text.len());
+                let [r, g, b] = look.color.map(|v| (v.clamp(0.0, 1.0) * 255.0) as u8);
+                let font = crate::edit_text_ui::editor_font(ui.ctx(), &look, (look.size as f32 * zoom).clamp(1.0, 300.0));
+                PartLook { range: sel, font, color: Color32::from_rgb(r, g, b), underline: look.underline }
+            });
             let mut layouter = |ui: &egui::Ui, text: &dyn egui::TextBuffer, wrap: f32| {
-                aligned_galley(ui, text.as_str(), &style, &line_font, color, letter_spacing, wrap, hugs)
+                aligned_galley(ui, text.as_str(), &style, &line_font, color, letter_spacing, wrap, hugs, part.as_ref())
             };
             let before = t.text.clone();
             let input = input_id();
@@ -1553,27 +1591,42 @@ fn finish(cv: &mut ContentView, d: TextDraft, added: &[Added], info: &DocInfo) -
     }
 }
 
-/// Thai edition: draft `d` with a selected part (not all of it) given `style`'s colour and size:
-/// the box as it was, made text of the page with that part in its own colour and size (replacing
-/// the box being retyped, in one step). `None` without such a part.
-pub(crate) fn part_styled_draft(d: &TextDraft, style: &AddedText, page_width: Option<f64>) -> Option<Edit> {
+/// Thai edition: Format text on a selected part of an added box being typed: the box becomes
+/// text of the page, that part in `style` where it differs from the box (font, bold, italic,
+/// size, colour or underline), as one undo step (an added box has one look). `None` when nothing
+/// but the whole box is selected, or nothing a part can take changed. Also the selection, as
+/// characters of the box's text, for Edit text to keep selected.
+pub(crate) fn part_styled_draft(d: &TextDraft, style: &AddedText, page_width: Option<f64>) -> Option<(Edit, std::ops::Range<usize>)> {
     let text = d.text.trim_end().to_string();
     let sel = d.selection.clone().filter(|r| r.start < r.end && r.end <= text.len() && !(r.start == 0 && r.end >= text.len()))?;
     let chars = |at: usize| text.get(..at).map(|s| s.chars().count());
-    let (s, e, n) = (chars(sel.start)?, chars(sel.end)?, text.chars().count());
+    let (s, e) = (chars(sel.start)?, chars(sel.end)?);
     let base = &d.style;
+    let face = style.family != base.family || style.bold != base.bold || style.italic != base.italic;
+    let part = pdfcraft_engine::RangeStyle {
+        range: s..e,
+        family: face.then_some((style.family, style.bold, style.italic)),
+        resource: None,
+        size: (style.size != base.size).then_some(style.size),
+        color: (style.color != base.color).then_some(style.color),
+        underline: (style.underline != base.underline).then_some(style.underline),
+        char_spacing: None,
+        scale: None,
+    };
+    if part.family.is_none() && part.size.is_none() && part.color.is_none() && part.underline.is_none() {
+        return None;
+    }
     let box_text = AddedText { text: text.clone(), rect: d.rect, ..base.clone() };
     let box_text = match page_width {
         Some(w) if d.auto => pdfcraft_engine::fitted_text(&box_text, w),
         _ => box_text,
     };
-    let run = |chars: std::ops::Range<usize>, t: &AddedText| pdfcraft_engine::TextRun { chars, color: t.color, size: t.size };
-    let runs = vec![run(0..s, base), run(s..e, style), run(e..n, base)].into_iter().filter(|r| r.chars.start < r.chars.end).collect();
-    let add = Edit::AddStyledText { page: d.page, text: box_text, runs };
-    Some(match d.index {
+    let add = Edit::AddTextPart { page: d.page, text: box_text, part };
+    let edit = match d.index {
         Some(index) => Edit::Batch { label: "Edit text".into(), edits: vec![Edit::DeleteContent { page: d.page, index }, add] },
         None => add,
-    })
+    };
+    Some((edit, s..e))
 }
 
 /// A restyled item: one whose box hugged its text is refitted to the new font or size. A new
@@ -1688,6 +1741,19 @@ pub(crate) fn family_list(
     current: Option<FontFamily>,
     hovered: &mut Option<FontFamily>,
 ) -> Option<FontFamily> {
+    family_list_with(ui, search_id, current, hovered, |_, _| {})
+}
+
+/// [`family_list`] with more fonts listed under its search box, before the families: `above` draws
+/// them, given what was typed (lowercase), and the search box stays on top of everything (Thai
+/// edition: the fonts of the document, in Format text).
+pub(crate) fn family_list_with(
+    ui: &mut egui::Ui,
+    search_id: egui::Id,
+    current: Option<FontFamily>,
+    hovered: &mut Option<FontFamily>,
+    above: impl FnOnce(&mut egui::Ui, &str),
+) -> Option<FontFamily> {
     ui.set_min_width(240.0);
     // Opening the menu starts a new search with the caret in the box, so the font's name
     // can be typed straight away.
@@ -1705,6 +1771,7 @@ pub(crate) fn family_list(
     let entered = search.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
     let want = query.trim().to_lowercase();
     ui.data_mut(|d| d.insert_temp(search_id, query));
+    above(ui, &want);
     let mut picked = None;
     let mut first = None;
     let mark = ui.visuals().weak_text_color();
@@ -1987,7 +2054,8 @@ pub(crate) fn paint_look_preview(
             }
             let c = if preview.color.is_some() { look.color } else { run.color };
             let size = if preview.size.is_some() { look.size } else { run.size };
-            let run_font = crate::theme::document_font(ui.ctx(), look.family, look.bold, look.italic, (size as f32 * zoom).max(4.0));
+            let (bold, italic) = (preview.bold.unwrap_or(run.bold), preview.italic.unwrap_or(run.italic));
+            let run_font = crate::theme::document_font(ui.ctx(), look.family, bold, italic, (size as f32 * zoom).max(4.0));
             let [r, g, b2] = c.map(|v| (v.clamp(0.0, 1.0) * 255.0) as u8);
             job.append(
                 t.text.get(a..b).unwrap_or_default(),
@@ -2017,6 +2085,36 @@ pub(crate) fn input_id() -> egui::Id {
     egui::Id::unique("added-text-input")
 }
 
+/// Thai edition: how a Format text preview shows on bytes `range` of an added box being typed.
+struct PartLook {
+    range: std::ops::Range<usize>,
+    font: egui::FontId,
+    color: Color32,
+    underline: bool,
+}
+
+/// `job` (one section, starting at byte `offset` of the whole text) with `part` drawn in its own
+/// look where it falls in it (Thai edition).
+fn show_part(job: &mut egui::text::LayoutJob, part: &PartLook, offset: usize) {
+    let Some(base) = job.sections.first().map(|s| s.format.clone()) else { return };
+    let len = job.text.len();
+    let (a, b) = (part.range.start.saturating_sub(offset).min(len), part.range.end.saturating_sub(offset).min(len));
+    if a >= b || !job.text.is_char_boundary(a) || !job.text.is_char_boundary(b) {
+        return;
+    }
+    let shown = egui::TextFormat {
+        font_id: part.font.clone(),
+        color: part.color,
+        underline: if part.underline { Stroke::new(1.0, part.color) } else { Stroke::NONE },
+        ..base.clone()
+    };
+    job.sections = [(0..a, base.clone()), (a..b, shown), (b..len, base)]
+        .into_iter()
+        .filter(|(r, _)| r.start < r.end)
+        .map(|(r, format)| egui::text::LayoutSection { leading_space: 0.0, byte_range: r.start.into()..r.end.into(), format })
+        .collect();
+}
+
 /// `text` laid out as added text with `style` is drawn: each paragraph (line typed with Enter) wrapped
 /// to `wrap` and placed by its own alignment, a justified one with every row but its last
 /// stretched. With `hugs` (Thai edition) a paragraph doesn't wrap: `wrap` is only the width it is
@@ -2031,14 +2129,19 @@ fn aligned_galley(
     letter_spacing: f32,
     wrap: f32,
     hugs: bool,
+    part: Option<&PartLook>,
 ) -> std::sync::Arc<egui::Galley> {
     use pdfcraft_engine::TextAlign;
     let line_width = if hugs { f32::INFINITY } else { wrap };
     // Lines as far apart as the page sets them, when the spacing isn't the ordinary one.
     let line_height = (style.line_spacing != 0.0).then(|| font.size * (style.line_advance() / style.size.max(f64::EPSILON)) as f32);
-    let job = |text: &str, align: TextAlign| {
+    // `text` starts at byte `offset` of the whole text.
+    let job = |text: &str, align: TextAlign, offset: usize| {
         let mut job = spaced_job(text, font, color, letter_spacing, style.underline, line_width, egui::Align::Min);
         job.justify = align == TextAlign::Justify && !hugs;
+        if let Some(part) = part {
+            show_part(&mut job, part, offset);
+        }
         for s in &mut job.sections {
             s.format.line_height = line_height;
         }
@@ -2046,7 +2149,7 @@ fn aligned_galley(
     };
     let uniform = text.split('\n').enumerate().all(|(i, _)| style.paragraph_align(i) == style.align);
     if uniform && style.align != TextAlign::Center && style.align != TextAlign::Right {
-        return ui.fonts_mut(|f| f.layout_job(job(text, style.align)));
+        return ui.fonts_mut(|f| f.layout_job(job(text, style.align, 0)));
     }
     // Each paragraph on its own (egui aligns a whole job one way), its rows moved within the
     // box's width, then joined in order: the caret and selection see one text.
@@ -2057,7 +2160,7 @@ fn aligned_galley(
         // The last paragraph keeps a trailing break, as egui's own split does.
         let last = end + 1 == text.len();
         let piece = if last { text.get(start..).unwrap_or_default() } else { paragraph };
-        let mut galley = ui.fonts_mut(|f| f.layout_job(job(piece, style.paragraph_align(i))));
+        let mut galley = ui.fonts_mut(|f| f.layout_job(job(piece, style.paragraph_align(i), start)));
         let g = std::sync::Arc::make_mut(&mut galley);
         for placed in &mut g.rows {
             let free = (wrap - placed.row.size.x).max(0.0);
@@ -2658,6 +2761,29 @@ fn spaced_job(
     // so a centred or right-aligned line must too, or the editor shifts it.
     job.keep_trailing_whitespace = true;
     job
+}
+
+#[cfg(test)]
+mod part_preview_tests {
+    /// Thai edition: a Format text preview over a selected part of an added box shows on that
+    /// part only, in each paragraph it reaches.
+    #[test]
+    fn a_preview_shows_on_the_selected_part_of_an_added_box() {
+        let font = egui::FontId::proportional(12.0);
+        let part = super::PartLook { range: 3..9, font: egui::FontId::proportional(20.0), color: egui::Color32::RED, underline: true };
+        // "abc def" then, from byte 8, "ghij".
+        let mut first = super::spaced_job("abc def", &font, egui::Color32::BLACK, 0.0, false, 100.0, egui::Align::Min);
+        super::show_part(&mut first, &part, 0);
+        let looks: Vec<_> = first.sections.iter().map(|s| (usize::from(s.byte_range.start)..usize::from(s.byte_range.end), s.format.color)).collect();
+        assert_eq!(looks, vec![(0..3, egui::Color32::BLACK), (3..7, egui::Color32::RED)]);
+        assert_eq!(first.sections[1].format.font_id.size, 20.0);
+        let mut second = super::spaced_job("ghij", &font, egui::Color32::BLACK, 0.0, false, 100.0, egui::Align::Min);
+        super::show_part(&mut second, &part, 8);
+        let looks: Vec<_> =
+            second.sections.iter().map(|s| (usize::from(s.byte_range.start)..usize::from(s.byte_range.end), s.format.color)).collect();
+        assert_eq!(looks, vec![(0..1, egui::Color32::RED), (1..4, egui::Color32::BLACK)]);
+        assert!(second.sections[0].format.underline.width > 0.0);
+    }
 }
 
 #[cfg(test)]

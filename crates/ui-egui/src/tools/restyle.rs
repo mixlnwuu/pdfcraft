@@ -164,6 +164,18 @@ pub(crate) fn restyle_edit(
                 // picking that again still gives all of it that colour or size, and a change of
                 // anything else (bold, italic, font) keeps each part's own.
                 let runs = crate::edit_text_ui::paragraph_runs(b, &doc.text_lines(page));
+                // A weight, slant or underline asked for all of a paragraph whose parts differ in
+                // them reaches every part (Thai edition): judged by its first part alone, the
+                // format painter's regular left a bold part of the paragraph bold.
+                let differs =
+                    |asked: Option<bool>, part: fn(&pdfcraft_engine::TextRun) -> bool| asked.is_some_and(|a| runs.iter().any(|r| part(r) != a));
+                if style.family.is_none() && style.resource.is_none() && (differs(change.bold, |r| r.bold) || differs(change.italic, |r| r.italic)) {
+                    style.family =
+                        Some((change.family.unwrap_or(look0.family), change.bold.unwrap_or(look0.bold), change.italic.unwrap_or(look0.italic)));
+                }
+                if style.underline.is_none() && differs(change.underline, |r| r.underline) {
+                    style.underline = change.underline;
+                }
                 if !runs.is_empty() {
                     style.color = style.color.or(change.color);
                     style.size = style.size.or(change.size);
@@ -360,11 +372,17 @@ pub(crate) fn paint_runs_on_added(doc: &Document, page: usize, index: usize, pai
 }
 
 /// Thai edition: `edit` (the painter's look over one paragraph) with `runs` laid over it from
-/// the paragraph's start, each its colour and size; parts past the paragraph's end are dropped.
-pub(crate) fn with_runs(mut edit: Edit, runs: &[pdfcraft_engine::TextRun]) -> Edit {
+/// the paragraph's start, each its colour, size, weight, slant and underline, in `family`; parts
+/// past the paragraph's end are dropped.
+pub(crate) fn with_runs(mut edit: Edit, runs: &[pdfcraft_engine::TextRun], family: pdfcraft_engine::FontFamily) -> Edit {
     if let Edit::EditTextBlock { text, style, .. } = &mut edit {
         let byte = |n: usize| text.char_indices().nth(n).map_or(text.len(), |(i, _)| i);
         let base = style.size;
+        // The parts' faces when they differ from each other or from the paragraph's.
+        let face = |r: &pdfcraft_engine::TextRun| (r.bold, r.italic);
+        let faces_vary =
+            runs.windows(2).any(|w| face(&w[0]) != face(&w[1])) || style.family.is_some_and(|(_, b, i)| runs.iter().any(|r| face(r) != (b, i)));
+        let underlines_vary = runs.windows(2).any(|w| w[0].underline != w[1].underline);
         for run in runs {
             let range = byte(run.chars.start)..byte(run.chars.end);
             if range.start >= range.end {
@@ -372,11 +390,11 @@ pub(crate) fn with_runs(mut edit: Edit, runs: &[pdfcraft_engine::TextRun]) -> Ed
             }
             style.ranges.push(pdfcraft_engine::RangeStyle {
                 range,
-                family: None,
+                family: faces_vary.then_some((style.family.map_or(family, |(f, _, _)| f), run.bold, run.italic)),
                 resource: None,
                 size: (Some(run.size) != base && run.size.is_finite() && run.size > 0.0).then_some(run.size),
                 color: Some(run.color),
-                underline: None,
+                underline: underlines_vary.then_some(run.underline),
                 char_spacing: None,
                 scale: None,
             });
@@ -511,16 +529,88 @@ startxref
     #[test]
     fn the_painter_lays_each_copied_part_on_the_paragraph() {
         let runs = [
-            pdfcraft_engine::TextRun { chars: 0..4, color: [0.0, 0.0, 1.0], size: 12.0 },
-            pdfcraft_engine::TextRun { chars: 4..8, color: [0.0; 3], size: 12.0 },
-            pdfcraft_engine::TextRun { chars: 20..30, color: [1.0, 0.0, 0.0], size: 12.0 },
+            pdfcraft_engine::TextRun { chars: 0..4, color: [0.0, 0.0, 1.0], size: 12.0, ..Default::default() },
+            pdfcraft_engine::TextRun { chars: 4..8, color: [0.0; 3], size: 12.0, ..Default::default() },
+            pdfcraft_engine::TextRun { chars: 20..30, color: [1.0, 0.0, 0.0], size: 12.0, ..Default::default() },
         ];
         let edit =
             Edit::EditTextBlock { page: 0, block: 3, text: "Software".into(), style: BlockStyle { color: Some([0.5; 3]), ..Default::default() } };
-        let Edit::EditTextBlock { style, .. } = with_runs(edit, &runs) else { panic!("still a paragraph edit") };
+        let Edit::EditTextBlock { style, .. } = with_runs(edit, &runs, pdfcraft_engine::FontFamily::Helvetica) else {
+            panic!("still a paragraph edit")
+        };
         let parts: Vec<_> = style.ranges.iter().map(|r| (r.range.clone(), r.color, r.size)).collect();
         assert_eq!(parts, vec![(0..4, Some([0.0, 0.0, 1.0]), Some(12.0)), (4..8, Some([0.0; 3]), Some(12.0))]);
         assert_eq!(style.color, None, "the parts' colours, not one for the whole");
+    }
+
+    /// Thai edition: the format painter's regular, painted on a paragraph whose first part is
+    /// regular and a later one bold, makes all of it regular: judged by the first part alone, the
+    /// bold part was left bold.
+    #[test]
+    fn painting_regular_on_a_partly_bold_paragraph_makes_all_of_it_regular() {
+        if pdfcraft_engine::FontFamily::Sarabun.craft(true, false).is_none() {
+            return; // built without craft-fonts
+        }
+        let mut s = pdfcraft_engine::Session::new();
+        let pdf = s.create_blank(595.0, 842.0, 1).unwrap();
+        let id = s.open("blank.pdf", None, pdf, None).unwrap();
+        let text = AddedText {
+            text: "โดยหนังสือฉบับนี้".into(),
+            rect: [60.0, 600.0, 400.0, 620.0],
+            family: pdfcraft_engine::FontFamily::Sarabun,
+            size: 16.0,
+            ..Default::default()
+        };
+        s.apply(id, Edit::AddText { page: 0, text: text.clone() }).unwrap();
+        s.apply(id, Edit::ReleaseContent { page: 0, index: 0 }).unwrap();
+        let b = s.get(id).unwrap().text_blocks(0).remove(0);
+        let at = b.editor_text.find("หนังสือ").unwrap();
+        let bold = pdfcraft_engine::RangeStyle {
+            range: at..at + "หนังสือ".len(),
+            family: Some((pdfcraft_engine::FontFamily::Sarabun, true, false)),
+            resource: None,
+            size: None,
+            color: None,
+            underline: None,
+            char_spacing: None,
+            scale: None,
+        };
+        s.apply(
+            id,
+            Edit::EditTextBlock { page: 0, block: 0, text: b.editor_text.clone(), style: BlockStyle { ranges: vec![bold], ..Default::default() } },
+        )
+        .unwrap();
+        assert!(s.get(id).unwrap().text_lines(0).iter().any(|l| l.bold), "a bold part to begin with");
+        let regular = AddedText { text: String::new(), ..text };
+        let target = [ObjectTarget { kind: ObjectKind::Text, index: 0 }];
+        let edit = restyle_edit(s.get(id).unwrap(), 0, &target, &all_of(&regular, None), None).expect("a change");
+        let Edit::EditTextBlock { style, .. } = &edit else { panic!("a paragraph edit") };
+        assert_eq!(style.family, Some((pdfcraft_engine::FontFamily::Sarabun, false, false)), "the regular face for all of it");
+        s.apply(id, edit).unwrap();
+        let lines = s.get(id).unwrap().text_lines(0);
+        assert!(lines.iter().all(|l| !l.bold), "all of it regular: {lines:?}");
+    }
+
+    /// Thai edition: the painter copies each part's weight, slant and underline too, not only its
+    /// colour: "Hard" bold and underlined, "ware" plain, in the copied family.
+    #[test]
+    fn the_painter_copies_each_parts_weight_and_underline() {
+        let runs = [
+            pdfcraft_engine::TextRun { chars: 0..4, color: [0.0; 3], size: 12.0, bold: true, underline: true, ..Default::default() },
+            pdfcraft_engine::TextRun { chars: 4..8, color: [0.0; 3], size: 12.0, ..Default::default() },
+        ];
+        let edit = Edit::EditTextBlock { page: 0, block: 0, text: "Software".into(), style: BlockStyle::default() };
+        let Edit::EditTextBlock { style, .. } = with_runs(edit, &runs, pdfcraft_engine::FontFamily::Sarabun) else {
+            panic!("still a paragraph edit")
+        };
+        let parts: Vec<_> = style.ranges.iter().map(|r| (r.range.clone(), r.family, r.underline)).collect();
+        assert_eq!(
+            parts,
+            vec![
+                (0..4, Some((pdfcraft_engine::FontFamily::Sarabun, true, false)), Some(true)),
+                (4..8, Some((pdfcraft_engine::FontFamily::Sarabun, false, false)), Some(false)),
+            ]
+        );
     }
 
     /// Thai edition: a format of several colours painted on an added box, or a colour given to a
@@ -535,8 +625,8 @@ startxref
         s.apply(id, Edit::AddText { page: 0, text: text.clone() }).unwrap();
         let red = |c: [f64; 3]| c[0] > 0.9 && c[1] < 0.1;
         let runs = vec![
-            pdfcraft_engine::TextRun { chars: 0..4, color: [1.0, 0.0, 0.0], size: 12.0 },
-            pdfcraft_engine::TextRun { chars: 4..8, color: [0.0; 3], size: 12.0 },
+            pdfcraft_engine::TextRun { chars: 0..4, color: [1.0, 0.0, 0.0], size: 12.0, ..Default::default() },
+            pdfcraft_engine::TextRun { chars: 4..8, color: [0.0; 3], size: 12.0, ..Default::default() },
         ];
         let painter = Painter { look: text.clone(), keep: false, runs };
         let edit = paint_runs_on_added(s.get(id).unwrap(), 0, 0, &painter).unwrap();
@@ -559,7 +649,8 @@ startxref
             selection: Some(4..8),
             typing_from: None,
         };
-        let edit = crate::content_ui::part_styled_draft(&d, &AddedText { color: [1.0, 0.0, 0.0], ..text.clone() }, Some(600.0)).unwrap();
+        let (edit, chars) = crate::content_ui::part_styled_draft(&d, &AddedText { color: [1.0, 0.0, 0.0], ..text.clone() }, Some(600.0)).unwrap();
+        assert_eq!(chars, 4..8);
         s.apply(id, edit).unwrap();
         let lines = s.get(id).unwrap().text_lines(0);
         assert!(lines.iter().any(|l| l.text.trim() == "ware" && red(l.color)), "{lines:?}");
@@ -577,8 +668,8 @@ startxref
         let id = s.open("scan.pdf", None, pdf, None).unwrap();
         let text = AddedText { text: "Hardware".into(), rect: [10.0, 10.0, 200.0, 30.0], ..Default::default() };
         let runs = vec![
-            pdfcraft_engine::TextRun { chars: 0..4, color: [0.0; 3], size: 12.0 },
-            pdfcraft_engine::TextRun { chars: 4..8, color: [1.0, 0.0, 0.0], size: 12.0 },
+            pdfcraft_engine::TextRun { chars: 0..4, color: [0.0; 3], size: 12.0, ..Default::default() },
+            pdfcraft_engine::TextRun { chars: 4..8, color: [1.0, 0.0, 0.0], size: 12.0, ..Default::default() },
         ];
         s.apply(id, Edit::AddStyledText { page: 0, text, runs }).unwrap();
         let target = [ObjectTarget { kind: ObjectKind::Text, index: 0 }];
@@ -617,9 +708,9 @@ startxref
             };
             let orange = if mixed { [1.0, 0.5, 0.0] } else { [0.0; 3] };
             let runs = vec![
-                pdfcraft_engine::TextRun { chars: 0..3, color: [0.0; 3], size: 14.0 },
-                pdfcraft_engine::TextRun { chars: 3..4, color: orange, size: 14.0 },
-                pdfcraft_engine::TextRun { chars: 4..18, color: [0.0; 3], size: 14.0 },
+                pdfcraft_engine::TextRun { chars: 0..3, color: [0.0; 3], size: 14.0, ..Default::default() },
+                pdfcraft_engine::TextRun { chars: 3..4, color: orange, size: 14.0, ..Default::default() },
+                pdfcraft_engine::TextRun { chars: 4..18, color: [0.0; 3], size: 14.0, ..Default::default() },
             ];
             s.apply(id, Edit::AddStyledText { page: 0, text, runs }).unwrap();
             let target = [ObjectTarget { kind: ObjectKind::Text, index: 0 }];
@@ -659,9 +750,9 @@ startxref
             ..Default::default()
         };
         let runs = vec![
-            pdfcraft_engine::TextRun { chars: 0..5, color: [0.0; 3], size: 14.0 },
-            pdfcraft_engine::TextRun { chars: 5..9, color: [1.0, 0.4, 0.7], size: 14.0 },
-            pdfcraft_engine::TextRun { chars: 9..18, color: [0.0; 3], size: 14.0 },
+            pdfcraft_engine::TextRun { chars: 0..5, color: [0.0; 3], size: 14.0, ..Default::default() },
+            pdfcraft_engine::TextRun { chars: 5..9, color: [1.0, 0.4, 0.7], size: 14.0, ..Default::default() },
+            pdfcraft_engine::TextRun { chars: 9..18, color: [0.0; 3], size: 14.0, ..Default::default() },
         ];
         s.apply(id, Edit::AddStyledText { page: 0, text, runs }).unwrap();
         let target = [ObjectTarget { kind: ObjectKind::Text, index: 0 }];
@@ -708,8 +799,8 @@ startxref
             ..Default::default()
         };
         let runs = vec![
-            pdfcraft_engine::TextRun { chars: 0..1, color: [1.0, 0.5, 0.0], size: 20.0 },
-            pdfcraft_engine::TextRun { chars: 1..8, color: [0.0; 3], size: 20.0 },
+            pdfcraft_engine::TextRun { chars: 0..1, color: [1.0, 0.5, 0.0], size: 20.0, ..Default::default() },
+            pdfcraft_engine::TextRun { chars: 1..8, color: [0.0; 3], size: 20.0, ..Default::default() },
         ];
         s.apply(id, Edit::AddStyledText { page: 0, text, runs }).unwrap();
         let target = [ObjectTarget { kind: ObjectKind::Text, index: 0 }];

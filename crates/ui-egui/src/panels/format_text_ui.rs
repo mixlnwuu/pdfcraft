@@ -160,21 +160,37 @@ pub(crate) fn panel(
             // Typing in the font search must not close the list (Thai edition).
             .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
             .show_ui(ui, |ui| {
-                if let Some(sources) = fonts.sources {
-                    if ui.selectable_label(false, tl!("Keep source fonts")).clicked() {
-                        out.font = Some(FontChoice::KeepSource);
+                // Thai edition: one search box on top, for the document's own fonts (listed first)
+                // and the standard families, TH Sarabun PSK and the families installed on this
+                // machine, as Add text has always offered them.
+                let search = ui.make_persistent_id("format-font-search");
+                let mut source_choice = None;
+                let above = |ui: &mut egui::Ui, want: &str| {
+                    let Some(sources) = fonts.sources else { return };
+                    let shown: Vec<&(String, String)> = sources
+                        .iter()
+                        .filter(|(r, face)| !r.starts_with("PCApproved") && (want.is_empty() || face.to_lowercase().contains(want)))
+                        .collect();
+                    if want.is_empty() && ui.selectable_label(false, tl!("Keep source fonts")).clicked() {
+                        source_choice = Some(FontChoice::KeepSource);
                     }
-                    for (resource, face) in sources.iter().filter(|(r, _)| !r.starts_with("PCApproved")) {
+                    if !shown.is_empty() {
+                        ui.label(egui::RichText::new(tl!("Fonts in this file")).small().color(ui.visuals().weak_text_color()));
+                    }
+                    for (resource, face) in shown {
                         if ui.selectable_label(false, face).clicked() {
-                            out.font = Some(FontChoice::Resource(resource.clone()));
+                            source_choice = Some(FontChoice::Resource(resource.clone()));
+                            ui.close();
                         }
                     }
                     ui.separator();
+                };
+                let family =
+                    crate::content_ui::family_list_with(ui, search, fonts.sources.is_none().then_some(look.family), &mut hover.family, above);
+                if let Some(choice) = source_choice {
+                    out.font = Some(choice);
                 }
-                // Thai edition: the standard families, TH Sarabun PSK and the families installed on
-                // this machine, with a search box, as Add text has always offered them.
-                let search = ui.make_persistent_id("format-font-search");
-                if let Some(f) = crate::content_ui::family_list(ui, search, fonts.sources.is_none().then_some(look.family), &mut hover.family) {
+                if let Some(f) = family {
                     out.font = Some(FontChoice::Family(f));
                 }
                 if fonts.sources.is_some() {
@@ -275,7 +291,8 @@ pub(crate) fn panel(
         let swatch = colour_button(ui, t, look.color);
         egui::Popup::menu(&swatch).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| {
             if let Some(picked) = crate::comments::swatch_grid_hover(ui, Some(look.color), &mut hover.color) {
-                look.color = picked;
+                // Drops a gray or CMYK ink the new colour isn't the look of (#6440).
+                look.set_color(picked);
                 colour_picked = true;
                 ui.close();
             }

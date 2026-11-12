@@ -1,6 +1,76 @@
+use pdfcraft_fonts::shaped_text::{Piece, ShapedFonts, clusters, first_undrawable_in_line, is_thai, thai_message, thai_pieces};
+
 use super::added::{AddedText, Align, Family};
-use super::place::first_undrawable_char;
-use super::{Document, EditError, Object, Rgb, added};
+use super::{Dict, Document, EditError, Object, Rgb, added};
+
+/// The Thai of a header, footer or text watermark, drawn from the Thai face as Add text draws it:
+/// Type 3 fonts added to the document once and to each page the mark goes on, beside the page
+/// font that draws the rest.
+#[derive(Default)]
+pub(crate) struct MarkText {
+    shaped: ShapedFonts,
+    /// The fonts, by the resource names the marked pages give them.
+    fonts: Dict,
+}
+
+impl MarkText {
+    /// The fonts for the Thai in `lines` (every line the mark draws, on any page), named so that
+    /// none of `pages` (of `all`) has the name already. Thai this build can't draw (it has no Thai
+    /// face, or the face lacks a character) is refused, saying what to do.
+    pub(crate) fn new<'a>(
+        doc: &mut Document,
+        all: &[pdfcraft_model::Page],
+        pages: &[usize],
+        lines: impl IntoIterator<Item = &'a str>,
+    ) -> Result<Self, EditError> {
+        let thai = |line: &str| thai_pieces(line).map_err(|e| EditError::Invalid(thai_message(e, line)));
+        let pieces = lines.into_iter().filter(|l| l.chars().any(is_thai)).map(thai).collect::<Result<Vec<_>, _>>()?;
+        if pieces.is_empty() {
+            return Ok(Self::default());
+        }
+        let mut taken = Dict::new();
+        for page in pages.iter().filter_map(|&i| all.get(i)) {
+            for (name, font) in crate::place::page_fonts(doc, page).iter() {
+                taken.set(name.clone(), font.clone());
+            }
+        }
+        let mut fonts = Dict::new();
+        let shaped =
+            ShapedFonts::new(clusters(pieces.iter().map(Vec::as_slice)), pdfcraft_fonts::shaped_glyph, &taken, &mut fonts, "PCTh", &mut |o| {
+                Object::Ref(doc.add(o))
+            })
+            .map_err(|(e, c)| EditError::Invalid(thai_message(e, &c.text)))?;
+        Ok(Self { shaped, fonts })
+    }
+
+    /// Show `line` inside `BT … ET` from `x` on baseline `y` at `size`: its Thai from the fonts,
+    /// the rest in the page font `latin` (selected when `current` is `None`), `width` wide.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn show(
+        &self,
+        out: &mut Vec<u8>,
+        line: &str,
+        x: f64,
+        y: f64,
+        size: f64,
+        latin: &str,
+        width: impl Fn(&str) -> f64,
+        current: &mut Option<usize>,
+    ) {
+        let plain = || vec![Piece::Latin(line.into())];
+        // `new` shaped every line drawn, so this shapes.
+        let pieces = if self.fonts.is_empty() || !line.chars().any(is_thai) { plain() } else { thai_pieces(line).unwrap_or_else(|_| plain()) };
+        self.shaped.show_line(out, &pieces, x, y, size, latin, pdfcraft_fonts::win_ansi, width, current);
+    }
+
+    /// Add the fonts to `page`'s own resources.
+    pub(crate) fn add_to(&self, doc: &mut Document, page: &pdfcraft_model::Page) -> Result<(), EditError> {
+        if self.fonts.is_empty() {
+            return Ok(());
+        }
+        crate::place::add_page_font_dict(doc, page, &self.fonts)
+    }
+}
 
 /// The kinds of page marks.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -92,21 +162,22 @@ impl HeaderFooter {
             underline: false,
             line_spacing: 0.0,
             direction: crate::added::TextDirection::Horizontal,
+            ink: None,
         }
     }
 }
 
 impl HeaderFooter {
-    /// The first character [`add_header_footer`] would refuse, because the standard fonts can't
-    /// draw it (#125). Tokens only add ASCII (Bates prefixes and suffixes are part of the
-    /// template), so checking the templates, split as `expand`'s output is, covers every page
-    /// (and a `\r` that would be drawn is refused too). The dialog asks this too, so its preview
-    /// never offers text that applying refuses (#2013).
+    /// The first character [`add_header_footer`] would refuse, because neither the standard
+    /// fonts nor (for Thai) the Thai face can draw it (#125). Tokens only add ASCII (Bates
+    /// prefixes and suffixes are part of the template), so checking the templates, split as
+    /// `expand`'s output is, covers every page (and a `\r` that would be drawn is refused too).
+    /// The dialog asks this too, so its preview never offers text that applying refuses (#2013).
     pub fn first_undrawable(&self) -> Option<char> {
-        // Thai edition: Thai is drawn in TH Sarabun PSK, and a chosen font draws what its face has
-        // (the rest as its standard family, like Add text).
+        // Plain Helvetica draws its Thai from the Thai face (upstream); a chosen font draws what
+        // its face has, the rest as its standard family, like Add text (Thai edition).
         if self.plain() {
-            self.text.iter().flat_map(|t| t.lines()).find_map(first_undrawable_char)
+            self.text.iter().flat_map(|t| t.lines()).find_map(first_undrawable_in_line)
         } else {
             self.text.iter().enumerate().find_map(|(slot, t)| added::first_undrawable(&self.item(t, slot, 1000.0, 1000.0)))
         }
@@ -186,13 +257,14 @@ pub struct Watermark {
 }
 
 impl Watermark {
-    /// The first character of a text watermark [`add_watermark`] would refuse, because the
-    /// standard fonts can't draw it (#125). A picture watermark draws no text.
+    /// The first character of a text watermark [`add_watermark`] would refuse, because neither
+    /// the standard fonts nor (for Thai) the Thai face can draw it (#125). A picture watermark
+    /// draws no text.
     pub fn first_undrawable(&self) -> Option<char> {
         match self.source {
             Some(_) => None,
-            // Thai edition: Thai is drawn in TH Sarabun PSK.
-            None if self.plain() => self.text.trim().lines().find_map(first_undrawable_char),
+            // Plain Helvetica draws its Thai from the Thai face (upstream).
+            None if self.plain() => self.text.trim().lines().find_map(first_undrawable_in_line),
             // A chosen font draws what its face has; the rest as its standard family, like Add text.
             None => self.text.trim().lines().find_map(|l| added::first_undrawable(&self.item(l, 12.0, 1.0e6))),
         }
@@ -221,6 +293,7 @@ impl Watermark {
             underline: false,
             line_spacing: 0.0,
             direction: crate::added::TextDirection::Horizontal,
+            ink: None,
         }
     }
 }
