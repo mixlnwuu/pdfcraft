@@ -1,3 +1,5 @@
+> **PdfCraft ภาษาไทยเปลี่ยนชื่อเป็น MaewPDF แล้ว** ย้ายไปที่ https://github.com/mixlnwuu/maewpdf · เว็บ https://mixlnwuu.github.io/maewpdf/ · ผู้ใช้เดิมกดอัปเดตในโปรแกรมได้เลย
+
 # PdfCraft ภาษาไทย (ฉบับไม่เป็นทางการ)
 
 PdfCraft ฉบับปรับปรุงให้ใช้งานภาษาไทยได้เต็มรูปแบบ ต่อยอดจาก [PdfCraft](https://github.com/storytold/pdfcraft) ของ ArtCraft

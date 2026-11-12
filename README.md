@@ -1,3 +1,5 @@
+> **PdfCraft Thai Edition is now MaewPDF:** https://github.com/mixlnwuu/maewpdf (site: https://mixlnwuu.github.io/maewpdf/). Existing users can update from inside the app.
+
 # PdfCraft Thai Edition (unofficial)
 
 **ภาษาไทย: อ่านรายละเอียด วิธีดาวน์โหลด และวิธีใช้งานได้ที่ [README-TH.md](README-TH.md)**
