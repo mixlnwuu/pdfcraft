@@ -15398,3 +15398,65 @@ fn a_coloured_part_of_a_run_whose_spacing_tj_cancels_stays_clear_of_the_rest() {
         assert!(pair[1].rect[0] >= pair[0].rect[2] - 0.5, "{:?} runs into {:?}", pair[0].text, pair[1].text);
     }
 }
+
+/// Thai edition: part of a Thai paragraph styled (a colour) and the paragraph set in a font
+/// installed on this machine is drawn in that font, its parts keeping their colours. The parts
+/// were shaped through a font the page doesn't have and came out in TH Sarabun PSK, so choosing
+/// Angsana New for a coloured paragraph changed nothing (Windows ships it in a font collection,
+/// whose face is now embedded on its own). Skipped on a machine with no Thai font installed.
+#[test]
+fn a_thai_paragraph_with_a_coloured_part_takes_an_installed_font() {
+    if pdfcraft_fonts::document_thai_font().is_none() {
+        return; // built without craft-fonts
+    }
+    let families = pdfcraft_fonts::installed_families();
+    let plain = |name: &str| name.to_lowercase().replace(' ', "");
+    let Some(index) = families
+        .iter()
+        .position(|f| f.name == "Angsana New")
+        .or_else(|| families.iter().position(|f| f.thai && !plain(f.name).contains("sarabun")))
+        .and_then(|i| u16::try_from(i).ok())
+    else {
+        return; // no Thai font installed
+    };
+    let name = families[usize::from(index)].name;
+    let text = "ไม่มีริ้วรอย";
+    let code = |c: char| match u32::from(c) {
+        0x0E48 => 0x0160,
+        0x0E49 => 0x0161,
+        c @ 0x0E01..=0x0E3A => c - 0x0E01 + 0x00D6,
+        c => c - 0x0E3F + 0x0110,
+    };
+    let glyphs: String = text.chars().map(|c| format!("{:04x}", code(c))).collect();
+    let mut doc = text_page(&format!("BT /F1 12 Tf 72 700 Td <{glyphs}> Tj ET"));
+    let font = legacy_thai_font(&mut doc, "ABCDEF+THSarabunPSK", &legacy_thai_program(), LEGACY_THAI_UNICODE);
+    doc.set(pdfcraft_cos::ObjRef::new(5, 0), Object::Dict(font));
+    let part = "ไม่มี".len();
+    let colour = |range: std::ops::Range<usize>, color: [f64; 3]| text::RangeStyle {
+        range,
+        family: None,
+        resource: None,
+        size: None,
+        color: Some(color),
+        underline: None,
+        char_spacing: None,
+        scale: None,
+    };
+    // First the part coloured, as the paragraph is drawn again in TH Sarabun PSK; then the font.
+    let coloured = text::BlockStyle { ranges: vec![colour(0..part, [1.0, 0.5, 0.0])], ..Default::default() };
+    text::rewrite_block(&mut doc, 0, 0, Some(text), &coloured).unwrap();
+    let mut doc = reopen(&doc);
+    let style = text::BlockStyle {
+        family: Some((added::Family::Installed(index), false, false)),
+        ranges: vec![colour(0..part, [1.0, 0.5, 0.0]), colour(part..text.len(), [0.0; 3])],
+        ..Default::default()
+    };
+    text::rewrite_block(&mut doc, 0, 0, Some(text), &style).unwrap();
+    let doc = reopen(&doc);
+    let lines = text::text_lines(&doc, 0).unwrap();
+    assert_eq!(lines.iter().map(|l| l.text.as_str()).collect::<String>(), text);
+    for line in &lines {
+        assert_eq!(plain(strip_subset_tag(&line.base_font)), plain(name), "{:?} in {name}: {lines:?}", line.text);
+    }
+    assert!(lines.iter().any(|l| l.color == [1.0, 0.5, 0.0]) && lines.iter().any(|l| l.color == [0.0; 3]), "the parts keep their colours");
+}

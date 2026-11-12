@@ -104,6 +104,49 @@ pub fn validate_document_input(bytes: &[u8]) -> Result<(), String> {
     Ok(())
 }
 
+/// Thai edition: face `index` of a font file as a standalone font, for embedding: a collection
+/// (`ttcf`, as Windows ships Angsana New) can't be embedded whole, so its face's tables are copied
+/// into a font file of their own. A standalone font (index 0) comes back as it is. `None` when the
+/// file is not a font or the face is not in it.
+pub fn standalone_face(bytes: &[u8], index: u32) -> Option<Vec<u8>> {
+    let be16 = |at: usize| bytes.get(at..at.checked_add(2)?).map(|b| u16::from_be_bytes([b[0], b[1]]));
+    let be32 = |at: usize| bytes.get(at..at.checked_add(4)?).map(|b| u32::from_be_bytes([b[0], b[1], b[2], b[3]]));
+    if bytes.get(..4) != Some(b"ttcf") {
+        return (index == 0 && bytes.len() >= 12).then(|| bytes.to_vec());
+    }
+    let count = be32(8)?;
+    if index >= count {
+        return None;
+    }
+    let face = usize::try_from(be32(12usize.checked_add(usize::try_from(index).ok()?.checked_mul(4)?)?)?).ok()?;
+    let tables = usize::from(be16(face.checked_add(4)?)?);
+    // Every table's record (tag, checksum, offset, length) and data, as the face lists them.
+    let mut records = Vec::with_capacity(tables);
+    for k in 0..tables {
+        let at = face.checked_add(12)?.checked_add(k.checked_mul(16)?)?;
+        let record = bytes.get(at..at.checked_add(16)?)?;
+        let offset = usize::try_from(be32(at.checked_add(8)?)?).ok()?;
+        let length = usize::try_from(be32(at.checked_add(12)?)?).ok()?;
+        records.push((record.get(..8)?, bytes.get(offset..offset.checked_add(length)?)?));
+    }
+    let header = 12usize.checked_add(tables.checked_mul(16)?)?;
+    let mut out = Vec::with_capacity(header.saturating_add(records.iter().map(|(_, d)| d.len().saturating_add(3)).sum::<usize>()));
+    out.extend_from_slice(bytes.get(face..face.checked_add(12)?)?);
+    let mut offset = header;
+    for (record, data) in &records {
+        out.extend_from_slice(record);
+        out.extend_from_slice(&u32::try_from(offset).ok()?.to_be_bytes());
+        out.extend_from_slice(&u32::try_from(data.len()).ok()?.to_be_bytes());
+        // Each table starts on a four-byte boundary.
+        offset = offset.checked_add(data.len().checked_add(3)? & !3)?;
+    }
+    for (_, data) in records {
+        out.extend_from_slice(data);
+        out.resize(out.len().checked_add(3)? & !3, 0);
+    }
+    Some(out)
+}
+
 /// Validate before allocating any PDF objects, so an invalid font cannot partly mutate a doc.
 pub fn validate(bytes: &[u8]) -> Result<(), String> {
     if bytes.len() > 16 << 20 {
@@ -381,6 +424,39 @@ fn same_resource(doc: &Document, fonts: &Dict, name: &str, programs: &mut Progra
 mod tests {
     use super::*;
     use crate::pdf::Metrics;
+
+    /// Thai edition: a face of a font collection comes out as a standalone font that embeds
+    /// (Windows ships Angsana New in one); a standalone font comes back as it is, and a face the
+    /// file doesn't have, or bytes that are no font, give nothing.
+    #[test]
+    fn a_face_of_a_collection_is_taken_out_as_a_font_of_its_own() {
+        let inter = crate::script::INTER_REGULAR;
+        assert_eq!(standalone_face(inter, 0).as_deref(), Some(inter));
+        assert!(standalone_face(inter, 1).is_none());
+        // A collection of the same face twice, its tables shared as a collection's often are.
+        let tables = usize::from(u16::from_be_bytes([inter[4], inter[5]]));
+        let shift = u32::try_from(12 + 8).unwrap();
+        let mut ttc = b"ttcf".to_vec();
+        ttc.extend_from_slice(&[0, 1, 0, 0, 0, 0, 0, 2]);
+        ttc.extend_from_slice(&shift.to_be_bytes());
+        ttc.extend_from_slice(&shift.to_be_bytes());
+        let mut face = inter.to_vec();
+        for k in 0..tables {
+            let at = 12 + k * 16 + 8;
+            let offset = u32::from_be_bytes(face[at..at + 4].try_into().unwrap()) + shift;
+            face[at..at + 4].copy_from_slice(&offset.to_be_bytes());
+        }
+        ttc.extend_from_slice(&face);
+        assert!(validate(&ttc).is_err(), "a collection doesn't embed whole");
+        for index in [0, 1] {
+            let alone = standalone_face(&ttc, index).expect("the face");
+            validate(&alone).expect("a standalone font that embeds");
+            assert!(covers(&alone, "Hello"));
+        }
+        assert!(standalone_face(&ttc, 2).is_none());
+        assert!(standalone_face(b"not a font", 0).is_none());
+        assert!(standalone_face(b"ttcf\0\x01\0\0\0\0\0\x05", 0).is_none(), "a truncated collection");
+    }
 
     /// Thai edition: a face with no Thai, or with real Thai outlines, draws its Thai; bytes that
     /// are no font don't.

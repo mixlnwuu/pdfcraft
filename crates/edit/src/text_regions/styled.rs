@@ -773,13 +773,14 @@ fn thai_face(base_font: &str, text: &str) -> Option<Shaped> {
     });
     let sarabun = pdfcraft_fonts::document_family_font("TH Sarabun PSK", bold, italic).map(|face| (face, "TH Sarabun PSK".to_string()));
     installed.into_iter().chain(sarabun).find_map(|(face, family)| {
-        // A face inside a collection can't be embedded as one TrueType program.
-        let (bytes, 0) = pdfcraft_fonts::face_data(face)? else { return None };
-        if !pdfcraft_fonts::embedding::covers(bytes, text) || pdfcraft_fonts::embedding::validate(bytes).is_err() {
+        // A face inside a collection is embedded as a font of its own.
+        let (bytes, index) = pdfcraft_fonts::face_data(face)?;
+        let bytes = pdfcraft_fonts::embedding::standalone_face(bytes, index)?;
+        if !pdfcraft_fonts::embedding::covers(&bytes, text) || pdfcraft_fonts::embedding::validate(&bytes).is_err() {
             return None;
         }
-        let shaped = pdfcraft_fonts::source_shaping::shape_bundled_thai(bytes, text).ok()?;
-        Some((bytes.to_vec(), shaped, family))
+        let shaped = pdfcraft_fonts::source_shaping::shape_bundled_thai(&bytes, text).ok()?;
+        Some((bytes, shaped, family))
     })
 }
 
