@@ -250,8 +250,8 @@ impl LineEditor {
             return self.look.family.label().to_string();
         }
         // "ABCDEF+Calibri" is a subset of Calibri.
-        let name = pdfcraft_engine::strip_subset_tag(base);
-        if name.is_empty() { tl!("Keep source fonts").to_string() } else { name.to_string() }
+        let name = crate::panels::readable_font_name(base);
+        if name.is_empty() { tl!("Keep source fonts").to_string() } else { name }
     }
 
     /// Back to the paragraph's own font: no page font chosen and the family it started with.
@@ -375,6 +375,12 @@ impl LineEditor {
         }
     }
 
+    /// The page's font resources the paragraph's own lines are drawn in (Thai edition: Format text
+    /// lists them whatever they lack).
+    pub(crate) fn own_resources(&self) -> Vec<String> {
+        self.source.as_ref().map_or_else(Vec::new, |(b, lines)| b.lines.iter().filter_map(|i| lines.get(*i)).map(|l| l.font.clone()).collect())
+    }
+
     /// The paragraph's own font as the PDF names it (Thai edition: the format painter).
     pub(crate) fn source_font(&self) -> Option<&str> {
         self.source.as_ref().map(|(b, _)| b.base_font.as_str())
@@ -464,7 +470,9 @@ impl LineEditor {
             }
             let base = l.base_font.as_str();
             let name = pdfcraft_engine::strip_subset_tag(base);
-            if let Some((_, face)) = sources.iter().find(|(_, face)| face.as_str() == name) {
+            // The page's fonts are named as people read them (Thai edition).
+            let readable = crate::panels::readable_font_name(name);
+            if let Some((_, face)) = sources.iter().find(|(_, face)| face.as_str() == name || *face == readable) {
                 return face.clone();
             }
             let look = look_of_line(l);

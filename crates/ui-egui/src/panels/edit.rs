@@ -270,28 +270,84 @@ pub(super) fn stamp_palette(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens
 /// Fonts by (resource, name).
 type FontNames = Vec<(String, String)>;
 
-/// Thai edition: the page's fonts for Format text, each named by its program (TH Sarabun PSK
-/// Bold reads "THSarabunPSK-Bold", not the subset tag or the name a rewrite gave it): all of them
-/// by resource, for reading what a paragraph is set in, and each font once for the menu, a
-/// complete face of the page first. A much edited page has dozens of resources sharing one
-/// program, which listed the same font over and over.
-fn font_sources(programs: impl IntoIterator<Item = (String, String, Vec<u8>)>) -> (FontNames, FontNames) {
+/// Thai edition: the page's fonts for Format text, each named by its program as people read a
+/// font's name ("LQQKTR+AngsanaNew-Bold" reads "Angsana New Bold", not the subset tag or the name a
+/// rewrite gave it): all of them by resource, for reading what a paragraph is set in, and each font
+/// once for the menu, a complete face of the page first. A much edited page has dozens of
+/// resources sharing one program, which listed the same font over and over. The menu leaves out
+/// symbol fonts (the check marks' Wingdings) and fonts that lack letters of the paragraph's `text`,
+/// which couldn't draw it, unless the paragraph is drawn in them (`own`, its resources).
+fn font_sources(programs: impl IntoIterator<Item = (String, String, Vec<u8>)>, text: &str, own: &[String]) -> (FontNames, FontNames) {
+    struct Entry {
+        resource: String,
+        label: String,
+        len: usize,
+        approved: bool,
+        usable: bool,
+    }
+    let letters: String = text.chars().filter(|c| !c.is_whitespace()).collect();
     let mut all = Vec::new();
-    let mut menu: Vec<(String, String, usize, bool)> = Vec::new();
+    let mut menu: Vec<Entry> = Vec::new();
     for (resource, face, bytes) in programs {
-        let label = pdfcraft_fonts::embedding::names(&bytes).map_or(face, |(_, postscript)| postscript);
+        let label = readable_font_name(&pdfcraft_fonts::embedding::names(&bytes).map_or(face, |(_, postscript)| postscript));
         let approved = resource.starts_with("PCApproved");
-        match menu.iter_mut().find(|(_, l, _, _)| *l == label) {
+        let usable =
+            !is_symbol_font(&label) && (own.contains(&resource) || letters.is_empty() || pdfcraft_fonts::embedding::covers(&bytes, &letters));
+        match menu.iter_mut().find(|e| e.label == label) {
             // A resource of the page over the edition's own face, then the complete program over a subset.
-            Some(entry) if (entry.3 && !approved) || (entry.3 == approved && bytes.len() > entry.2) => {
-                *entry = (resource.clone(), label.clone(), bytes.len(), approved);
+            Some(entry) => {
+                if (entry.approved && !approved) || (entry.approved == approved && bytes.len() > entry.len) {
+                    (entry.resource, entry.len, entry.approved) = (resource.clone(), bytes.len(), approved);
+                }
+                entry.usable |= usable;
             }
-            Some(_) => {}
-            None => menu.push((resource.clone(), label.clone(), bytes.len(), approved)),
+            None => menu.push(Entry { resource: resource.clone(), label: label.clone(), len: bytes.len(), approved, usable }),
         }
         all.push((resource, label));
     }
-    (all, menu.into_iter().map(|(resource, label, _, _)| (resource, label)).collect())
+    (all, menu.into_iter().filter(|e| e.usable).map(|e| (e.resource, e.label)).collect())
+}
+
+/// A symbol font: its glyphs are pictures (check marks, arrows), not letters to write with.
+fn is_symbol_font(name: &str) -> bool {
+    let name = name.to_lowercase().replace(' ', "");
+    ["wingdings", "webdings", "symbol", "dingbats", "mtextra", "marlett"].iter().any(|s| name.contains(s))
+}
+
+/// A font's name as people read it (Thai edition): without the subset tag ("LQQKTR+"), its words
+/// apart ("AngsanaNew" → "Angsana New", "THSarabunPSK" → "TH Sarabun PSK") and its style after
+/// them ("Angsana New Bold"), a regular style left unsaid; PostScript's `MT`/`PS` endings go. A
+/// name with spaces of its own keeps its words.
+pub(crate) fn readable_font_name(name: &str) -> String {
+    let name =
+        name.split_once('+').map_or(name, |(tag, rest)| if tag.len() == 6 && tag.chars().all(|c| c.is_ascii_uppercase()) { rest } else { name });
+    let (family, style) = name.split_once(['-', ',']).unwrap_or((name, ""));
+    let words = |part: &str| -> String {
+        let part = part.trim();
+        if part.contains(' ') {
+            return part.to_owned();
+        }
+        let part = ["PSMT", "MT", "PS"].iter().find_map(|end| part.strip_suffix(end).filter(|p| p.len() > 2)).unwrap_or(part);
+        let chars: Vec<char> = part.chars().collect();
+        let mut out = String::with_capacity(part.len() + 4);
+        for (i, c) in chars.iter().enumerate() {
+            let prev = i.checked_sub(1).and_then(|j| chars.get(j));
+            let next = chars.get(i + 1);
+            if c.is_ascii_uppercase()
+                && prev.is_some_and(|p| p.is_ascii_lowercase() || (p.is_ascii_uppercase() && next.is_some_and(char::is_ascii_lowercase)))
+            {
+                out.push(' ');
+            }
+            out.push(*c);
+        }
+        out
+    };
+    let family = words(family);
+    let style = words(style);
+    match style.to_lowercase().as_str() {
+        "" | "regular" | "roman" | "normal" | "book" => family,
+        _ => format!("{family} {style}"),
+    }
 }
 
 /// Edit a PDF ▸ Format text: for the selected added text (one undoable change), or the style
@@ -304,7 +360,7 @@ fn format_section(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens) {
         use crate::format_text_ui::{FontChoice, Fonts};
         let mut ed = ed;
         let programs = app.session.get(app.views[i].id).map(|d| d.text_editor_fonts(ed.page)).unwrap_or_default();
-        let (sources, menu) = font_sources(programs.into_iter().map(|f| (f.resource, f.face, f.bytes)));
+        let (sources, menu) = font_sources(programs.into_iter().map(|f| (f.resource, f.face, f.bytes)), &ed.text, &ed.own_resources());
         let fmt = ed.selection_formatting(&sources);
         ed.sync_selection_look(&fmt);
         ed.sync_selection_underline();
@@ -488,7 +544,7 @@ fn selected_boxes_format(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens) -
     let mut extras = extras0;
     let mut shown = match &first.source_font {
         // An OCR layer's font is nobody's choice: the box shows as what draws it.
-        Some(font) if font != pdfcraft_fonts::thai_text::INVISIBLE_NAME => crate::restyle::plain_name(font).to_owned(),
+        Some(font) if font != pdfcraft_fonts::thai_text::INVISIBLE_NAME => readable_font_name(font),
         _ => look.family.label().to_owned(),
     };
     if first.source_font.as_deref().is_some_and(|f| !crate::restyle::font_available(f)) {
@@ -688,10 +744,52 @@ mod font_source_tests {
         let mut programs: Vec<(String, String, Vec<u8>)> =
             (0..40).map(|k| (format!("PCFull{k}"), "BCDHEETHSarabunPSK".to_owned(), regular.clone())).collect();
         programs.insert(0, ("PCApprovedTH Sarabun PSK Regular".into(), "THSarabunPSK".into(), regular.clone()));
-        let (all, menu) = super::font_sources(programs);
+        let (all, menu) = super::font_sources(programs, "", &[]);
         assert_eq!(all.len(), 41);
         assert_eq!(menu.len(), 1, "{menu:?}");
         assert_eq!(menu[0].0, "PCFull0", "a resource of the page");
-        assert!(menu[0].1.starts_with("THSarabunPSK"), "named by the program: {menu:?}");
+        assert!(menu[0].1.starts_with("TH Sarabun PSK"), "named by the program: {menu:?}");
+    }
+
+    /// Thai edition: a font of the page reads as people name it, without its subset tag, its words
+    /// apart and its style after them.
+    #[test]
+    fn fonts_of_the_page_read_as_people_name_them() {
+        for (pdf, shown) in [
+            ("LQQKTR+AngsanaNew", "Angsana New"),
+            ("WJFYRV+AngsanaNew-Bold", "Angsana New Bold"),
+            ("THSarabunPSK-BoldItalic", "TH Sarabun PSK Bold Italic"),
+            ("THSarabunPSK-Regular", "TH Sarabun PSK"),
+            ("OXECJL+Arial-BoldMT", "Arial Bold"),
+            ("TimesNewRomanPSMT", "Times New Roman"),
+            ("TH Sarabun New,Bold", "TH Sarabun New Bold"),
+            ("Tahoma", "Tahoma"),
+            ("", ""),
+        ] {
+            assert_eq!(super::readable_font_name(pdf), shown, "{pdf}");
+        }
+    }
+
+    /// Thai edition: the menu leaves out symbol fonts and fonts without the paragraph's letters,
+    /// but not a font the paragraph is drawn in.
+    #[test]
+    fn the_menu_leaves_out_fonts_that_cannot_draw_the_paragraph() {
+        let Some((bytes, _)) = pdfcraft_engine::FontFamily::Sarabun.craft(false, false).and_then(pdfcraft_fonts::face_data) else {
+            return; // built without craft-fonts
+        };
+        let thai = bytes.to_vec();
+        let latin = include_bytes!("../../../../assets/fonts/Inter-Regular.ttf").to_vec();
+        let programs = || {
+            vec![
+                ("PCFull0".to_owned(), "THSarabunPSK".to_owned(), thai.clone()),
+                ("F2".to_owned(), "Inter".to_owned(), latin.clone()),
+                ("F3".to_owned(), "UOEMPZ+Wingdings2".to_owned(), Vec::new()),
+            ]
+        };
+        let labels = |menu: Vec<(String, String)>| menu.into_iter().map(|(_, l)| l).collect::<Vec<_>>();
+        let (_, menu) = super::font_sources(programs(), "ไม่มีริ้วรอย", &[]);
+        assert_eq!(labels(menu), ["TH Sarabun PSK"], "Inter has no Thai, Wingdings is symbols");
+        let (_, menu) = super::font_sources(programs(), "ไม่มีริ้วรอย", &["F2".to_owned()]);
+        assert_eq!(labels(menu), ["TH Sarabun PSK", "Inter"], "the paragraph's own font stays");
     }
 }

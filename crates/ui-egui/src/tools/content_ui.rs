@@ -1741,6 +1741,19 @@ pub(crate) fn family_list(
     current: Option<FontFamily>,
     hovered: &mut Option<FontFamily>,
 ) -> Option<FontFamily> {
+    family_list_with(ui, search_id, current, hovered, |_, _| {})
+}
+
+/// [`family_list`] with more fonts listed under its search box, before the families: `above` draws
+/// them, given what was typed (lowercase), and the search box stays on top of everything (Thai
+/// edition: the fonts of the document, in Format text).
+pub(crate) fn family_list_with(
+    ui: &mut egui::Ui,
+    search_id: egui::Id,
+    current: Option<FontFamily>,
+    hovered: &mut Option<FontFamily>,
+    above: impl FnOnce(&mut egui::Ui, &str),
+) -> Option<FontFamily> {
     ui.set_min_width(240.0);
     // Opening the menu starts a new search with the caret in the box, so the font's name
     // can be typed straight away.
@@ -1758,6 +1771,7 @@ pub(crate) fn family_list(
     let entered = search.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
     let want = query.trim().to_lowercase();
     ui.data_mut(|d| d.insert_temp(search_id, query));
+    above(ui, &want);
     let mut picked = None;
     let mut first = None;
     let mark = ui.visuals().weak_text_color();
